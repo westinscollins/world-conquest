@@ -148,10 +148,11 @@ export function OutcomeModal() {
 export function useHotkeys() {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (!store.game || (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (!store.game || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') { e.preventDefault(); store.togglePause(); }
       else if (e.key === '1' || e.key === '2' || e.key === '3') store.setSpeed(+e.key);
-      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null });
+      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null });
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);

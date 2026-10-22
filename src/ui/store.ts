@@ -24,6 +24,7 @@ export interface UIState {
   mapMode: MapMode;
   battleReport: number | null;
   intel: null | { armyId: number; province: number };
+  moveMode: number | null; // army id awaiting a left-click destination
   toasts: { id: number; text: string; kind: 'info' | 'good' | 'bad' | 'war' }[];
   confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void };
   peaceWar: number | null;
@@ -35,7 +36,7 @@ class Store {
   game: GameState | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
-    panel: null, mapMode: 'political', battleReport: null, intel: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
+    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;
   private listeners = new Set<() => void>();
@@ -111,7 +112,8 @@ class Store {
           this.afterTick(g);
         }
         if (this.acc > 3) this.acc = 3;
-        if (n) this.emit();
+        // redraw at most ~10 times per second while time runs: keeps fast speeds smooth
+        if (n && t - this.lastEmit > 100) { this.lastEmit = t; this.emit(); }
       }
       this.raf = requestAnimationFrame(step);
     };
@@ -119,6 +121,8 @@ class Store {
   };
 
   private lastMood: string = 'peace';
+  private lastEmit = 0;
+  private wasDeficit = false;
   private afterTick(g: GameState) {
     // notifications → toasts (+ pause on war declarations against the player)
     if (g.notifications.length) {
@@ -135,6 +139,15 @@ class Store {
     if (g.peaceOffers.some((o) => o.to === g.player && o.day === g.day) || g.proposals.some((p) => p.to === g.player && p.day === g.day && p.kind === 'callToArms')) {
       this.ui = { ...this.ui, speed: 0 };
       audio.sfx('chime');
+    }
+    const pn = g.nations[g.player];
+    if (pn && g.day % 7 === 0) {
+      const deficit = pn.budget.net < 0;
+      if (deficit && !this.wasDeficit) {
+        const top = pn.budget.expenses.slice().sort((a, b) => b.amount - a.amount).slice(0, 2).map((l) => l.label.toLowerCase()).join(' and ');
+        this.toast(`Budget deficit: losing ${Math.abs(pn.budget.net).toFixed(1)} M IC a year (largest costs: ${top}). Open Economy for fixes.`, 'bad');
+      }
+      this.wasDeficit = deficit;
     }
     const mood = this.moodFor();
     if (mood !== this.lastMood) { this.lastMood = mood; audio.setMood(mood); }

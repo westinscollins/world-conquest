@@ -23,6 +23,7 @@ export function ArmyPanel() {
   const { g, ui } = useStore();
   const [tab, setTab] = useState<'units' | 'supply' | 'orders'>('units');
   const [sel, setSel] = useState<number[]>([]);
+  const [renaming, setRenaming] = useState(false);
   if (!g || ui.selectedArmy == null) return null;
   const a = g.armies[ui.selectedArmy];
   if (!a) return null;
@@ -44,7 +45,9 @@ export function ArmyPanel() {
     <div className="side-panel right">
       <div className="sp-head" style={{ borderColor: n.color }}>
         <div>
-          <div className="sp-title editable" title="Click to rename" onClick={() => { const v = prompt('Rename army', a.name); if (v) store.act((s) => renameArmy(s, a.id, v)); }}>{a.name}</div>
+          {renaming ? (
+            <input id="army-rename" className="rename" autoFocus defaultValue={a.name} onBlur={(e) => { store.act((s) => renameArmy(s, a.id, e.target.value)); setRenaming(false); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }} />
+          ) : <div className="sp-title editable" title="Click to rename" onClick={() => setRenaming(true)}>{a.name}</div>}
           <div className="sp-sub">
             {a.embarked ? <>At sea → {PROV[a.embarked.dest].name}</> : <>in <a onClick={() => focusProvince(a.location)}>{PROV[a.location].name}</a></>}
             {a.battleId != null && <> · <a className="bad" onClick={() => store.setUI({ battleReport: a.battleId })}>IN BATTLE</a></>}
@@ -52,6 +55,11 @@ export function ArmyPanel() {
           </div>
         </div>
         <button className="iconbtn" onClick={() => store.setUI({ selectedArmy: null })}><Icon name="close" /></button>
+      </div>
+      <div className="army-actions">
+        <Btn small kind={ui.moveMode === a.id ? 'primary' : undefined} disabled={a.battleId != null || !!a.embarked} onClick={() => store.setUI({ moveMode: ui.moveMode === a.id ? null : a.id })}>{ui.moveMode === a.id ? 'Click a province…' : 'Move / attack'}</Btn>
+        {a.path.length > 0 && !a.battleId && <Btn small onClick={() => store.act((s) => { s.armies[a.id].path = []; s.armies[a.id].moveProgress = 0; })}>Halt</Btn>}
+        <Btn small kind="ghost" onClick={() => store.setUI({ selectedArmy: null, selectedProvince: a.location, moveMode: null })}>Province &amp; construction</Btn>
       </div>
       <div className="grid4">
         <Stat label="Strength" value={`${num(str)}`} tip={`${num(str)} of ${num(max)} personnel (${pct(str / max)})`} tone={str / max < 0.6 ? 'bad' : undefined} />

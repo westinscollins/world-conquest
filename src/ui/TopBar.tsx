@@ -79,7 +79,7 @@ export function TopBar() {
             <div className="dropdown" onMouseLeave={() => setMenu(false)}>
               <button onClick={() => { quickSave(); setMenu(false); }}><Icon name="save" /> Quick save</button>
               <button onClick={() => { setSaveDlg(true); setMenu(false); }}><Icon name="book" /> Save / Load…</button>
-              <button onClick={() => { exportSave(g); setMenu(false); }}><Icon name="arrow" /> Export save file</button>
+              <button onClick={() => { exportSave(g); setMenu(false); }}><Icon name="arrow" /> Export save file (local only)</button>
               <button onClick={() => { audio.setMuted(!audio.muted); setMenu(false); store.emit(); }}><Icon name={audio.muted ? 'music' : 'mute'} /> {audio.muted ? 'Unmute' : 'Mute'} audio</button>
               <button onClick={() => { store.setUI({ panel: 'help' }); setMenu(false); }}><Icon name="info" /> Help & tutorial</button>
               <button onClick={() => { setMenu(false); store.setUI({ confirm: { title: 'Quit to main menu?', body: 'Unsaved progress since the last save will be lost. (Autosave runs every 30 days.)', danger: true, onOk: () => store.quitToMenu() } }); }}><Icon name="close" /> Quit to menu</button>

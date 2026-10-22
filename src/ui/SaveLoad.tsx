@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Btn } from './common';
-import { listSaves, saveGame, loadGame, deleteSave, importSave } from './storage';
+import { listSaves, saveGame, loadGame, deleteSave, importSave, saveCode, fromSaveCode } from './storage';
 import type { SaveMeta } from '../engine/save';
 import { store } from './store';
 import { fmtDate } from '../engine/events';
@@ -10,6 +10,8 @@ import { COUNTRY_GEO } from '../engine/geo';
 export function SaveLoadDialog({ onClose, loadOnly }: { onClose: () => void; loadOnly?: boolean }) {
   const [saves, setSaves] = useState<SaveMeta[]>([]);
   const [err, setErr] = useState('');
+  const [code, setCode] = useState('');
+  const [paste, setPaste] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const refresh = () => listSaves().then(setSaves).catch(() => setSaves([]));
   useEffect(() => { refresh(); }, []);
@@ -53,7 +55,13 @@ export function SaveLoadDialog({ onClose, loadOnly }: { onClose: () => void; loa
           try { const s = await importSave(f); store.start(s); store.toast('Save imported.', 'good'); onClose(); } catch (er) { setErr((er as Error).message); }
         }} />
         <Btn onClick={() => fileRef.current?.click()}>Import save file…</Btn>
+        {g && <Btn onClick={async () => { const c = await saveCode(g); setCode(c); try { await navigator.clipboard.writeText(c); store.toast('Save code copied to the clipboard.', 'good'); } catch { store.toast('Select the code below and copy it.', 'info'); } }}>Copy save code</Btn>}
       </div>
+      {code && <textarea id="save-code-out" className="savecode" readOnly value={code} onFocus={(e) => e.target.select()} />}
+      <h4>Load from a save code</h4>
+      <textarea id="save-code-in" className="savecode" placeholder="Paste a save code here" value={paste} onChange={(e) => setPaste(e.target.value)} />
+      <div className="row gap end"><Btn kind="primary" disabled={!paste.trim()} onClick={async () => { try { const s = await fromSaveCode(paste); store.start(s); store.toast('Save code loaded.', 'good'); onClose(); } catch (e) { setErr((e as Error).message); } }}>Load code</Btn></div>
+      <p className="small muted">A save code is your whole campaign as text: keep it in a note to move a game between browsers or devices.</p>
     </Modal>
   );
 }

@@ -99,6 +99,25 @@ export function exportSave(g: GameState) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+/** Portable save code (gzip + base64) for copy/paste where file downloads are unavailable. */
+export async function saveCode(g: GameState): Promise<string> {
+  const c = await compress(serialize(g));
+  if (typeof c === 'string') return 'WC0:' + btoa(unescape(encodeURIComponent(c)));
+  const bytes = new Uint8Array(await c.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return 'WC1:' + btoa(bin);
+}
+export async function fromSaveCode(code: string): Promise<GameState> {
+  code = code.trim();
+  if (code.startsWith('{')) return deserialize(code);
+  if (code.startsWith('WC0:')) return deserialize(decodeURIComponent(escape(atob(code.slice(4)))));
+  if (!code.startsWith('WC1:')) throw new Error('That is not a World Conquest save code.');
+  const bin = atob(code.slice(4));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return deserialize(await decompress(new Blob([bytes])));
+}
 export async function importSave(file: File): Promise<GameState> {
   return deserialize(await file.text());
 }

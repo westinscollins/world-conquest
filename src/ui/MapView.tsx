@@ -263,12 +263,14 @@ export function MapView() {
     const battleEl = t.closest?.('[data-battle]');
     audio.sfx('click');
     if (battleEl) { store.setUI({ battleReport: +battleEl.getAttribute('data-battle')! }); return; }
+    if (armyEl && ui.moveMode != null) { onMapRightClick(+armyEl.getAttribute('data-loc')!, null); store.setUI({ moveMode: null }); return; }
     if (armyEl) { const id = +armyEl.getAttribute('data-army')!; const a = store.game!.armies[id]; store.setUI({ selectedArmy: id, selectedFleet: null, selectedProvince: a?.location ?? null }); return; }
     if (fleetEl) { store.setUI({ selectedFleet: +fleetEl.getAttribute('data-fleet')!, selectedArmy: null }); return; }
     const seaEl = t.closest?.('[data-sea]');
     if (seaEl) return;
     const p = t.getAttribute?.('data-p');
-    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: ui.selectedArmy && store.game!.armies[ui.selectedArmy]?.location === +p ? ui.selectedArmy : null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null });
+    if (p != null && ui.moveMode != null && store.game!.armies[ui.moveMode]) { onMapRightClick(+p, null); store.setUI({ moveMode: null }); return; }
+    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null, moveMode: null });
     else store.setUI({ selectedProvince: null, selectedArmy: null, selectedFleet: null });
   };
   const onContext = (e: React.MouseEvent) => {
@@ -296,7 +298,8 @@ export function MapView() {
 
   return (
     <div className="map-wrap" ref={wrapRef}>
-      <svg ref={svgRef} className={`map mode-${ui.mapMode}`} viewBox={`${VX} ${VY} ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice"
+      {ui.moveMode != null && <div className="move-hint">Click a province to send {g.armies[ui.moveMode]?.name ?? 'the army'} there · <a onClick={() => store.setUI({ moveMode: null })}>cancel</a></div>}
+      <svg ref={svgRef} className={`map mode-${ui.mapMode}${ui.moveMode != null ? ' moving' : ''}`} viewBox={`${VX} ${VY} ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice"
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenu={onContext} onPointerLeave={() => setHover(null)}>
         <defs>
           <radialGradient id="vignette" cx="50%" cy="50%" r="75%">

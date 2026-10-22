@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { store, useStore } from './store';
 import { PROV, COUNTRY_GEO } from '../engine/geo';
 import { BUILDINGS, TERRAIN, WEATHER, UNITS, ECON } from '../engine/config';
-import { provinceOutput, buildCost, resourceYield } from '../engine/economy';
+import { provinceOutput, buildCost, resourceYield, collectionEfficiency } from '../engine/economy';
+import type { GameState, Nation, ProvinceState } from '../engine/types';
 import { provinceWeather } from '../engine/weather';
 import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf } from '../engine/world';
 import { perceivedPower } from '../engine/diplomacy';
@@ -163,7 +164,7 @@ function BuildTab({ p }: { p: number }) {
                 <b>{label}{lvl != null ? <span className="muted"> · level {lvl}/{BUILDINGS[k as BuildingKind].max}</span> : null}</b>
                 <Btn small kind="primary" disabled={!c.ok || !afford} title={c.reason ?? (!afford ? 'Insufficient funds' : '')} onClick={() => { const r = store.act((s) => build(s, p, k)); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Build</Btn>
               </div>
-              <div className="bi-cost"><span><Icon name="coin" size={12} color="#e8c36a" /> {moneyIC(c.cost)}</span><span>⏱ {c.days} days</span>{c.upkeep > 0 && <span>upkeep {money(c.upkeep, { digits: 2 })}/yr</span>}</div>
+              <div className="bi-cost"><span><Icon name="coin" size={12} color="#e8c36a" /> {moneyIC(c.cost)}</span><span>⏱ {c.days} days</span>{c.upkeep > 0 && <span>upkeep {money(c.upkeep, { digits: 2 })}/yr</span>}{(() => { const r = c.ok ? yearlyReturn(g, n, p, k) : null; return r == null ? null : <span className={r > 0 && c.cost / r <= 30 ? 'good' : 'muted'} title="Estimated change in your yearly budget once built: extra taxes (and food exports for estates) minus upkeep.">{r > 0 && c.cost / r <= 30 ? `≈ +${money(r, { digits: 2 })}/yr · pays back in ~${Math.ceil(c.cost / r)} yr` : `≈ ${money(r, { digits: 2, sign: true })}/yr · built for its other effects, not profit`}</span>; })()}</div>
               <div className="bi-desc">{c.reason ? <span className="warn">{c.reason}</span> : c.effect}</div>
             </div>
           );
@@ -203,6 +204,7 @@ function RecruitTab({ p }: { p: number }) {
                 <span><Icon name="manpower" size={12} /> {num(sp.personnel)}</span>
                 <span>⏱ {sp.trainDays}d</span>
                 <span>upkeep {money(c.upkeep, { digits: 2 })}/yr</span>
+                <span className={n.budget.net - c.upkeep < 0 ? 'bad' : 'muted'}>net after: {money(n.budget.net - c.upkeep, { sign: true })}/yr</span>
               </div>
               <div className="bi-desc">{sp.desc} <span className={stockOk ? 'good' : 'warn'}>Needs equipment: {eq} M IC{stockOk ? ' (in stock)' : ' (not yet in stock)'}</span>{c.reason && <><br /><span className="warn">{c.reason}</span></>}</div>
             </div>
@@ -211,4 +213,18 @@ function RecruitTab({ p }: { p: number }) {
       </div>
     </>
   );
+}
+
+/** Estimated yearly budget effect of a project: tax on extra output (+ food exports) minus upkeep. */
+function yearlyReturn(g: GameState, n: Nation, p: number, k: BuildingKind | 'repair' | 'develop'): number | null {
+  const st = g.provinces[p];
+  let next: ProvinceState;
+  if (k === 'develop') next = { ...st, dev: st.dev * 1.04 };
+  else if (k === 'repair') next = { ...st, damage: 0 };
+  else next = { ...st, buildings: { ...st.buildings, [k]: st.buildings[k] + 1 } };
+  const dOut = provinceOutput(g, next, n) - provinceOutput(g, st, n);
+  let r = dOut * n.taxRate * collectionEfficiency(n) * (ECON.STATUS_TAX[st.status] ?? 1);
+  if (k === 'farm' && n.resourceNet.food >= 0) r += (resourceYield(next, 'food') - resourceYield(st, 'food')) * g.market.food.price * 0.8;
+  if (k !== 'develop' && k !== 'repair') r -= BUILDINGS[k].upkeep * n.priceIndex;
+  return Math.abs(r) < 0.005 ? null : r;
 }

@@ -3,7 +3,7 @@ import { store, useGame } from '../store';
 import { Section, Btn, Tip, Stat, Tabs, Bar } from '../common';
 import { money, moneyIC, pct, num } from '../format';
 import { ECON, RESOURCE, EQUIP_LABEL, BUILDINGS } from '../../engine/config';
-import { setTax, setResearchFunding, takeLoan, repayLoan, setProduction, markTutorial, cancelBuild } from '../../engine/actions';
+import { setMobilization, setTax, setResearchFunding, takeLoan, repayLoan, setProduction, markTutorial, cancelBuild } from '../../engine/actions';
 import { maxDebt, interestFor, collectionEfficiency } from '../../engine/economy';
 import { factoryCapacity, totalFactories } from '../../engine/military';
 import { ownedBy } from '../../engine/world';
@@ -24,6 +24,7 @@ export function EconomyPanel() {
       <Tabs tabs={[['budget', 'Budget'], ['production', 'Production'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
       {tab === 'budget' && (
         <>
+          <BudgetAdvisor />
           <div className="grid3">
             <Stat label="National output" value={`${money(b.output)} IC/yr`} tip="Sum of province output (population × productivity + buildings), reduced by damage, occupation, resistance and instability." />
             <Stat label="Treasury" value={`${money(n.treasury)} IC`} tone={n.treasury < 0 ? 'bad' : undefined} />
@@ -177,5 +178,29 @@ function HistoryChart() {
       })}
       {series.map((s, i) => <text key={s.k} x={6 + i * 90} y={10} fill={s.c} fontSize={10}>{s.l}</text>)}
     </svg>
+  );
+}
+
+/** Shown when the budget is in deficit: the biggest costs and one-click fixes with their effect. */
+function BudgetAdvisor() {
+  const g = useGame();
+  const n = g.nations[g.player];
+  const b = n.budget;
+  if (b.net >= 0) return null;
+  const line = (k: string) => b.expenses.find((l) => l.key === k)?.amount ?? 0;
+  const atWar = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
+  const top = b.expenses.slice().sort((x, y) => y.amount - x.amount).slice(0, 3);
+  const fixes: { label: string; gain: string; run: () => void }[] = [];
+  if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / 1.35))}/yr`, run: () => store.act((s) => setMobilization(s, false)) });
+  if (line('production') > 0.05) fixes.push({ label: 'Pause equipment production', gain: `+${money(line('production'))}/yr`, run: () => store.act((s) => { for (const l of s.nations[s.player].production) l.factories = 0; }) });
+  if (n.researchFunding > 0.5) fixes.push({ label: 'Halve research funding', gain: `+${money(n.researchFunding / 2)}/yr`, run: () => store.act((s) => setResearchFunding(s, n.researchFunding / 2)) });
+  if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.act((s) => setTax(s, n.taxRate + 0.02)) });
+  return (
+    <div className="advisor">
+      <b className="bad">You are losing {money(-b.net)} IC a year.</b>
+      <span className="small"> Largest costs: {top.map((l) => `${l.label} (${money(l.amount)})`).join(', ')}.{atWar ? ' War halves trade income and adds field costs.' : ''}</span>
+      {fixes.length > 0 && <div className="row gap wrap" style={{ marginTop: 6 }}>{fixes.map((f) => <Btn key={f.label} small onClick={() => { f.run(); store.toast(`${f.label}: ${f.gain}`, 'good'); }}>{f.label} <span className="muted">{f.gain}</span></Btn>)}</div>}
+      <div className="small muted" style={{ marginTop: 4 }}>To shrink the army, open an army → Formations → tick one → Disband.</div>
+    </div>
   );
 }

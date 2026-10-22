@@ -28,7 +28,7 @@ export function MainMenu() {
     audio.init();
     const saves = await listSaves();
     if (!saves.length) return;
-    try { store.start(await loadGame(saves[0].slot)); } catch (e) { alert((e as Error).message); }
+    try { store.start(await loadGame(saves[0].slot)); } catch (e) { store.toast((e as Error).message, 'bad'); }
   };
   return (
     <div className="menu" onPointerDown={() => audio.init()}>
