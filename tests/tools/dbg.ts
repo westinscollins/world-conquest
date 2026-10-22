@@ -1,0 +1,11 @@
+import { newGame } from '../../src/engine/setup';
+import { runDays } from '../../src/engine/sim';
+import { doDeclareWar } from '../../src/engine/actions';
+const s = newGame('tutorial', { seed: 4 });
+doDeclareWar(s, 'BIH');
+import { moveArmy } from '../../src/engine/actions';
+const t = s.provinces.find(p => p.owner === 'BIH')!.id;
+for (const a of Object.values(s.armies).filter(a => a.owner === 'SRB')) console.log(moveArmy(s, a.id, t).message);
+runDays(s, 100);
+for (const b of Object.values(s.battles)) if (b.attacker.nation === 'SRB' || b.defender.nation === 'SRB') console.log(b.id, b.startDay, b.attacker.nation, b.defender.nation, b.result, b.timeline.length, Math.round(b.attacker.startStrength), Math.round(b.defender.startStrength), b.summary.slice(0, 80));
+console.log(s.nations.SRB.stats);

@@ -1,0 +1,40 @@
+{
+  "name": "world-conquest",
+  "version": "1.0.0",
+  "description": "World Conquest: Rise of an Empire — a browser grand-strategy game",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "vite",
+    "build": "tsc --noEmit -p . && vite build",
+    "preview": "vite preview",
+    "world": "tsx scripts/build-world.ts",
+    "e2e": "node tests/e2e/play.mjs",
+    "balance": "esbuild tests/tools/balance.ts --bundle --platform=node --format=esm --outfile=dist-tools/balance.mjs --log-level=warning && node dist-tools/balance.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fontsource/cinzel": "^5.1.0",
+    "@fontsource/inter": "^5.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
+    "@types/d3-geo": "^3.1.1",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "d3-delaunay": "^6.0.4",
+    "d3-geo": "^3.1.1",
+    "playwright": "^1.56.1",
+    "polygon-clipping": "^0.15.7",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  }
+}

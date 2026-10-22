@@ -1,0 +1,16 @@
+import { chromium } from 'playwright';
+const out = process.argv[2] || '/tmp/claude-0/-home-user/8dcb43f4-76f0-504b-8b6a-1730a5403a56/scratchpad';
+const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }).catch(async () => chromium.launch());
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+const errors = [];
+page.on('pageerror', (e) => errors.push('PAGEERROR ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text()); });
+await page.goto('http://localhost:5173/');
+await page.waitForTimeout(1500);
+await page.screenshot({ path: out + '/menu.png' });
+await page.click('text=Rise from the Balkans');
+await page.click('text=Begin campaign');
+await page.waitForTimeout(2500);
+await page.screenshot({ path: out + '/game.png' });
+console.log(errors.join('\n') || 'no errors');
+await browser.close();
