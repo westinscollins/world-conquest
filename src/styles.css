@@ -1,6 +1,6 @@
 :root {
   --bg: #0c1018;
-  --panel: rgba(16, 21, 30, 0.92);
+  --panel: rgba(16, 21, 30, 0.97);
   --panel2: rgba(24, 31, 44, 0.95);
   --line: rgba(196, 164, 98, 0.28);
   --line2: rgba(255, 255, 255, 0.08);
@@ -81,6 +81,8 @@ svg.map:active { cursor: grabbing; }
 @keyframes dash { to { stroke-dashoffset: -14; } }
 .army { cursor: pointer; } .army:hover rect:first-child { stroke: #fff; }
 .army.sel rect:first-child { filter: url(#glow); }
+.army.dot circle { transition: r .15s; } .army.dot:hover circle:not(.dot-sel) { stroke: #fff; }
+.dot-sel { fill: none; stroke: rgba(255,255,255,.85); stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; animation: dash 1.2s linear infinite; pointer-events: none; }
 .toknum { fill: #fff; font-weight: 600; text-anchor: middle; font-family: var(--font); paint-order: stroke; stroke: rgba(0,0,0,.5); stroke-width: .3px; pointer-events: none; }
 .fleet { cursor: pointer; } .fleet.sel rect { stroke: #fff; }
 .battle { cursor: pointer; } .battle .core { fill: #8a1f18; stroke: #ffb0a0; stroke-width: .6; vector-effect: non-scaling-stroke; }
@@ -279,7 +281,7 @@ svg.map:active { cursor: grabbing; }
   .side-panel.right { width: 300px; }
   .drawer { width: calc(100vw - 64px); }
 }
-@media (max-width: 760px) {
+@media (max-width: 600px) {
   html, body { font-size: 12px; }
   .topbar { height: auto; flex-wrap: wrap; padding: 6px; gap: 6px; }
   .tb-stats { order: 3; width: 100%; overflow-x: auto; }

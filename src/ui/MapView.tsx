@@ -217,6 +217,20 @@ export function MapView() {
     c.x = m.x - (m.x - c.x) * k; c.y = m.y - (m.y - c.y) * k; c.w = nw;
     clamp(); applyCam(); scheduleZoomState();
   };
+  // wheel / pinch must be a non-passive listener so it zooms the map rather than the whole page
+  const wheelRef = useRef(onWheel);
+  wheelRef.current = onWheel;
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const h = (e: WheelEvent) => { e.preventDefault(); wheelRef.current(e as unknown as React.WheelEvent); };
+    const stop = (e: Event) => e.preventDefault();
+    el.addEventListener('wheel', h, { passive: false });
+    el.addEventListener('gesturestart', stop);
+    el.addEventListener('gesturechange', stop);
+    return () => { el.removeEventListener('wheel', h); el.removeEventListener('gesturestart', stop); el.removeEventListener('gesturechange', stop); };
+  }, [g?.player]);
+
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     drag.current = { x: e.clientX, y: e.clientY, cx: cam.current.x, cy: cam.current.y, moved: false };
@@ -283,7 +297,7 @@ export function MapView() {
   return (
     <div className="map-wrap" ref={wrapRef}>
       <svg ref={svgRef} className={`map mode-${ui.mapMode}`} viewBox={`${VX} ${VY} ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice"
-        onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenu={onContext} onPointerLeave={() => setHover(null)}>
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenu={onContext} onPointerLeave={() => setHover(null)}>
         <defs>
           <radialGradient id="vignette" cx="50%" cy="50%" r="75%">
             <stop offset="60%" stopColor="#000" stopOpacity="0" />
@@ -358,8 +372,9 @@ function Labels({ labels, k, px, g }: { labels: ReturnType<typeof nationLabels>;
     <g className="labels" pointerEvents="none">
       {labels.map((l) => {
         const screen = l.size / px;
-        if (screen < 9 || screen > 240) return null;
-        return <text key={l.id} x={l.x} y={l.y} fontSize={l.size} className={`nlabel${l.id === g.player ? ' me' : ''}`} letterSpacing={l.size * 0.12}>{l.name.toUpperCase()}</text>;
+        if (screen < 9) return null;
+        const size = Math.min(l.size, 34 * px); // cap on-screen size when zoomed in
+        return <text key={l.id} x={l.x} y={l.y} fontSize={size} className={`nlabel${l.id === g.player ? ' me' : ''}`} letterSpacing={size * 0.12} opacity={screen > 60 ? 0.55 : 1}>{l.name.toUpperCase()}</text>;
       })}
       {k > 3.2 && PROV.map((p) => (p.cityPop > (k > 6 ? 0 : 6e5) ? (
         <g key={p.id}>
@@ -482,6 +497,10 @@ function natoSymbol(type: string, w: number, h: number) {
   }
 }
 
+/** Armies drawn as dots: area grows with personnel, ring colour shows side, a red pip flags low supply. */
+export function armyDotRadius(strength: number) {
+  return Math.min(16, 2.5 + 2 * Math.sqrt(Math.max(0, strength) / 1000)); // screen pixels
+}
 function Armies({ g, px, k, selected }: { g: GameState; px: number; k: number; selected: number | null }) {
   const byLoc = new Map<number, Army[]>();
   for (const a of Object.values(g.armies)) {
@@ -489,38 +508,33 @@ function Armies({ g, px, k, selected }: { g: GameState; px: number; k: number; s
     (byLoc.get(a.location) || byLoc.set(a.location, []).get(a.location)!).push(a);
   }
   const els: JSX.Element[] = [];
-  const W = 23 * px, H = 15 * px;
   for (const [loc, list] of byLoc) {
     const p = PROV[loc];
-    // at world zoom, show only own, allied and enemy armies (hide neutral clutter)
+    // show own, enemy and selected armies; allies only when zoomed in (hide neutral clutter)
     const vis = list.filter((a) => a.owner === g.player || atWar(g, a.owner, g.player) || a.id === selected || (k > 7 && isFriendly(g, a.owner, g.player)));
     if (!vis.length) continue;
     vis.sort((a, b) => (a.owner === g.player ? -1 : 1) - (b.owner === g.player ? -1 : 1));
-    const shown = vis.slice(0, 4);
-    shown.forEach((a, i) => {
+    const radii = vis.map((a) => armyDotRadius(armyStrength(a)) * px);
+    const spread = vis.length > 1 ? Math.max(...radii) * 1.15 : 0;
+    vis.forEach((a, i) => {
       const n = g.nations[a.owner];
-      const main = dominantType(a);
       const str = armyStrength(a);
-      const org = armyOrg(a);
-      const x = p.lx - W / 2 + i * (W * 0.32), y = p.ly - H / 2 + 7 * px + i * (H * 0.28);
+      const r = radii[i];
+      const ang = (i / vis.length) * Math.PI * 2 - Math.PI / 2;
+      const cx = p.lx + Math.cos(ang) * spread, cy = p.ly + Math.sin(ang) * spread;
       const sel = a.id === selected;
+      const mine = a.owner === g.player;
       const hostile = atWar(g, a.owner, g.player);
+      const label = `${mine ? a.name : `${n?.name ?? a.owner} army`} — ${mine ? Math.round(str).toLocaleString() : `~${(Math.round(str / 2000) * 2).toFixed(0)}k`} soldiers${mine ? ` · org ${Math.round(armyOrg(a) * 100)}% · supply ${Math.round(a.lastSupplyRatio * 100)}%` : ''}`;
       els.push(
-        <g key={a.id} data-army={a.id} data-loc={loc} transform={`translate(${x},${y})`} className={`army${sel ? ' sel' : ''}${hostile ? ' hostile' : ''}${a.owner === g.player ? ' mine' : ''}`} filter="url(#tokshadow)">
-          <rect width={W} height={H} rx={H * 0.12} fill={n?.color ?? '#555'} stroke={sel ? '#fff' : a.owner === g.player ? '#f4d27a' : hostile ? '#ff5a4a' : '#151515'} strokeWidth={(sel ? 1.8 : 1.1) * px} />
-          <g transform={`translate(${W * 0.08},${H * 0.12})`}>
-            <rect width={W * 0.5} height={H * 0.76} fill="rgba(0,0,0,0.25)" stroke="#fff" strokeWidth={H * 0.05} />
-            {natoSymbol(main, W * 0.5, H * 0.76)}
-          </g>
-          <text x={W * 0.79} y={H * 0.66} fontSize={H * 0.48} className="toknum">{str >= 10000 ? Math.round(str / 1000) : (str / 1000).toFixed(1)}</text>
-          <rect x={0} y={H + px} width={W} height={2.2 * px} fill="rgba(0,0,0,0.6)" />
-          <rect x={0} y={H + px} width={W * Math.max(0, Math.min(1, org))} height={2.2 * px} fill={org > 0.6 ? '#5fd35f' : org > 0.3 ? '#e0b84a' : '#e05a4a'} />
-          {a.lastSupplyRatio < 0.6 && <circle cx={W} cy={0} r={3.2 * px} fill="#e05a4a" stroke="#000" strokeWidth={0.6 * px} />}
-          {a.generalId != null && <path transform={`translate(${-2 * px},${-4 * px}) scale(${px * 0.42})`} d="M12 2l3 6.3 7 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 7-1z" fill="#f4d27a" stroke="#000" strokeWidth={1} />}
+        <g key={a.id} data-army={a.id} data-loc={loc} className={`army dot${sel ? ' sel' : ''}${hostile ? ' hostile' : ''}${mine ? ' mine' : ''}`}>
+          <title>{label}</title>
+          {sel && <circle cx={cx} cy={cy} r={r + 3 * px} className="dot-sel" />}
+          <circle cx={cx} cy={cy} r={r} fill={n?.color ?? '#555'} stroke={sel ? '#fff' : mine ? '#f4d27a' : hostile ? '#ff5a4a' : '#151515'} strokeWidth={(sel ? 2 : 1.4) * px} />
+          {a.lastSupplyRatio < 0.6 && mine && <circle cx={cx + r * 0.75} cy={cy - r * 0.75} r={2.2 * px} fill="#e05a4a" stroke="#000" strokeWidth={0.5 * px} />}
         </g>,
       );
     });
-    if (vis.length > 4) els.push(<text key={`more-${loc}`} x={p.lx + W} y={p.ly + 18 * px} fontSize={9 * px} className="toknum">+{vis.length - 4}</text>);
   }
   return <g className="armies">{els}</g>;
 }
