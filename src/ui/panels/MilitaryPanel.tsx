@@ -28,7 +28,7 @@ export function MilitaryPanel() {
         <Stat label="Upkeep" value={`${money(upkeep)}/yr`} tip="Wages, equipment maintenance, garrison supply and standby fuel." />
       </div>
       <div className="mob">
-        <Tip wide tip={`Mobilisation (${ECON.MOBILIZATION_DAYS} days to full): raises the organisation cap of all formations from 55% to 100%, more than doubles available manpower; costs +35% military upkeep and −5% output.`}>
+        <Tip wide tip={`Mobilisation (${ECON.MOBILIZATION_DAYS} days to full): raises the organisation cap of all formations from 55% to 100%, more than doubles available manpower; costs +${Math.round((ECON.MOBILIZED_UPKEEP - 1) * 100)}% military upkeep and −${Math.round((1 - ECON.MOBILIZED_OUTPUT) * 100)}% output.`}>
           <label className="check"><input type="checkbox" checked={n.mobilize} onChange={(e) => { const r = store.act((s) => setMobilization(s, e.target.checked)); r && store.toast(r.message, 'info'); }} /> National mobilisation</label>
         </Tip>
         <Bar value={n.mobilization} h={6} />

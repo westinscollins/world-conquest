@@ -27,7 +27,7 @@ export const unitUpkeep = (type: UnitType, n?: Nation) => unitUpkeepBreakdown(ty
 /** Extra cost per active (campaigning) day beyond the peacetime baseline. */
 export function unitOpsCostPerDay(type: UnitType, n?: Nation) {
   const u = UNITS[type];
-  return (u.supply * MIL.SUPPLY_PRICE + u.fuel * MIL.FUEL_PRICE_PER_OIL) * (1 - MIL.PEACE_SUPPLY_FACTOR) * (n?.priceIndex ?? 1);
+  return (u.supply * MIL.SUPPLY_PRICE + u.fuel * MIL.FUEL_PRICE_PER_OIL) * (1 - MIL.PEACE_SUPPLY_FACTOR) * MIL.OPS_COST_SHARE * (n?.priceIndex ?? 1);
 }
 export function shipUpkeep(t: ShipType, n?: Nation) {
   return (SHIPS[t].personnel * MIL.SOLDIER_WAGE + SHIPS[t].cost * SHIP_UPKEEP_SHARE) * (n?.priceIndex ?? 1);

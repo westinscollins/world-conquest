@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { store } from './store';
 import { CAMPAIGNS, newGame } from '../engine/setup';
 import { Btn, Modal } from './common';
@@ -6,10 +6,41 @@ import { SaveLoadDialog } from './SaveLoad';
 import { listSaves, loadGame } from './storage';
 import { COUNTRY_GEO, WORLD } from '../engine/geo';
 import type { GameSettings, VictoryConfig } from '../engine/types';
+import { ECON } from '../engine/config';
+import { money, num } from './format';
 import { audio } from '../audio/music';
 import { Icon } from './icons';
 
 const SUBREGIONS = [...new Set(WORLD.countries.map((c) => c.subregion))].sort();
+/** Starting output estimate, same formula as the world setup. */
+const startOutput = (gdp: number, pop: number) => ECON.OUTPUT_K * Math.pow(Math.max(500, gdp), ECON.OUTPUT_EXP) * (1 + 0.04 * Math.log10(pop / 1e6 + 1));
+const NATIONS = WORLD.countries.map((c) => ({ id: c.id, name: c.name, region: c.subregion, provinces: c.provinces.length, pop: c.pop, output: startOutput(c.gdp, c.pop) })).sort((a, b) => b.output - a.output);
+const difficultyOf = (out: number) => (out > 2500 ? ['Easy', 'd-tutorial'] : out > 600 ? ['Medium', 'd-standard'] : out > 150 ? ['Hard', 'd-hard'] : ['Very hard', 'd-hard']);
+
+function NationPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [q, setQ] = useState('');
+  const list = useMemo(() => NATIONS.filter((n) => !q || n.name.toLowerCase().includes(q.toLowerCase()) || n.region.toLowerCase().includes(q.toLowerCase())), [q]);
+  return (
+    <div className="nation-pick">
+      <input id="nation-search" placeholder={`Search ${NATIONS.length} nations or regions…`} value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="np-list">
+        {list.map((n, i) => {
+          const [d, cls] = difficultyOf(n.output);
+          return (
+            <button key={n.id} className={`np-row${value === n.id ? ' on' : ''}`} onClick={() => onChange(n.id)}>
+              <span className="np-rank">{NATIONS.indexOf(n) + 1}</span>
+              <span className="np-name"><b>{n.name}</b><span>{n.region} · {n.provinces} province{n.provinces > 1 ? 's' : ''} · {num(n.pop)} people</span></span>
+              <span className="np-out">{money(n.output)}</span>
+              <span className={`diff ${cls}`}>{d}</span>
+            </button>
+          );
+        })}
+        {!list.length && <p className="muted small">No nation matches “{q}”.</p>}
+      </div>
+      <p className="small muted">Ranked by starting economy (yearly output in IC). Smaller economies are harder starts.</p>
+    </div>
+  );
+}
 
 export function MainMenu() {
   const [camp, setCamp] = useState('tutorial');
@@ -17,11 +48,12 @@ export function MainMenu() {
   const [custom, setCustom] = useState(false);
   const [hasAuto, setHasAuto] = useState(false);
   const [vol, setVol] = useState(audio.musicVolume);
+  const [nation, setNation] = useState('SRB');
   useEffect(() => { listSaves().then((s) => setHasAuto(s.length > 0)).catch(() => {}); audio.setMood('menu'); }, []);
   const c = CAMPAIGNS.find((x) => x.id === camp)!;
   const start = (opts: Partial<GameSettings> & { seed?: number; nation?: string } = {}) => {
     audio.init();
-    const g = newGame(camp, opts);
+    const g = newGame(camp, camp === 'sandbox' ? { nation, ...opts } : opts);
     store.start(g);
   };
   const cont = async () => {
@@ -44,21 +76,22 @@ export function MainMenu() {
             {CAMPAIGNS.map((x) => (
               <button key={x.id} className={`camp${camp === x.id ? ' on' : ''}`} onClick={() => { setCamp(x.id); audio.sfx('click'); }}>
                 <span className="flag" style={{ background: 'var(--gold)' }} />
-                <div><b>{x.title}</b><span>{COUNTRY_GEO[x.nation].name} · {x.role}</span></div>
+                <div><b>{x.title}</b><span>{x.id === 'sandbox' ? x.role : `${COUNTRY_GEO[x.nation].name} · ${x.role}`}</span></div>
                 <span className={`diff d-${x.difficulty}`}>{x.difficulty}</span>
               </button>
             ))}
           </div>
           <div className="camp-detail">
             <h2>{c.title}</h2>
-            <div className="muted">{COUNTRY_GEO[c.nation].name} — {c.role}</div>
+            <div className="muted">{camp === 'sandbox' ? `Playing as ${COUNTRY_GEO[nation].name}` : `${COUNTRY_GEO[c.nation].name} — ${c.role}`}</div>
             <p>{c.blurb}</p>
+            {camp === 'sandbox' ? <NationPicker value={nation} onChange={setNation} /> : (
             <div className="sw">
               <div><h4>Strengths</h4><ul>{c.strengths.map((s) => <li key={s} className="good">{s}</li>)}</ul></div>
               <div><h4>Weaknesses</h4><ul>{c.weaknesses.map((s) => <li key={s} className="bad">{s}</li>)}</ul></div>
-            </div>
+            </div>)}
             <div className="row gap">
-              <Btn kind="primary" onClick={() => start()}>Begin campaign</Btn>
+              <Btn kind="primary" onClick={() => start()}>{camp === 'sandbox' ? `Play as ${COUNTRY_GEO[nation].name}` : 'Begin campaign'}</Btn>
               <Btn onClick={() => setCustom(true)}>Custom setup…</Btn>
             </div>
             <p className="small muted">All economic and military figures are fictional game-balance values for an alternate-history setting; borders and names come from public-domain Natural Earth data.</p>
@@ -71,13 +104,14 @@ export function MainMenu() {
         </div>
       </div>
       {load && <SaveLoadDialog loadOnly onClose={() => setLoad(false)} />}
-      {custom && <CustomSetup camp={camp} onClose={() => setCustom(false)} onStart={start} />}
+      {custom && <CustomSetup camp={camp} nation={camp === 'sandbox' ? nation : undefined} onClose={() => setCustom(false)} onStart={start} />}
     </div>
   );
 }
 
-function CustomSetup({ camp, onClose, onStart }: { camp: string; onClose: () => void; onStart: (o: Partial<GameSettings> & { seed?: number }) => void }) {
-  const c = CAMPAIGNS.find((x) => x.id === camp)!;
+function CustomSetup({ camp, nation, onClose, onStart }: { camp: string; nation?: string; onClose: () => void; onStart: (o: Partial<GameSettings> & { seed?: number }) => void }) {
+  const c0 = CAMPAIGNS.find((x) => x.id === camp)!;
+  const c = nation ? { ...c0, nation } : c0;
   const [diff, setDiff] = useState<GameSettings['difficulty']>(c.difficulty === 'tutorial' ? 'standard' : c.difficulty);
   const [kind, setKind] = useState<VictoryConfig['kind']>('domination');
   const [share, setShare] = useState(35);

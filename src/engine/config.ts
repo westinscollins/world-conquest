@@ -65,8 +65,8 @@ export const ECON = {
   MOBILIZED_MANPOWER_SHARE: 0.035,
   MANPOWER_REGEN: 0.0012, // per year of pop
   MOBILIZATION_DAYS: 30,
-  MOBILIZED_UPKEEP: 1.35,
-  MOBILIZED_OUTPUT: 0.95,
+  MOBILIZED_UPKEEP: 1.2,
+  MOBILIZED_OUTPUT: 0.97,
 };
 
 export const RESOURCE: Record<ResourceKind, { label: string; basePrice: number; perLevel: number }> = {
@@ -116,7 +116,8 @@ export const MIL = {
   SUPPLY_PRICE: 0.0011,    // M IC per supply unit (food, ammo, spares)
   FUEL_PRICE_PER_OIL: 0.0012, // M IC per fuel unit at oil base price
   PEACE_SUPPLY_FACTOR: 0.45, // garrison consumption share at peace (paid in upkeep)
-  TRANSPORT_COST_PER_ZONE: 0.15, // M IC per brigade per sea zone
+  TRANSPORT_COST_PER_ZONE: 0.1, // M IC per brigade per sea zone
+  OPS_COST_SHARE: 0.65,  // share of full campaign fuel/ammunition cost charged while moving or fighting
   TRANSPORT_DAYS_PER_ZONE: 3,
   ARMY_SUPPLY_DAYS: 25,    // carried supply stock in days of demand
   MAX_ARMY_UNITS: 24,

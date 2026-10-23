@@ -264,6 +264,21 @@ describe('war, territory and peace', () => {
   });
 });
 
+describe('any nation is playable', () => {
+  it('starts and runs as several different nations', () => {
+    for (const id of ['USA', 'BRA', 'MNE', 'NGA', 'AUS']) {
+      const s = newGame('sandbox', { seed: 4, nation: id });
+      expect(s.player).toBe(id);
+      expect(s.nations[id].isPlayer).toBe(true);
+      expect(Object.values(s.nations).filter((n) => n.isPlayer).length).toBe(1);
+      expect(Object.values(s.generals).some((g) => g.owner === id && g.available)).toBe(true);
+      runDays(s, 60);
+      expect(s.nations[id].alive).toBe(true);
+      expect(Number.isFinite(s.nations[id].treasury)).toBe(true);
+    }
+  });
+});
+
 describe('save / load', () => {
   it('round-trips state exactly and continues deterministically', () => {
     const s = newGame('poland', { seed: 9 });

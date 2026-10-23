@@ -19,6 +19,7 @@ export const CAMPAIGNS: Campaign[] = [
   { id: 'germany', title: 'Industrial Hegemon', nation: 'DEU', difficulty: 'standard', role: 'Wealthy industrial nation', blurb: 'The richest economy in Europe and a small, professional army. Convert factories into power before your neighbours unite.', strengths: ['Huge industry', 'Rich treasury', 'Advanced tech'], weaknesses: ['Small standing army', 'Many neighbours'] },
   { id: 'turkey', title: 'Legions of Anatolia', nation: 'TUR', difficulty: 'standard', role: 'Large army, costly upkeep', blurb: 'A huge conscript army that devours the budget. Use it before the deficit does what no enemy could.', strengths: ['Massive army', 'Mountain defences', 'Straits'], weaknesses: ['Budget deficit', 'High upkeep', 'Unstable region'] },
   { id: 'japan', title: 'Island Fortress', nation: 'JPN', difficulty: 'standard', role: 'Isolated, defensible nation', blurb: 'Safe behind the sea, rich and technologically advanced — but every conquest needs ships and transports.', strengths: ['Sea moat', 'High technology', 'Wealth'], weaknesses: ['Few resources', 'Naval logistics required'] },
+  { id: 'sandbox', title: 'Sandbox: Any Nation', nation: 'SRB', difficulty: 'standard', role: 'Choose any of the world\'s nations', blurb: 'Pick any country on the map and shape its destiny. Difficulty depends on the nation you choose: small, poor or encircled states are the hardest starts.', strengths: ['Total freedom'], weaknesses: ['No scripted help'] },
   { id: 'hard', title: 'Hard: Last Stand of Armenia', nation: 'ARM', difficulty: 'hard', role: 'Survival against stronger opponents', blurb: 'A tiny mountain republic between hostile powers, starting at war. Survive, then thrive.', strengths: ['Mountains', 'Motivated army'], weaknesses: ['Starts at war', 'Tiny economy', 'Landlocked'] },
 ];
 
@@ -35,14 +36,17 @@ const PERSONALITY_OVERRIDE: Record<string, Personality> = {
 /** Military spending as share of output per scenario nation (others derive from personality). */
 const MIL_SHARE: Record<string, number> = { SRB: 0.0714, POL: 0.07, DEU: 0.045, TUR: 0.16, JPN: 0.045, RUS: 0.11, USA: 0.07, CHN: 0.06, ARM: 0.12, AZE: 0.1, IRN: 0.09, PRK: 0.2, ISR: 0.1, IND: 0.06 };
 
-export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed?: number } = {}): GameState {
-  const camp = CAMPAIGNS.find((c) => c.id === campaignId) ?? CAMPAIGNS[1];
+export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed?: number; nation?: string } = {}): GameState {
+  const camp0 = CAMPAIGNS.find((c) => c.id === campaignId) ?? CAMPAIGNS[1];
+  // any nation may be played: the campaign's default nation is only a suggestion
+  const camp = opts.nation && COUNTRY_GEO[opts.nation] ? { ...camp0, nation: opts.nation } : camp0;
   const seed = (opts.seed ?? Math.floor(Math.random() * 2 ** 31)) >>> 0;
   let rs = seed;
   const rnd = () => { const [v, n] = mulberry(rs); rs = n; return v; };
   const settings: GameSettings = {
     difficulty: camp.difficulty, startYear: 2040, alternateHistory: 'fractured', aiAggression: camp.difficulty === 'tutorial' ? 0.55 : camp.difficulty === 'hard' ? 1.25 : 1,
     victory: { kind: 'domination', provinceShare: 0.35 }, ...opts,
+    nation: undefined,
   } as GameSettings;
   if (camp.id === 'hard' && !opts.victory) settings.victory = { kind: 'survival', years: 10 };
   if (camp.id === 'tutorial' && !opts.victory) settings.victory = { kind: 'hegemony', region: 'Southern Europe', regionShare: 0.5 };

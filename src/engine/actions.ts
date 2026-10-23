@@ -43,7 +43,7 @@ export function queueResearch(s: GameState, id: string): Result {
 }
 export function setMobilization(s: GameState, on: boolean): Result {
   P(s).mobilize = on;
-  return ok(on ? `Mobilisation ordered: readiness and manpower rise over ${ECON.MOBILIZATION_DAYS} days; upkeep +35%, output −5%.` : 'Demobilisation ordered.');
+  return ok(on ? `Mobilisation ordered: readiness and manpower rise over ${ECON.MOBILIZATION_DAYS} days; upkeep +${Math.round((ECON.MOBILIZED_UPKEEP - 1) * 100)}%, output −${Math.round((1 - ECON.MOBILIZED_OUTPUT) * 100)}%.` : 'Demobilisation ordered.');
 }
 export function doRecruit(s: GameState, type: UnitType, province: number, armyId: number | null = null): Result {
   const r = recruit(s, P(s), type, province, armyId);

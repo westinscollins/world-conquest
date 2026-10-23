@@ -191,7 +191,7 @@ function BudgetAdvisor() {
   const atWar = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
   const top = b.expenses.slice().sort((x, y) => y.amount - x.amount).slice(0, 3);
   const fixes: { label: string; gain: string; run: () => void }[] = [];
-  if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / 1.35))}/yr`, run: () => store.act((s) => setMobilization(s, false)) });
+  if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / ECON.MOBILIZED_UPKEEP))}/yr`, run: () => store.act((s) => setMobilization(s, false)) });
   if (line('production') > 0.05) fixes.push({ label: 'Pause equipment production', gain: `+${money(line('production'))}/yr`, run: () => store.act((s) => { for (const l of s.nations[s.player].production) l.factories = 0; }) });
   if (n.researchFunding > 0.5) fixes.push({ label: 'Halve research funding', gain: `+${money(n.researchFunding / 2)}/yr`, run: () => store.act((s) => setResearchFunding(s, n.researchFunding / 2)) });
   if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.act((s) => setTax(s, n.taxRate + 0.02)) });
