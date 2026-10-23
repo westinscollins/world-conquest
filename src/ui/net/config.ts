@@ -71,14 +71,30 @@ export function netConfig(): NetConfig {
   return { mode, brokers, ice, peerOptions, netdrop: Number(q.get('netdrop') || 0) };
 }
 
+const GID_KEY = 'wc-gid';
 /** A per-tab identity that survives reloads (so a reconnecting player is recognised). */
 export function tabId(): string {
   try {
-    const k = 'wc-gid';
-    let v = sessionStorage.getItem(k);
-    if (!v) { v = rand(12); sessionStorage.setItem(k, v); }
+    let v = sessionStorage.getItem(GID_KEY);
+    if (!v) { v = rand(12); sessionStorage.setItem(GID_KEY, v); }
     return v;
   } catch { return rand(12); }
+}
+// "Duplicate tab" copies sessionStorage, and with it the id: a new tab asks whether another open
+// tab already uses its id, and takes a fresh one if so (a reloaded tab gets no answer and keeps it).
+if (typeof BroadcastChannel !== 'undefined' && typeof sessionStorage !== 'undefined') {
+  try {
+    const ch = new BroadcastChannel('wc-tab-id');
+    const asked = sessionStorage.getItem(GID_KEY);
+    let checking = !!asked;
+    ch.onmessage = (e: MessageEvent<{ q?: string; a?: string }>) => {
+      const mine = sessionStorage.getItem(GID_KEY);
+      if (!mine) return;
+      if (e.data?.q === mine && !checking) ch.postMessage({ a: mine }); // in use here
+      else if (checking && e.data?.a === mine) { sessionStorage.setItem(GID_KEY, rand(12)); checking = false; }
+    };
+    if (asked) { ch.postMessage({ q: asked }); setTimeout(() => { checking = false; }, 1500); }
+  } catch { /* no storage: ids are per page load anyway */ }
 }
 export function rand(n: number) {
   const a = 'abcdefghijkmnpqrstuvwxyz23456789';

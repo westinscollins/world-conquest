@@ -46,7 +46,7 @@ export function ArmyPanel() {
       <div className="sp-head" style={{ borderColor: n.color }}>
         <div>
           {renaming ? (
-            <input id="army-rename" className="rename" autoFocus defaultValue={a.name} onBlur={(e) => { store.cmd('renameArmy', [a.id, e.target.value]); setRenaming(false); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }} />
+            <input id="army-rename" className="rename" autoFocus maxLength={40} defaultValue={a.name} onBlur={(e) => { store.cmd('renameArmy', [a.id, e.target.value]); setRenaming(false); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }} />
           ) : <div className="sp-title editable" title="Click to rename" onClick={() => setRenaming(true)}>{a.name}</div>}
           <div className="sp-sub">
             {a.embarked ? <>At sea → {PROV[a.embarked.dest].name}</> : <>in <a onClick={() => focusProvince(a.location)}>{PROV[a.location].name}</a></>}

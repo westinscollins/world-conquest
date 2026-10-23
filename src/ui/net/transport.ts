@@ -14,7 +14,8 @@ export interface NetPeer { peer: string; isMe: boolean; sameTab: boolean; presen
 export interface NetRoom {
   readonly kind: 'online' | 'local';
   myPeer(): string | null;
-  emit(topic: string, data: unknown): Promise<void>;
+  /** Send to everyone, or (where the transport can) only to the peers in `to`; receivers still check. */
+  emit(topic: string, data: unknown, to?: readonly string[]): Promise<void>;
   on(topic: string, fn: (m: NetMessage) => void): () => void;
   presence(patch: Record<string, unknown>): Promise<void>;
   peers(): readonly NetPeer[];

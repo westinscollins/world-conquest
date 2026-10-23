@@ -2,7 +2,7 @@
 // direct WebRTC connections. Every message is encrypted with a key derived from the room code;
 // topics are derived from it too, so the broker never sees the code or the game.
 import { MqttClient } from './mqtt';
-import { Batcher, open, type RoomKeys } from './crypt';
+import { Batcher, Inbox, type RoomKeys } from './crypt';
 import { BaseLink, isWire, type Wire } from './wire';
 import type { HostListener, ListenerStatus } from './star';
 import { TIMING, rand } from './config';
@@ -12,12 +12,12 @@ const hostTopic = (tid: string) => `wc1/${tid}/h`;
 const guestTopic = (tid: string, gid: string) => `wc1/${tid}/g/${gid}`;
 const short = (url: string) => { try { return new URL(url).hostname; } catch { return url; } };
 
-/** A link carried by one broker. */
+/** A link carried by one broker (through whichever connection to it is current). */
 class MqttLink extends BaseLink {
   private batch: Batcher;
-  constructor(gid: string, private client: MqttClient, topic: string, key: CryptoKey, from: string | null) {
+  constructor(gid: string, client: () => MqttClient | null, topic: string, key: CryptoKey, from: string | null) {
     super(gid, 'mqtt');
-    this.batch = new Batcher(key, (b) => this.client.publish(topic, b), from ? { s: from } : {}, TIMING.BATCH_MS);
+    this.batch = new Batcher(key, (b) => client()?.publish(topic, b), from ? { s: from } : {}, TIMING.BATCH_MS);
   }
   send(w: Wire) { if (!this.closed) this.batch.push(w); }
   feed(w: Wire) { this.receive(w); }
@@ -29,12 +29,12 @@ interface Env { s?: string; w?: unknown[] }
 
 // ---------------------------------------------------------------- host side
 export class MqttHostListener implements HostListener {
-  private brokers: { url: string; client: MqttClient | null; up: boolean; error?: string; retry?: () => void; links: Map<string, MqttLink> }[];
+  private brokers: { url: string; client: MqttClient | null; up: boolean; error?: string; retry?: () => void; links: Map<string, MqttLink>; rx: Inbox }[];
   private stopped = false;
   private add: (l: MqttLink) => void = () => {};
   private changed: () => void = () => {};
   constructor(urls: string[], private keys: RoomKeys) {
-    this.brokers = urls.map((url) => ({ url, client: null, up: false, links: new Map() }));
+    this.brokers = urls.map((url) => ({ url, client: null, up: false, links: new Map(), rx: new Inbox() }));
   }
   async start(add: (l: MqttLink) => void, changed: () => void) {
     this.add = add; this.changed = changed;
@@ -49,8 +49,10 @@ export class MqttHostListener implements HostListener {
     if (this.stopped) return;
     const client = new MqttClient(b.url, {
       clientId: `wch${rand(10)}`, keepalive: 60,
-      onMessage: (_t, payload) => void this.onMessage(b, payload),
-      onClose: () => { b.up = false; for (const l of b.links.values()) l.dead(); b.links.clear(); this.changed(); this.schedule(b, 0); },
+      onMessage: (_t, payload) => this.onMessage(b, payload),
+      // links outlive a short drop: the guests' messages flow again once this reconnects (links to
+      // guests that are really gone time out in the room)
+      onClose: () => { b.up = false; this.changed(); this.schedule(b, 0); },
     });
     b.client = client;
     try {
@@ -71,16 +73,18 @@ export class MqttHostListener implements HostListener {
     const delay = Math.min(30000, 2000 * 2 ** Math.min(attempt, 4));
     b.retry = after(delay, () => { b.retry = undefined; this.connect(b, attempt).catch(() => {}); });
   }
-  private async onMessage(b: (typeof this.brokers)[number], payload: Uint8Array) {
-    const env = (await open(this.keys.key, payload)) as Env | null;
-    if (!env || typeof env.s !== 'string' || !Array.isArray(env.w) || !b.client) return;
+  private onMessage(b: (typeof this.brokers)[number], payload: Uint8Array) {
+    b.rx.open(this.keys.key, payload, (x) => this.onEnvelope(b, x as Env));
+  }
+  private onEnvelope(b: (typeof this.brokers)[number], env: Env) {
+    if (typeof env.s !== 'string' || !Array.isArray(env.w)) return;
     const gid = env.s.slice(0, 24);
     let link = b.links.get(gid);
     for (const w of env.w) {
       if (!isWire(w)) continue;
       if (!link) {
         if (w.k !== 'hello') continue;
-        link = new MqttLink(gid, b.client, guestTopic(this.keys.tid, gid), this.keys.key, null);
+        link = new MqttLink(gid, () => b.client, guestTopic(this.keys.tid, gid), this.keys.key, null);
         b.links.set(gid, link);
         const l = link;
         link.onClose(() => { if (b.links.get(gid) === l) b.links.delete(gid); });
@@ -92,7 +96,13 @@ export class MqttHostListener implements HostListener {
   }
   stop() {
     this.stopped = true;
-    for (const b of this.brokers) { b.retry?.(); b.retry = undefined; for (const l of b.links.values()) l.close(); b.client?.close(); b.up = false; }
+    for (const b of this.brokers) {
+      b.retry?.(); b.retry = undefined;
+      for (const l of b.links.values()) l.close();
+      b.up = false;
+      const c = b.client;
+      after(500, () => c?.close()); // let the goodbyes go out first
+    }
   }
   status(): ListenerStatus[] { return this.brokers.map((b) => ({ name: `relay ${short(b.url)}`, up: b.up, detail: b.error })); }
 }
@@ -117,11 +127,12 @@ export function dialMqtt(urls: string[], keys: RoomKeys, gid: string, name: stri
     timers.push(giveUp as unknown as ReturnType<typeof setInterval>);
     for (const url of urls) {
       let mine: MqttLink | null = null;
-      const client = new MqttClient(url, {
+      const rx = new Inbox();
+      const client: MqttClient = new MqttClient(url, {
         clientId: `wcg${rand(10)}`, keepalive: 60,
-        onMessage: async (_t, payload) => {
-          const env = (await open(keys.key, payload)) as Env | null;
-          if (!env || !Array.isArray(env.w)) return;
+        onMessage: (_t, payload) => rx.open(keys.key, payload, (x) => {
+          const env = x as Env;
+          if (!Array.isArray(env.w)) return;
           for (const w of env.w) {
             if (!isWire(w)) continue;
             if (!mine && w.k === 'welcome' && !done) {
@@ -129,12 +140,12 @@ export function dialMqtt(urls: string[], keys: RoomKeys, gid: string, name: stri
               clearTimeout(giveUp);
               for (const t of timers) clearInterval(t);
               for (const c of clients) if (c !== client) c.close();
-              mine = new MqttLink(String(w.gid ?? 'host'), client, hostTopic(keys.tid), keys.key, gid);
-              mine.onClose(() => client.close());
+              mine = new MqttLink(String(w.gid ?? 'host'), () => client, hostTopic(keys.tid), keys.key, gid);
+              mine.onClose(() => { after(500, () => client.close()); }); // (after the goodbye)
               resolve(mine);
             } else if (mine) mine.feed(w);
           }
-        },
+        }),
         onClose: () => mine?.dead(),
       });
       clients.push(client);

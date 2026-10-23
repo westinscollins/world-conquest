@@ -108,6 +108,7 @@ class Store {
     const g = this.game;
     if (!g) return undefined;
     if (this.net?.role === 'guest') { this.net.sendCommand(name, args, done); return undefined; }
+    if (this.net && !Session.orderFits(args)) { const r = { ok: false, message: 'That order is too long to send to the other players.' }; this.toast(r.message, 'bad'); done?.(r); return r; }
     const r = runCommand(g, g.player, name, args);
     live.update(g); // show strike blasts and captures at once, even while paused
     this.syncMood();

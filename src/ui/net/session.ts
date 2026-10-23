@@ -17,6 +17,11 @@ import { every, after, sleep } from './clock';
 
 export type Ev = ['t'] | ['c', string, string, string, unknown[], string?] | ['h', number, string] | ['sp', number];
 interface Batch { q: number; e: Ev[] }
+/** One copy of the game on its way to some guests (null: everyone). */
+interface Outgoing { sid: string; chunks: string[]; to: string[] | null; q: number; seats?: Record<string, string | null> }
+/** Largest order (JSON of its arguments) that fits in the shared stream. */
+export const MAX_ORDER = 2000;
+const SNAP_COOLDOWN_MS = 8000; // a guest gets at most one full copy per this interval
 export interface Seat { peer: string; name: string; nation: string | null; role: 'host' | 'guest'; phase: string; online: boolean; build: string | null }
 /** This build's id (old builds don't send one). */
 export const BUILD = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
@@ -71,6 +76,13 @@ export class Session {
   private away = new Set<string>();             // seated peers that disconnected
   private sending = 0;
   private resumeSpeed = 0;
+  private settingClock = false;
+  private snapWant = new Set<string>();   // peers waiting for a copy of the game
+  private snapAll = false;                 // everyone needs one (game start)
+  private snapRun: Promise<void> | null = null;
+  private inFlight: string[] | 'all' | null = null;
+  private snapAt = new Map<string, number>(); // peer -> when its last copy finished
+  private recent: Outgoing[] = [];         // the last few copies, for re-sending lost chunks
   // guest state
   private applied = 0;
   private buffer = new Map<number, Batch>();
@@ -78,7 +90,9 @@ export class Session {
   private lastNeed = 0;
   private stalled = false;
   private pending = new Map<string, ((r: { ok: boolean; message: string }) => void) | null>();
-  private snap: { sid: string; q: number; n: number; parts: (string | undefined)[]; last: number } | null = null;
+  private snap: { sid: string; q: number; n: number; parts: (string | undefined)[]; last: number; seat: string | null } | null = null;
+  private doneSnaps: string[] = []; // copies already loaded or given up (late chunks are ignored)
+  private hostClosed = false;
   private stopWatchdog: (() => void) | null = null;
 
   constructor(role: 'host' | 'guest', code: string, name: string, hooks: SessionHooks) {
@@ -134,7 +148,7 @@ export class Session {
     this.status = 'Connection to the host lost — reconnecting…';
     this.hooks.onChange();
     let delay = 1000;
-    while (!this.closed) {
+    while (!this.closed && !this.hostClosed) {
       try {
         const room = await joinRoom(`wc-${this.code}`, 'guest', this.joinOpts());
         if (this.closed) { await room.leave(); break; }
@@ -160,6 +174,8 @@ export class Session {
     this.stopFlush?.();
     this.stopWatchdog?.();
     for (const u of this.unsub) u();
+    // so guests stop trying to reconnect
+    if (this.role === 'host') { try { await this.room?.emit('meta', { closed: true }); } catch { /* gone */ } }
     try { await this.room?.leave(); } catch { /* already gone */ }
   }
 
@@ -174,7 +190,7 @@ export class Session {
     const host = this.seats.find((s) => s.role === 'host' && !(s.peer === this.myPeer && this.role !== 'host'));
     if (host) this.hostPeer = host.peer;
     if (this.role === 'guest') {
-      if (left.some((p) => p.peer === this.hostPeer)) { this.status = 'The host disconnected. The game is frozen until they return.'; this.hooks.toast(this.status, 'bad'); }
+      if (left.some((p) => p.peer === this.hostPeer)) { if (!this.hostClosed) { this.status = 'The host disconnected. The game is frozen until they return.'; this.hooks.toast(this.status, 'bad'); } }
       else if (joined.some((p) => p.peer === this.hostPeer) && this.status.startsWith('The host')) { this.status = ''; this.requestSnapshot(); }
     } else {
       const g = this.hooks.getGame();
@@ -213,6 +229,8 @@ export class Session {
   }
   /** Host: record an event at the current point in the stream. */
   record(e: Ev) { if (this.role === 'host' && this.phase === 'playing') this.outbox.push(e); }
+  /** Does this order fit in the shared stream? */
+  static orderFits(args: unknown[]) { try { return JSON.stringify(args).length <= MAX_ORDER; } catch { return false; } }
   recordTick(g: GameState) {
     this.record(['t']);
     if (g.day % 30 === 0) this.record(['h', g.day, stateHash(g)]);
@@ -232,6 +250,7 @@ export class Session {
     };
     for (const e of events) {
       const len = JSON.stringify(e).length + 1;
+      if (len > MAX_MSG - 100) { console.warn('multiplayer: event too large to send, dropped', e[0]); continue; } // (orders are capped earlier)
       if (size + len > MAX_MSG) send();
       cur.push(e); size += len;
     }
@@ -242,17 +261,24 @@ export class Session {
     const g = this.hooks.getGame();
     const nation = this.seatOf.get(m.peer);
     const d = m.data as { id?: unknown; n?: unknown; a?: unknown };
-    if (!g || !nation || typeof d?.n !== 'string' || !Array.isArray(d.a)) return;
+    if (!g || !nation || typeof d?.n !== 'string' || !Array.isArray(d.a) || !Session.orderFits(d.a)) return;
     runCommand(g, nation, d.n, d.a);
     this.record(['c', m.peer, nation, d.n, d.a, typeof d.id === 'string' ? d.id.slice(0, 12) : undefined]);
     this.flush();
     this.hooks.onChange();
   }
   private onMeta(m: NetMessage) {
-    const d = m.data as { speed?: number };
+    const d = m.data as { speed?: number; closed?: boolean };
+    if (this.role === 'guest' && d?.closed && m.peer === this.hostPeer) {
+      this.hostClosed = true;
+      this.status = 'The host closed the game.';
+      this.hooks.toast(this.status, 'bad');
+      this.hooks.onChange();
+      return;
+    }
     if (this.role === 'host' && this.seatOf.has(m.peer) && typeof d?.speed === 'number' && d.speed >= 0 && d.speed <= 3) {
-      if (this.sending) return;
-      this.hooks.onSpeed(d.speed);
+      if (this.sending) this.resumeSpeed = d.speed; // a copy of the game is on its way: applies when it has arrived
+      else this.setClock(d.speed);
       const who = this.seats.find((s) => s.peer === m.peer)?.name ?? 'A player';
       this.hooks.toast(d.speed === 0 ? `${who} paused the game.` : `${who} set the speed to ${['', 'normal', 'fast', 'very fast'][d.speed]}.`, 'info');
     }
@@ -260,61 +286,113 @@ export class Session {
   private onNeed(m: NetMessage) {
     if (this.role !== 'host') return;
     const d = m.data as { from?: number; snap?: boolean; sid?: string; miss?: number[] };
-    if (d?.sid && Array.isArray(d.miss) && this.outgoing?.sid === d.sid) { void this.resendChunks(d.miss); return; }
-    if (d?.snap) { void this.sendSnapshot(m.peer); return; }
+    if (typeof d?.sid === 'string' && Array.isArray(d.miss)) { void this.resendChunks(m.peer, d.sid, d.miss); return; }
+    if (d?.snap) { if (!this.receiving(m.peer)) void this.sendSnapshot(m.peer); return; }
     if (typeof d?.from === 'number') {
-      if (!this.history.has(d.from) && d.from <= this.seq) { void this.sendSnapshot(m.peer); return; }
-      for (let q = d.from; q <= Math.min(this.seq, d.from + 40); q++) { const b = this.history.get(q); if (b) void this.room.emit('step', b).catch(() => {}); }
+      if (!this.history.has(d.from) && d.from <= this.seq) { if (!this.receiving(m.peer)) void this.sendSnapshot(m.peer); return; }
+      for (let q = d.from; q <= Math.min(this.seq, d.from + 40); q++) { const b = this.history.get(q); if (b) void this.room.emit('step', b, [m.peer]).catch(() => {}); }
     }
   }
-  private outgoing: { sid: string; chunks: string[]; to: string | null; q: number } | null = null;
-  /** Send the whole game (compressed) to one peer or everyone; the clock pauses meanwhile. */
-  async sendSnapshot(to: string | null) {
+  /** Is a copy of the game already on its way to this peer (or queued for it)? */
+  private receiving(peer: string) { return this.inFlight === 'all' || !!this.inFlight?.includes(peer) || this.snapWant.has(peer) || this.snapAll; }
+  /**
+   * Send the whole game (compressed) to one peer, or everyone (null). Copies go out one at a time
+   * (requests that arrive meanwhile are queued and share the next copy); the clock pauses meanwhile.
+   */
+  sendSnapshot(to: string | null): Promise<void> {
+    if (to === null) this.snapAll = true; else this.snapWant.add(to);
+    if (!this.snapRun) {
+      this.snapRun = (async () => {
+        try { await this.runSnapshots(); } finally { this.snapRun = null; }
+        if (!this.closed && (this.snapAll || this.snapWant.size)) void this.sendSnapshot(this.snapAll ? null : [...this.snapWant][0]);
+      })();
+    }
+    return this.snapRun;
+  }
+  private async runSnapshots() {
+    while (!this.closed && (this.snapAll || this.snapWant.size)) {
+      let to: string[] | null;
+      if (this.snapAll) { to = null; this.snapAll = false; this.snapWant.clear(); }
+      else {
+        // a guest that just got a copy waits a little before the next (a broken guest can't stall everyone)
+        const now = Date.now();
+        const ready = [...this.snapWant].filter((p) => now - (this.snapAt.get(p) ?? 0) >= SNAP_COOLDOWN_MS);
+        if (!ready.length) {
+          const next = Math.min(...[...this.snapWant].map((p) => (this.snapAt.get(p) ?? 0) + SNAP_COOLDOWN_MS));
+          await sleep(Math.max(200, next - now));
+          continue;
+        }
+        to = ready;
+        for (const p of ready) this.snapWant.delete(p);
+      }
+      try { await this.transfer(to); } catch { /* the guests ask again */ }
+      const done = Date.now();
+      for (const p of to ?? []) this.snapAt.set(p, done);
+    }
+  }
+  private async transfer(to: string[] | null) {
     const g = this.hooks.getGame();
     if (!g) return;
     this.flush();
     if (!this.sending) this.resumeSpeed = this.hooks.getSpeed();
     this.sending++;
-    this.hooks.onSpeed(0);
+    this.setClock(0);
+    this.inFlight = to ?? 'all';
     try {
       const trimmed = { ...g, events: g.events.slice(-60), battles: Object.fromEntries(Object.entries(g.battles).filter(([, b]) => b.result == null || g.day - b.startDay < 45)) } as GameState;
+      // this copy's place in the stream; read right before saveCode, which serialises at once
+      const q = this.seq;
       const code = await saveCode(trimmed);
-      const size = MAX_MSG - 200;
+      const size = MAX_MSG - 300;
       const chunks: string[] = [];
       for (let i = 0; i < code.length; i += size) chunks.push(code.slice(i, i + size));
-      this.outgoing = { sid: rid(), chunks, to, q: this.seq };
+      // each receiver learns which nation it plays (a reloaded tab takes its seat back)
+      const seats = to ? Object.fromEntries(to.map((p) => [p, this.seatOf.get(p) ?? null])) : undefined;
+      const o: Outgoing = { sid: rid(), chunks, to, q, seats };
+      this.recent = [...this.recent.slice(-3), o];
       for (let i = 0; i < chunks.length; i++) {
-        await this.room.emit('snap', { sid: this.outgoing.sid, to, q: this.outgoing.q, i, n: chunks.length, d: chunks[i] }).catch(() => {});
+        await this.emitChunk(o, i, to);
         if (i % 12 === 11) await sleep(650); // stay well under the message budget
       }
       // give guests time to ask for missing chunks, then resume
       await sleep(2500);
     } finally {
+      this.inFlight = null;
       this.sending--;
-      if (!this.sending) this.hooks.onSpeed(this.resumeSpeed);
+      if (!this.sending) this.setClock(this.resumeSpeed);
     }
   }
-  private async resendChunks(miss: number[]) {
-    const o = this.outgoing;
-    if (!o) return;
-    this.sending++;
-    try {
-      let k = 0;
-      for (const i of miss.slice(0, 120)) {
-        if (o.chunks[i] == null) continue;
-        await this.room.emit('snap', { sid: o.sid, to: o.to, q: o.q, i, n: o.chunks.length, d: o.chunks[i] }).catch(() => {});
-        if (++k % 12 === 0) await sleep(650);
-      }
-      await sleep(1500);
-    } finally { this.sending--; if (!this.sending) this.hooks.onSpeed(this.resumeSpeed); }
+  private emitChunk(o: Outgoing, i: number, to: string[] | null) {
+    return this.room.emit('snap', { sid: o.sid, to: o.to, q: o.q, i, n: o.chunks.length, d: o.chunks[i], ...(o.seats ? { seats: o.seats } : {}) }, to ?? undefined).catch(() => {});
+  }
+  /** A guest lost some chunks of a copy: send just those again (or a fresh copy if that one is gone). */
+  private async resendChunks(peer: string, sid: string, miss: number[]) {
+    const o = this.recent.find((x) => x.sid === sid);
+    if (!o || (o.to && !o.to.includes(peer))) { if (!this.receiving(peer)) void this.sendSnapshot(peer); return; }
+    let k = 0;
+    for (const i of miss.slice(0, 120)) {
+      if (!Number.isInteger(i) || o.chunks[i] == null) continue;
+      await this.emitChunk(o, i, [peer]);
+      if (++k % 12 === 0) await sleep(650);
+    }
+  }
+  /** Set the host's clock on the session's behalf (pausing for a transfer, a guest's request). */
+  private setClock(i: number) {
+    this.settingClock = true;
+    try { this.hooks.onSpeed(i); } finally { this.settingClock = false; }
   }
   /** Host: speed changes are part of the stream so guests show the same clock state. */
-  hostSpeed(i: number) { this.record(['sp', i]); this.flush(); }
+  hostSpeed(i: number) {
+    if (this.sending && !this.settingClock) this.resumeSpeed = i; // the host's own choice outlasts the transfer
+    this.record(['sp', i]);
+    this.flush();
+  }
 
   // ------------------------------------------------------------------ guest
   /** Guest: send an order to the host; `done` runs when it comes back executed. */
   sendCommand(name: string, args: unknown[], done?: (r: { ok: boolean; message: string }) => void) {
     if (this.phase !== 'playing' || this.stalled) { this.hooks.toast('Not connected to the game right now; order not sent.', 'bad'); return; }
+    if (!Session.orderFits(args)) { this.hooks.toast('That order is too long to send to the host.', 'bad'); return; }
     const id = rid();
     this.pending.set(id, done ?? null);
     this.room.emit('cmd', { id, n: name, a: args }).catch((e) => { this.pending.delete(id); this.hooks.toast(netError(e, 'Order could not be sent'), 'bad'); });
@@ -380,9 +458,18 @@ export class Session {
   }
   private guestWatchdog() {
     const now = Date.now();
+    if (this.hostClosed) return;
     // public-site rooms (they report info()) heal themselves when the link to the host dies
     if (!this.reconnecting && !this.closed && this.room?.info && !this.room.connected()) { void this.reconnect(); return; }
     if (this.reconnecting) return;
+    if (this.snap && now - this.snap.last > 8000) {
+      // chunks stopped coming although we asked for them: start again with a fresh copy
+      this.forget(this.snap.sid);
+      this.snap = null;
+      this.loading = null;
+      this.requestSnapshot();
+      return;
+    }
     if (this.snap && now - this.snap.last > 1800 && now - this.lastNeed > 1800) {
       const miss: number[] = [];
       for (let i = 0; i < this.snap.n && miss.length < 120; i++) if (this.snap.parts[i] == null) miss.push(i); // (sparse array: no forEach)
@@ -398,14 +485,19 @@ export class Session {
   }
   private onSnap(m: NetMessage) {
     if (this.role !== 'guest' || m.peer !== this.hostPeer) return;
-    const d = m.data as { sid: string; to: string | null; q: number; i: number; n: number; d: string };
-    if (!d || typeof d.sid !== 'string' || (d.to && d.to !== this.myPeer)) return;
+    const d = m.data as { sid: string; to: string[] | string | null; q: number; i: number; n: number; d: string; seats?: Record<string, string | null> };
+    if (!d || typeof d.sid !== 'string' || typeof d.q !== 'number' || typeof d.n !== 'number' || typeof d.i !== 'number') return;
+    if (d.to && !(Array.isArray(d.to) ? d.to.includes(this.myPeer) : d.to === this.myPeer)) return;
+    if (this.doneSnaps.includes(d.sid)) return; // late chunks of a copy we already have
     if (!this.snap || this.snap.sid !== d.sid) {
       if (this.phase === 'playing' && !this.stalled && !d.to) return; // a broadcast for someone else's (re)join
-      this.snap = { sid: d.sid, q: d.q, n: d.n, parts: new Array(d.n), last: Date.now() };
+      if (this.snap && d.q < this.snap.q) return; // an older copy than the one arriving
+      if (this.snap) this.forget(this.snap.sid);
+      this.snap = { sid: d.sid, q: d.q, n: d.n, parts: new Array(d.n), last: Date.now(), seat: d.seats?.[this.myPeer] ?? null };
       this.phase = 'loading';
     }
     const s = this.snap;
+    if (d.i < 0 || d.i >= s.n) return;
     s.parts[d.i] = d.d; s.last = Date.now();
     let got = 0;
     for (let i = 0; i < s.n; i++) if (s.parts[i] != null) got++;
@@ -413,12 +505,25 @@ export class Session {
     this.hooks.onChange();
     if (got === s.n) void this.finishSnapshot();
   }
+  private forget(sid: string) { this.doneSnaps = [...this.doneSnaps.slice(-9), sid]; }
   private async finishSnapshot() {
     const s = this.snap!;
     this.snap = null;
+    this.forget(s.sid);
     try {
       const g = await fromSaveCode(s.parts.join(''));
-      if (!this.nation || !g.nations[this.nation]) throw new Error('Your nation is not in this game.');
+      // the host says which nation this tab plays (a reloaded tab gets its seat back)
+      if (s.seat && g.nations[s.seat]) this.nation = s.seat;
+      if (!this.nation || !g.nations[this.nation]) {
+        // no seat in this game: back to the lobby to pick one (asking again would only repeat this)
+        this.phase = 'lobby';
+        this.stalled = false;
+        this.loading = null;
+        this.status = 'This game is already running. Pick the nation you played to rejoin it.';
+        await this.announce();
+        this.hooks.onChange();
+        return;
+      }
       g.player = this.nation;
       g.outcome = null;
       this.applied = s.q;
