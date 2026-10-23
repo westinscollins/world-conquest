@@ -6,6 +6,8 @@ import { EconomyPanel } from './panels/EconomyPanel';
 import { WarPanel } from './panels/WarPanel';
 import { live } from './live';
 import { num, neg } from './format';
+import { PROV } from '../engine/geo';
+import { armyStrength, armyMaxStrength, armyOrg } from '../engine/military';
 import { MilitaryPanel } from './panels/MilitaryPanel';
 import { DiplomacyPanel } from './panels/DiplomacyPanel';
 import { ResearchPanel, StatsPanel, HelpPanel } from './panels/OtherPanels';
@@ -92,6 +94,59 @@ export function EventLog() {
 }
 
 /** Live war ticker: provinces changing hands and the running casualty count. */
+/** Tab / shift-Tab: jump between your armies. */
+function cycleArmy(dir: number) {
+  const g = store.game!;
+  const list = Object.values(g.armies).filter((a) => a.owner === g.player && !a.embarked).sort((a, b) => a.id - b.id);
+  if (!list.length) return;
+  const i = list.findIndex((a) => a.id === store.ui.selectedArmy);
+  const a = list[(i + dir + list.length) % list.length];
+  store.setUI({ selectedArmy: a.id, selectedProvince: a.location, selectedFleet: null, group: [] });
+  focusProvince(a.location);
+}
+/** Single-key orders for the selected army (and any armies grouped with it). */
+function armyHotkey(k: string) {
+  const g = store.game!;
+  const id = store.ui.selectedArmy;
+  if (id == null || g.armies[id]?.owner !== g.player) return;
+  const ids = [id, ...store.ui.group];
+  const say = (r?: { ok: boolean; message: string }) => r && store.toast(r.message, r.ok ? 'info' : 'bad');
+  if (k === 'm') store.setUI({ moveMode: store.ui.moveMode === id ? null : id });
+  else if (k === 'h') ids.forEach((x) => store.cmd('haltArmy', [x]));
+  else if (k === 'r') ids.forEach((x) => { if (g.armies[x]?.battleId != null) say(store.cmd('retreatArmy', [x])); });
+  else if (k === 'f') { ids.forEach((x) => store.cmd('setStance', [x, 'advance'])); store.toast('Orders: attack', 'info'); }
+  else if (k === 'd') { ids.forEach((x) => store.cmd('setStance', [x, 'defend'])); store.toast('Orders: defend', 'info'); }
+  else if (k === 'g') { ids.forEach((x) => store.cmd('setStance', [x, 'hold'])); store.toast('Orders: hold', 'info'); }
+}
+
+/** One-click list of your armies above the map modes. */
+export function ArmyBar() {
+  const { g, ui } = useStore();
+  if (!g) return null;
+  const list = Object.values(g.armies).filter((a) => a.owner === g.player).sort((a, b) => a.id - b.id);
+  if (!list.length) return null;
+  return (
+    <div className="army-bar">
+      {list.map((a) => {
+        const sel = ui.selectedArmy === a.id || ui.group.includes(a.id);
+        const str = armyStrength(a), max = armyMaxStrength(a) || 1;
+        return (
+          <button key={a.id} className={cls('ab', sel && 'sel', a.battleId != null && 'fight')} title={`${a.name} — ${PROV[a.location].name}${a.path.length ? ' (moving)' : ''}. Click: select · shift-click: add to group · double-click: zoom`}
+            onClick={(e) => {
+              if (e.shiftKey && ui.selectedArmy != null && ui.selectedArmy !== a.id) store.setUI({ group: ui.group.includes(a.id) ? ui.group.filter((x) => x !== a.id) : [...ui.group, a.id] });
+              else store.setUI({ selectedArmy: a.id, selectedProvince: a.location, selectedFleet: null, group: [] });
+            }}
+            onDoubleClick={() => focusProvince(a.location)}>
+            {a.battleId != null ? '⚔' : a.path.length ? '→' : a.stance === 'advance' ? '▲' : a.stance === 'defend' ? '■' : '●'} {a.name.replace(' Army', '')}
+            <span className="mini"><div style={{ width: `${(str / max) * 100}%`, background: armyOrg(a) < 0.35 ? 'var(--bad)' : undefined }} /></span>
+            <span className="muted">{num(Math.round(str / 1000))}k</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function LiveTicker() {
   const { g } = useStore();
   if (!g) return null;
@@ -179,7 +234,9 @@ export function useHotkeys() {
       if (!store.game || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') { e.preventDefault(); store.togglePause(); }
       else if (e.key === '1' || e.key === '2' || e.key === '3') store.setSpeed(+e.key);
-      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null });
+      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, group: [] });
+      else if (e.key === 'Tab') { e.preventDefault(); cycleArmy(e.shiftKey ? -1 : 1); }
+      else armyHotkey(e.key.toLowerCase());
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);

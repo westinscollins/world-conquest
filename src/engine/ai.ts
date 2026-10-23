@@ -9,11 +9,12 @@ import { BUILDINGS, ECON, PERSONALITY, UNITS, MIL } from './config';
 import { PROV, COUNTRY_GEO, landLinks } from './geo';
 import { ownedBy, controlledBy, neighborsOf, atWar, enemiesOf, armiesIn, isAtWar, rel, peekRel, alliesOf, isFriendly } from './world';
 import { buildCost, startConstruction, provinceOutput, borrow, repay } from './economy';
-import { recruit, findPath, armyStrength, armyOrg, unitUpkeep, armyPower, deleteArmy, recruitCost } from './military';
+import { recruit, findPath, armyStrength, armyOrg, unitUpkeep, armyPower, deleteArmy, recruitCost, armySupplyDemand, militaryStrength } from './military';
 import { canResearch, TECHS } from './research';
 import { estimateBattle } from './battle';
 import { perceivedPower, coalitionPower, declareWar, checkDeclareWar, evaluatePeace, makePeace, scoreFor, termsCost, aiWouldAccept, applyTreaty, provinceValue, ultimatum, joinWar, changeRelation } from './diplomacy';
-import { supplyReport } from './supply';
+import { supplyReport, throughputOf } from './supply';
+import { aiStrikes } from './strikes';
 import { addEvent } from './events';
 import { nationIndex } from './sim';
 
@@ -24,6 +25,7 @@ export function aiWeekly(s: GameState, n: Nation) {
   if (!isAtWar(s, n.id) && Math.floor(s.day / 7) % 4 === (nationIndex(n.id) + 2) % 4) aiPeacetimeDeployment(s, n);
   if (Math.floor(s.day / 7) % 4 === nationIndex(n.id) % 4) aiDiplomacy(s, n); // monthly-ish
   aiPeace(s, n);
+  aiStrikes(s, n);
 }
 
 // ---------------------------------------------------------------- economy
@@ -168,10 +170,27 @@ function aiPeacetimeDeployment(s: GameState, n: Nation) {
   const fronts = [...threat.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p);
   if (!fronts.length) return;
   live.sort((a, b) => armyStrength(b) - armyStrength(a));
+  // spread armies so no province holds more troops than it can supply
+  const avgDemand = live.reduce((t, a) => t + armySupplyDemand(a), 0) / live.length || 1;
+  const assigned = new Map<number, number>();
+  const capOf = (p: number) => Math.max(1, Math.floor((throughputOf(s, n, p) * 0.9) / avgDemand));
+  const room = (p: number) => (assigned.get(p) ?? 0) < capOf(p);
+  const interior = owned.filter((p) => !threat.has(p)).sort((a, b) => throughputOf(s, n, b) - throughputOf(s, n, a));
   live.forEach((a, i) => {
-    if (a.path.length) return;
-    const target = i === live.length - 1 && live.length > 2 ? n.capital : fronts[i % fronts.length];
-    if (a.location === target) return;
+    let target: number | undefined;
+    if (i === live.length - 1 && live.length > 2 && room(n.capital)) target = n.capital;
+    else {
+      let best = -1;
+      for (const f of fronts) {
+        if (!room(f)) continue;
+        const sc = threat.get(f)! / (1 + (assigned.get(f) ?? 0));
+        if (sc > best) { best = sc; target = f; }
+      }
+      if (target == null) target = interior.find(room);
+    }
+    if (target == null) return;
+    assigned.set(target, (assigned.get(target) ?? 0) + 1);
+    if (a.path.length || a.location === target) return;
     const path = findPath(s, a, target);
     if (path && path.length <= 12 && path.every((p) => s.provinces[p].controller === n.id || isFriendly(s, n.id, s.provinces[p].controller))) a.path = path;
   });
@@ -208,8 +227,16 @@ export function aiArmiesDaily(s: GameState) {
  * `full` = AI: may attack, defend and redeploy; otherwise follows the army's stance.
  */
 export function armyAutomation(s: GameState, a: Army, full = false) {
-  if (a.battleId != null || a.embarked || a.path.length) return;
+  if (a.battleId != null || a.embarked) return;
   const n = s.nations[a.owner];
+  // AI: drop a long march whose destination is no longer a front (e.g. that enemy made peace)
+  if (full && a.path.length) {
+    const dest = a.path[a.path.length - 1];
+    const live = atWar(s, n.id, s.provinces[dest].controller) || landLinks(dest).some((l) => atWar(s, n.id, s.provinces[l.to].controller));
+    if (live) return;
+    a.path = []; a.moveProgress = 0;
+  }
+  if (a.path.length) return;
   const stance = full ? 'advance' : a.stance;
   const enemies = enemiesOf(s, n.id);
   const org = armyOrg(a);
@@ -283,6 +310,12 @@ function nearestOwn(s: GameState, a: Army): number | null {
 }
 
 function frontTarget(s: GameState, a: Army, n: Nation): number | null {
+  const bound = new Map<number, number>();
+  for (const x of Object.values(s.armies)) {
+    if (x.owner !== n.id || x.id === a.id) continue;
+    const d = x.path.length ? x.path[x.path.length - 1] : x.location;
+    bound.set(d, (bound.get(d) ?? 0) + armySupplyDemand(x));
+  }
   // own provinces bordering the enemy, preferring those with enemy armies nearby and few of our own
   let best: number | null = null, bs = -Infinity;
   for (const p of controlledBy(s, n.id)) {
@@ -293,6 +326,8 @@ function frontTarget(s: GameState, a: Army, n: Nation): number | null {
       for (const x of armiesIn(s, l.to)) if (atWar(s, x.owner, n.id)) enemyPow += armyPower(s, x);
     }
     if (!enemyAdj) continue;
+    // armies already there or on their way: don't send more than the province can supply
+    if (p !== a.location && (bound.get(p) ?? 0) + armySupplyDemand(a) > throughputOf(s, n, p)) continue;
     const own = armiesIn(s, p).filter((x) => x.owner === n.id).reduce((t, x) => t + armyPower(s, x), 0);
     const d = Math.hypot(PROV[p].x - PROV[a.location].x, PROV[p].y - PROV[a.location].y);
     const sc = enemyAdj * 2 + enemyPow * 0.05 - own * 0.04 - d * 0.02 + (s.provinces[p].owner !== n.id ? 1 : 0);
@@ -420,6 +455,12 @@ function aiPeace(s: GameState, n: Nation) {
       else if (pick.length) terms = { provinces: pick, taker: n.id, reparations: 0, vassalize: false, annex: false, white: false };
       else if (score > 25) terms = { provinces: [], taker: n.id, reparations: Math.round(e.budget.output * 0.05), vassalize: false, annex: false, white: false };
     } else if (n.warExhaustion > 45 || years > 3 || (score < -25 && n.warExhaustion > 25)) {
+      terms = { provinces: [], taker: null, reparations: 0, vassalize: false, annex: false, white: true };
+    } else if (s.day - (w.lastBattleDay ?? w.startDay) > 300 && !w.occupiedByA.length && !w.occupiedByD.length) {
+      // a war with no fighting (no shared border, no way to reach each other): call it off
+      terms = { provinces: [], taker: null, reparations: 0, vassalize: false, annex: false, white: true };
+    } else if (militaryStrength(s, n.id) * 6 < militaryStrength(s, enemy) && score < 10 && s.day - w.startDay > 120) {
+      // hopelessly outmatched: sue for peace before the enemy arrives
       terms = { provinces: [], taker: null, reparations: 0, vassalize: false, annex: false, white: true };
     }
     if (!terms) continue;

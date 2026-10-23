@@ -298,6 +298,7 @@ export function proposeTreaty(s: GameState, from: Nation, toId: string, kind: 'a
   const to = s.nations[toId];
   if (!to?.alive) return { ok: false, reason: 'Nation does not exist.' };
   if (atWar(s, from.id, toId)) return { ok: false, reason: 'You are at war.' };
+  if (from.embargoUntil > s.day || to.embargoUntil > s.day) return { ok: false, reason: 'No nation will sign anything with a state under the nuclear embargo.' };
   const r = rel(s, from.id, toId);
   if (kind === 'alliance' && r.alliance) return { ok: false, reason: 'Already allied.' };
   if (kind === 'trade' && r.trade) return { ok: false, reason: 'Trade agreement already in place.' };

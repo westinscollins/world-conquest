@@ -170,7 +170,8 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
     oil: agg.fuelDemand * RESOURCE_DEMAND.oilPerFuel + agg.output * RESOURCE_DEMAND.oilPerOutput,
     rare: 0, // rare metals are an export commodity
   };
-  const outlet = hasTradeOutlet(s, n, agg.owned, enemies);
+  const embargo = n.embargoUntil > s.day;
+  const outlet = !embargo && hasTradeOutlet(s, n, agg.owned, enemies);
   let exports = 0, imports = 0;
   for (const r of RES_KINDS) {
     const net = agg.production[r] - demand[r];
@@ -186,6 +187,7 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
       n.shortages[r] = Math.min(1, -net / Math.max(1, demand[r]));
     }
   }
+  if (embargo) expenses.push({ key: 'embargo', label: 'Global embargo (nuclear use)', amount: agg.output * 0.12 * pi, detail: `Lost commerce, frozen assets and capital flight until ${fmtDate(s, n.embargoUntil)}. No trade, imports or treaties.` });
   if (exports > 0) income.push({ key: 'exports', label: 'Resource exports', amount: exports, detail: 'Surplus food, steel, oil and rare metals sold at 80% of world price' });
 
   // subjects / reparations

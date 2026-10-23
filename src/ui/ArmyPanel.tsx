@@ -59,6 +59,8 @@ export function ArmyPanel() {
       <div className="army-actions">
         <Btn small kind={ui.moveMode === a.id ? 'primary' : undefined} disabled={a.battleId != null || !!a.embarked} onClick={() => store.setUI({ moveMode: ui.moveMode === a.id ? null : a.id })}>{ui.moveMode === a.id ? 'Click a province…' : 'Move / attack'}</Btn>
         {a.path.length > 0 && !a.battleId && <Btn small onClick={() => store.cmd('haltArmy', [a.id])}>Halt</Btn>}
+        <Btn small disabled={a.units.length < 2} title="Split into two armies of equal size" onClick={() => { const r = store.cmd('splitHalf', [a.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Split in half</Btn>
+        {others.length > 0 && <Btn small title="Group every army in this province with this one" onClick={() => store.setUI({ group: others.map((o) => o.id) })}>Select all here</Btn>}
         {a.battleId != null && <Btn small kind="danger" onClick={() => { const r = store.cmd('retreatArmy', [a.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Retreat from battle</Btn>}
         <Btn small kind="ghost" onClick={() => store.setUI({ selectedArmy: null, selectedProvince: a.location, moveMode: null })}>Province &amp; construction</Btn>
       </div>

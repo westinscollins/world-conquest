@@ -3,14 +3,16 @@ import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { GameState, Army } from '../engine/types';
 import { PROV, WORLD } from '../engine/geo';
 import { store, useStore, type MapMode } from './store';
-import { TERRAIN, UNITS, WEATHER } from '../engine/config';
+import { TERRAIN, UNITS, WEATHER, STRIKES } from '../engine/config';
+import { checkStrike, interceptRate, strikeDistance } from '../engine/strikes';
+import { estimateBattle } from '../engine/battle';
 import { atWar, isFriendly, peekRel, armiesIn } from '../engine/world';
 import { supplyMap } from '../engine/supply';
-import { armyStrength, armyPower, armyOrg } from '../engine/military';
+import { armyStrength, armyPower, armyOrg, findPath, pathDays } from '../engine/military';
 import { provinceOutput } from '../engine/economy';
 import { provinceWeather } from '../engine/weather';
 import { num, money } from './format';
-import { onMapRightClick } from './commands';
+import { onMapRightClick, strikeAt } from './commands';
 import { audio } from '../audio/music';
 
 const [VX, VY, VW, VH] = WORLD.meta.view;
@@ -143,6 +145,8 @@ export function MapView() {
   const [decor, setDecor] = useState<Decor | null>(null);
   const drag = useRef<{ x: number; y: number; cx: number; cy: number; moved: boolean } | null>(null);
   const [hover, setHover] = useState<{ p: number; x: number; y: number } | null>(null);
+  const boxRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   useEffect(() => { fetch('geo/decor.json').then((r) => r.json()).then(setDecor).catch(() => setDecor({ rivers: [], lakes: [], borders: [] })); }, []);
 
@@ -234,9 +238,17 @@ export function MapView() {
 
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if (e.shiftKey && !(e.target as Element).closest?.('[data-army]')) {
+      // shift-drag draws a box that selects your armies inside it
+      boxRef.current = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      setBox({ ...boxRef.current });
+      return;
+    }
     drag.current = { x: e.clientX, y: e.clientY, cx: cam.current.x, cy: cam.current.y, moved: false };
   };
   const onMove = (e: React.PointerEvent) => {
+    if (boxRef.current) { boxRef.current.x1 = e.clientX; boxRef.current.y1 = e.clientY; setBox({ ...boxRef.current }); return; }
     const d = drag.current;
     if (d) {
       const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -254,6 +266,17 @@ export function MapView() {
     if (p != null) setHover({ p: +p, x: e.clientX, y: e.clientY }); else if (hover) setHover(null);
   };
   const onUp = (e: React.PointerEvent) => {
+    const bx = boxRef.current;
+    if (bx) {
+      boxRef.current = null; setBox(null);
+      const [l, r, tp, b] = [Math.min(bx.x0, bx.x1), Math.max(bx.x0, bx.x1), Math.min(bx.y0, bx.y1), Math.max(bx.y0, bx.y1)];
+      if (r - l > 6 || b - tp > 6) {
+        const ids: number[] = [];
+        document.querySelectorAll('.army.dot.mine').forEach((el) => { const q = el.getBoundingClientRect(); const cx = q.x + q.width / 2, cy = q.y + q.height / 2; if (cx >= l && cx <= r && cy >= tp && cy <= b) ids.push(+el.getAttribute('data-army')!); });
+        if (ids.length) { const a = store.game!.armies[ids[0]]; store.setUI({ selectedArmy: ids[0], group: ids.slice(1), selectedFleet: null, selectedProvince: a?.location ?? null }); store.toast(`${ids.length} ${ids.length === 1 ? 'army' : 'armies'} selected — right-click a province to move them all.`, 'info'); }
+        return;
+      }
+    }
     const d = drag.current;
     drag.current = null;
     if (d?.moved) return;
@@ -263,6 +286,11 @@ export function MapView() {
     const fleetEl = t.closest?.('[data-fleet]');
     const battleEl = t.closest?.('[data-battle]');
     audio.sfx('click');
+    if (ui.strike) {
+      const sp = t.getAttribute?.('data-p') ?? armyEl?.getAttribute('data-loc') ?? (battleEl ? String(store.game!.battles[+battleEl.getAttribute('data-battle')!]?.province) : null);
+      if (sp != null) strikeAt(+sp);
+      return;
+    }
     if (battleEl) { store.setUI({ battleReport: +battleEl.getAttribute('data-battle')! }); return; }
     if (armyEl && ui.moveMode != null) { onMapRightClick(+armyEl.getAttribute('data-loc')!, null); store.setUI({ moveMode: null }); return; }
     if (armyEl) {
@@ -289,7 +317,8 @@ export function MapView() {
     const t = e.target as Element;
     const seaEl = t.closest?.('[data-sea]');
     const p = t.getAttribute?.('data-p') ?? t.closest?.('[data-army]')?.getAttribute('data-loc');
-    onMapRightClick(p != null ? +p : null, seaEl ? +seaEl.getAttribute('data-sea')! : null);
+    if (ui.strike) { store.setUI({ strike: null }); return; } // right-click cancels targeting
+    onMapRightClick(p != null ? +p : null, seaEl ? +seaEl.getAttribute('data-sea')! : null, e.shiftKey);
   };
 
   // ---- derived layers
@@ -348,12 +377,16 @@ export function MapView() {
         <FrontLines g={g} px={px} />
         <Paths g={g} px={px} selArmy={selArmy} />
         <Labels labels={labels} k={k} px={px} g={g} />
+        {ui.strike && <StrikeTargets g={g} kind={ui.strike.kind} />}
         <Battles g={g} px={px} />
+        <Blasts px={px} />
         <Armies g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} />
         <LiveLayer px={px} />
         <rect x={VX - 400} y={VY - 300} width={VW + 800} height={VH + 600} fill="url(#vignette)" pointerEvents="none" opacity={0.35} />
       </svg>
       {hover && <MapTooltip g={g} p={hover.p} x={hover.x} y={hover.y} mode={ui.mapMode} />}
+      {box && <div className="select-box" style={{ left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }} />}
+      {ui.strike && <div className="strike-banner">{ui.strike.kind === 'nuke' ? '☢ NUCLEAR STRIKE: click a target province' : `Click an enemy province to fire ${Math.min(ui.strike.count, g.nations[g.player].arsenal[ui.strike.kind])} ${STRIKES[ui.strike.kind].plural}`} · highlighted = in range · right-click or Esc to cancel</div>}
       <Legend mode={ui.mapMode} />
     </div>
   );
@@ -472,7 +505,10 @@ function Paths({ g, px, selArmy }: { g: GameState; px: number; selArmy: Army | n
         }
         const pts = [a.location, ...a.path].map((p) => `${PROV[p].lx},${PROV[p].ly}`).join(' ');
         const hostile = a.path.some((p) => atWar(g, g.provinces[p].controller, a.owner));
-        return <polyline key={a.id} points={pts} className={`path${hostile ? ' attack' : ''}${a === selArmy ? ' sel' : ''}`} strokeWidth={(a === selArmy ? 2.6 : 1.8) * px} markerEnd={hostile ? 'url(#arrow-red)' : 'url(#arrow)'} />;
+        const line = <polyline key={a.id} points={pts} className={`path${hostile ? ' attack' : ''}${a === selArmy ? ' sel' : ''}`} strokeWidth={(a === selArmy ? 2.6 : 1.8) * px} markerEnd={hostile ? 'url(#arrow-red)' : 'url(#arrow)'} />;
+        if (a !== selArmy) return line;
+        const end = PROV[a.path[a.path.length - 1]];
+        return <g key={a.id}>{line}<text className="eta-label" x={end.lx + 6 * px} y={end.ly - 6 * px} fontSize={11 * px} strokeWidth={3 * px}>~{Math.ceil(pathDays(g, a, a.path))}d</text></g>;
       })}
     </g>
   );
@@ -526,6 +562,32 @@ function LiveLayer({ px }: { px: number }) {
         return (
           <g key={f.id} transform={`translate(${p.lx},${p.ly - 26 * px}) scale(${px})`}>
             <text className={`float ${f.mine ? 'mine' : 'enemy'}`} x={f.mine ? -6 : 6} textAnchor={f.mine ? 'end' : 'start'}>{f.text}</text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Strike mode: provinces you can hit right now. */
+function StrikeTargets({ g, kind }: { g: GameState; kind: 'drone' | 'missile' | 'nuke' }) {
+  const n = g.nations[g.player];
+  const list = useMemo(() => g.provinces.filter((st) => !checkStrike(g, { ...n, arsenal: { drone: 1, missile: 1, nuke: 1 } }, kind, st.id, 1)).map((st) => st.id),
+    [g, kind, store.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <g className={`strike-targets ${kind}`}>{list.map((p) => <path key={p} d={PROV[p].path} data-p={p} />)}</g>;
+}
+/** Explosions where strikes land. */
+function Blasts({ px }: { px: number }) {
+  return (
+    <g className="blasts" pointerEvents="none">
+      {live.blasts.map((b) => {
+        const p = PROV[b.province];
+        const r = (b.kind === 'nuke' ? 60 : b.kind === 'missile' ? 18 : 12) * px;
+        return (
+          <g key={b.id} transform={`translate(${p.lx},${p.ly})`} className={`blast ${b.kind}`}>
+            <circle r={r} className="ring" />
+            <circle r={r * 0.55} className="core" />
+            {b.kind === 'nuke' && <circle r={r * 1.8} className="shock" />}
           </g>
         );
       })}
@@ -621,8 +683,39 @@ function MapTooltip({ g, p, x, y, mode }: { g: GameState; p: number; x: number; 
         {armies.length > 0 && <><span>Armies</span><b>{armies.map((a) => `${g.nations[a.owner]?.name ?? a.owner} ${num(armyStrength(a))}`).join(', ')}</b></>}
       </div>
       {extra && <div className="tt-extra">{extra}</div>}
+      <OrderPreview g={g} p={p} />
     </div>
   );
+}
+
+/** What an order would do here: attack odds for the selected army, or strike details in strike mode. */
+function OrderPreview({ g, p }: { g: GameState; p: number }) {
+  const ui = store.ui;
+  const me = g.nations[g.player];
+  if (ui.strike) {
+    const err = checkStrike(g, me, ui.strike.kind, p, 1);
+    if (err) return <div className="tt-extra bad">{err}</div>;
+    const d = strikeDistance(g, g.player, p);
+    const ic = interceptRate(g, g.player, p, ui.strike.kind);
+    const foes = armiesIn(g, p).filter((a) => atWar(g, a.owner, g.player)).reduce((t, a) => t + armyStrength(a), 0);
+    return <div className="tt-extra good">In range{d.fleet ? ' (fleet offshore)' : isFinite(d.km) ? ` · ${Math.round(d.km)} km` : ''} · {Math.round(ic * 100)}% shot down · {foes ? `${num(foes)} enemy troops here` : 'no troops: hits buildings'}</div>;
+  }
+  const sel = ui.selectedArmy != null ? g.armies[ui.selectedArmy] : null;
+  if (!sel || sel.owner !== g.player || sel.location === p || sel.battleId != null) return null;
+  const ctrl0 = g.provinces[p].controller;
+  if (ctrl0 !== g.player && !isFriendly(g, g.player, ctrl0) && !atWar(g, g.player, ctrl0)) return <div className="tt-extra muted">Neutral: no military access (declare war or ally first)</div>;
+  const path = findPath(g, sel, p);
+  if (!path) return <div className="tt-extra muted">No land route for {sel.name}{PROV[p].seas.length ? ' (try naval transport from a port)' : ''}</div>;
+  const days = Math.ceil(pathDays(g, sel, path));
+  const ctrl = g.provinces[p].controller;
+  const hostile = armiesIn(g, p).filter((a) => atWar(g, a.owner, g.player));
+  const group = [sel, ...ui.group.map((id) => g.armies[id]).filter((a): a is Army => !!a && a.owner === g.player)];
+  if (!hostile.length && !atWar(g, ctrl, g.player)) return <div className="tt-extra">Right-click: march {group.length > 1 ? `${group.length} armies` : sel.name} here · ~{days} days{sel.path.length ? ' · shift+right-click adds a waypoint' : ''}</div>;
+  if (!hostile.length) return <div className="tt-extra good">Undefended — right-click to capture · ~{days} days</div>;
+  const from = path.length > 1 ? path[path.length - 2] : sel.location;
+  const est = estimateBattle(g, group, p, from, hostile, 0);
+  const pct = Math.round(est.odds * 100);
+  return <div className={`tt-extra ${pct >= 60 ? 'good' : pct >= 40 ? 'warn' : 'bad'}`}>Attack odds {pct}% · your {num(group.reduce((t, a) => t + armyStrength(a), 0))} vs ~{num(Math.round(hostile.reduce((t, a) => t + armyStrength(a), 0) / 1000) * 1000)} · ~{days} days</div>;
 }
 
 function Legend({ mode }: { mode: MapMode }) {

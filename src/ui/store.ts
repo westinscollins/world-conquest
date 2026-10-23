@@ -31,6 +31,8 @@ export interface UIState {
   moveMode: number | null; // army id awaiting a left-click destination
   /** Extra armies selected with shift-click; they move together with the selected army. */
   group: number[];
+  /** Strike targeting mode: the next province clicked is hit. */
+  strike: null | { kind: 'drone' | 'missile' | 'nuke'; count: number };
   toasts: { id: number; text: string; kind: 'info' | 'good' | 'bad' | 'war' }[];
   confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void };
   peaceWar: number | null;
@@ -44,7 +46,7 @@ class Store {
   net: Session | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
-    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
+    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], strike: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;
   private listeners = new Set<() => void>();
@@ -102,6 +104,7 @@ class Store {
     if (!g) return undefined;
     if (this.net?.role === 'guest') { this.net.sendCommand(name, args, done); return undefined; }
     const r = runCommand(g, g.player, name, args);
+    live.update(g); // show strike blasts and captures at once, even while paused
     if (this.net?.role === 'host') this.net.record(['c', this.net.myPeer, g.player, name, args]);
     this.emit();
     done?.(r);
@@ -185,10 +188,8 @@ class Store {
         else if (e.kind === 'achievement') audio.sfx('fanfare');
       }
     }
-    if (g.peaceOffers.some((o) => o.to === g.player && o.day === g.day) || g.proposals.some((p) => p.to === g.player && p.day === g.day && p.kind === 'callToArms')) {
-      if (!online) this.ui = { ...this.ui, speed: 0 };
-      audio.sfx('chime');
-    }
+    // offers no longer pause the game: a chime and the Diplomacy badge announce them
+    if (g.peaceOffers.some((o) => o.to === g.player && o.day === g.day) || g.proposals.some((p) => p.to === g.player && p.day === g.day && p.kind === 'callToArms')) audio.sfx('chime');
     const pn = g.nations[g.player];
     if (pn && g.day % 7 === 0) {
       const deficit = pn.budget.net < 0;

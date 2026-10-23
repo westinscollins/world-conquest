@@ -154,6 +154,10 @@ export interface Nation {
   resourceNet: Record<ResourceKind, number>;  // production - demand (units/yr)
   reparations: { to: string; amount: number; until: number }[];
   claims: Record<string, number>; // casus belli against nation -> expiry day
+  arsenal: { drone: number; missile: number; nuke: number };
+  nukeProgram: number;       // -1 none, >0 days left, 0 = nuclear power
+  warheads: number[];        // days left for each ICBM under construction
+  embargoUntil: number;      // the world refuses all trade until this day (after using nuclear weapons)
   subjectSince?: number;
   intel: number;             // 0..1 baseline intelligence quality
   lastWarDay: number;
@@ -173,7 +177,7 @@ export interface War {
   id: number; attackers: string[]; defenders: string[]; leaderA: string; leaderD: string;
   startDay: number; name: string; justified: boolean;
   scoreA: number; // -100..100 from attacker leader's perspective
-  casualtiesA: number; casualtiesD: number; battles: number;
+  casualtiesA: number; casualtiesD: number; battles: number; lastBattleDay?: number;
   occupiedByA: number[]; occupiedByD: number[];
 }
 
@@ -269,4 +273,6 @@ export interface GameState {
   campaign: string;
   notifications: number[];   // event ids not yet seen as toast
   stats: { battles: number; wars: number; peaceDeals: number; annexations: number };
+  strikes: StrikeRecord[];   // recent strikes (for the map and reports)
 }
+export interface StrikeRecord { id: number; day: number; by: string; target: string; province: number; kind: 'drone' | 'missile' | 'nuke'; count: number; intercepted: number; killed: number; buildings: string[] }

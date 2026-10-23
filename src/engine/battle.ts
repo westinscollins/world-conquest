@@ -113,7 +113,7 @@ export function startBattle(s: GameState, attackers: Army[], province: number, f
   s.battles[id] = b;
   s.activeBattles.push(id);
   s.stats.battles++;
-  if (war) war.battles++;
+  if (war) { war.battles++; war.lastBattleDay = s.day; }
   const pl = s.player;
   if (atkOwner === pl || defenders.some((d) => d.owner === pl)) {
     addEvent(s, 'battle', `Battle of ${g.name} begins: ${s.nations[atkOwner].name} attacks ${s.nations[defenders[0].owner].name}.`, [atkOwner, defenders[0].owner], { province, battleId: id, important: true });

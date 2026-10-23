@@ -1,5 +1,5 @@
 import type { GameSettings, GameState, Nation, Personality, ProvinceState, UnitType, Buildings } from './types';
-import { ECON, SAVE_VERSION, RESOURCE } from './config';
+import { ECON, SAVE_VERSION, RESOURCE, START_NUKES } from './config';
 import { WORLD, PROV, COUNTRY_GEO } from './geo';
 import { mulberry } from './rng';
 import { baseTechMods, recomputeTechMods } from './research';
@@ -58,6 +58,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
     market: { food: { price: RESOURCE.food.basePrice, supply: 0, demand: 0 }, steel: { price: RESOURCE.steel.basePrice, supply: 0, demand: 0 }, oil: { price: RESOURCE.oil.basePrice, supply: 0, demand: 0 }, rare: { price: RESOURCE.rare.basePrice, supply: 0, demand: 0 } },
     nextId: 1, settings, achievements: {}, timeline: [], tutorial: camp.id === 'tutorial' ? { step: 0, done: false, flags: {}, startProvinces: 2 } : null, outcome: null, campaign: camp.id, notifications: [],
     stats: { battles: 0, wars: 0, peaceDeals: 0, annexations: 0 },
+    strikes: [],
   };
 
   // ---- nations
@@ -77,7 +78,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
       ledgerMonth: { income: 0, expense: 0 }, history: [], overlord: null, bankrupt: false, lastFactories: 0,
       shortages: { food: 0, steel: 0, oil: 0, rare: 0 }, resourceNet: { food: 0, steel: 0, oil: 0, rare: 0 }, reparations: [], claims: {},
       intel: c.income.startsWith('1') ? 0.7 : c.income.startsWith('2') ? 0.6 : 0.45,
-      lastWarDay: -9999, aiMemory: {},
+      lastWarDay: -9999, aiMemory: {}, arsenal: { drone: 0, missile: 0, nuke: START_NUKES[c.id] ?? 0 }, nukeProgram: START_NUKES[c.id] ? 0 : -1, warheads: [], embargoUntil: 0,
       stats: { battlesWon: 0, battlesLost: 0, casualtiesInflicted: 0, casualtiesSuffered: 0, provincesCaptured: 0, peakProvinces: c.provinces.length, peakOutput: output },
     };
     // high-income nations start with some technology

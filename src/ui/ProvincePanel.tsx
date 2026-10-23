@@ -14,6 +14,7 @@ import { Section, Btn, Tip, Stat, Bar, Tabs } from './common';
 import { Icon } from './icons';
 import { money, moneyIC, num, pct } from './format';
 import { audio } from '../audio/music';
+import { checkStrike } from '../engine/strikes';
 
 export function ProvincePanel() {
   const { g, ui } = useStore();
@@ -46,6 +47,7 @@ export function ProvincePanel() {
       <div className="sp-body">
         {(tab === 'info' || !showTabs) && (
           <>
+            {atWar(g, g.player, st.controller) && <WarActions p={p} />}
             <div className="grid2">
               <Stat label="Terrain" value={<>{TERRAIN[geo.terrain].label}{geo.river ? ' · river' : ''}</>} tip={`Movement ×${TERRAIN[geo.terrain].move}, attacker ×${TERRAIN[geo.terrain].attack}, defender ×${TERRAIN[geo.terrain].defense}, combat width ${TERRAIN[geo.terrain].width}${geo.river ? '. Major river: −15% to attackers.' : ''}`} />
               <Stat label="Weather" value={WEATHER[w].label} tip={`Attack ×${WEATHER[w].attack}, movement ×${WEATHER[w].move}, air ×${WEATHER[w].air}, supply use ×${WEATHER[w].supply}`} />
@@ -225,4 +227,21 @@ function yearlyReturn(g: GameState, n: Nation, p: number, k: BuildingKind | 'rep
   if (k === 'farm' && n.resourceNet.food >= 0) r += (resourceYield(next, 'food') - resourceYield(st, 'food')) * g.market.food.price * 0.8;
   if (k !== 'develop' && k !== 'repair') r -= BUILDINGS[k].upkeep * n.priceIndex;
   return Math.abs(r) < 0.005 ? null : r;
+}
+
+/** Quick war orders against an enemy province. */
+function WarActions({ p }: { p: number }) {
+  const g = store.game!;
+  const n = g.nations[g.player];
+  const near = Object.values(g.armies).filter((a) => a.owner === g.player && a.battleId == null && !a.embarked && (PROV[p].neighbors.includes(a.location) || PROV[p].straits.includes(a.location)));
+  const say = (r?: { ok: boolean; message: string }) => r && store.toast(r.message, r.ok ? 'good' : 'bad');
+  const strike = (kind: 'drone' | 'missile', c: number) => { const e = checkStrike(g, n, kind, p, c); if (e) { store.toast(e, 'bad'); return; } say(store.cmd('doStrike', [kind, p, c])); audio.sfx('battle'); };
+  return (
+    <div className="war-actions">
+      <Btn small kind="primary" disabled={!near.length} title={near.length ? near.map((a) => a.name).join(', ') : 'None of your armies are next to this province'} onClick={() => say(store.cmd('attackWithAll', [p]))}>⚔ Attack with all nearby armies ({near.length})</Btn>
+      <Btn small disabled={n.arsenal.drone < 1} title={`${n.arsenal.drone} drones in stock`} onClick={() => strike('drone', Math.min(5, n.arsenal.drone))}>Drone strike ×{Math.min(5, n.arsenal.drone)}</Btn>
+      <Btn small disabled={n.arsenal.missile < 1} title={`${n.arsenal.missile} missiles in stock`} onClick={() => strike('missile', Math.min(3, n.arsenal.missile))}>Missile strike ×{Math.min(3, n.arsenal.missile)}</Btn>
+      {n.arsenal.drone + n.arsenal.missile < 1 && <span className="small muted">Buy drones and missiles in the War Room.</span>}
+    </div>
+  );
 }

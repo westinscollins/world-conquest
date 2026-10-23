@@ -2,7 +2,7 @@ import { useStore } from './ui/store';
 import { MainMenu } from './ui/MainMenu';
 import { MapView } from './ui/MapView';
 import { TopBar } from './ui/TopBar';
-import { LeftNav, MapModes, EventLog, Toasts, ConfirmDialog, TutorialCard, OutcomeModal, OnlineBar, LiveTicker, useHotkeys } from './ui/Shell';
+import { LeftNav, MapModes, EventLog, Toasts, ConfirmDialog, TutorialCard, OutcomeModal, OnlineBar, LiveTicker, ArmyBar, useHotkeys } from './ui/Shell';
 import { ProvincePanel } from './ui/ProvincePanel';
 import { ArmyPanel, FleetPanel } from './ui/ArmyPanel';
 import { IntelDialog } from './ui/IntelDialog';
@@ -20,6 +20,7 @@ export default function App() {
       <LeftNav />
       {ui.selectedArmy != null ? <ArmyPanel /> : ui.selectedFleet != null ? <FleetPanel /> : <ProvincePanel />}
       <MapModes />
+      <ArmyBar />
       <EventLog />
       <TutorialCard />
       <LiveTicker />

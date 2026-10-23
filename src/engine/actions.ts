@@ -10,8 +10,9 @@ import { setProvinceStatus, releaseSubject } from './territory';
 import { embark, moveFleet, orderShip } from './naval';
 import { PROV } from './geo';
 import { addEvent } from './events';
-import { ECON, UNITS, MIL } from './config';
+import { ECON, UNITS, MIL, STRIKES, NUKE } from './config';
 import { canResearch } from './research';
+import { buyMunitions, launchStrike, startNuclearProgram, buildWarhead, type StrikeKind } from './strikes';
 import { invalidateArmies, warBetween } from './world';
 
 export interface Result { ok: boolean; message: string; }
@@ -291,6 +292,47 @@ export function setHumanControl(s: GameState, nation: string, human: boolean): R
   s.players = human ? [...new Set([...s.players, nation])] : s.players.filter((x) => x !== nation);
   addEvent(s, 'info', `${n.name} is now controlled by ${human ? 'a human player' : 'the AI'}.`, [nation], { important: true });
   return ok(`${n.name} is now ${human ? 'human' : 'AI'}-controlled.`);
+}
+
+export function doBuyMunitions(s: GameState, kind: 'drone' | 'missile', count: number): Result {
+  const e = buyMunitions(s, P(s), kind, count);
+  return e ? fail(e) : ok(`Bought ${count} ${STRIKES[kind].plural}. Launch them from the War Room or an enemy province's panel.`);
+}
+export function doStrike(s: GameState, kind: StrikeKind, province: number, count: number): Result {
+  const r = launchStrike(s, P(s), kind, province, count);
+  return { ok: r.ok, message: r.message };
+}
+export function doNuclearProgram(s: GameState): Result {
+  const e = startNuclearProgram(s, P(s));
+  return e ? fail(e) : ok(`Nuclear programme started: about ${Math.round(NUKE.programDays / 365 * 10) / 10} years to the first weapon.`);
+}
+export function doBuildWarhead(s: GameState): Result {
+  const e = buildWarhead(s, P(s));
+  return e ? fail(e) : ok(`ICBM ordered: ready in ${NUKE.warheadDays} days.`);
+}
+/** Send every idle army next to (or in) a province into it at once. */
+export function attackWithAll(s: GameState, province: number): Result {
+  const ids = Object.values(s.armies).filter((a) => a.owner === s.player && a.battleId == null && !a.embarked && (PROV[province].neighbors.includes(a.location) || PROV[province].straits.includes(a.location))).map((a) => a.id);
+  if (!ids.length) return fail(`None of your armies are next to ${PROV[province].name}.`);
+  return moveArmies(s, ids, province);
+}
+/** Add a destination after the army's current route (waypoints). */
+export function queueMove(s: GameState, armyId: number, to: number): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  if (!a.path.length || a.battleId != null) return moveArmy(s, armyId, to);
+  const from = a.path[a.path.length - 1];
+  const leg = findPath(s, { ...a, location: from }, to);
+  if (!leg) return fail(`No route from ${PROV[from].name} to ${PROV[to].name}.`);
+  a.path.push(...leg);
+  return ok(`${a.name}: waypoint added — then on to ${PROV[to].name}.`);
+}
+/** Split an army into two halves (by formations). */
+export function splitHalf(s: GameState, armyId: number): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  if (a.units.length < 2) return fail('Needs at least two formations.');
+  return splitArmy(s, armyId, a.units.filter((_, i) => i % 2 === 1).map((u) => u.id));
 }
 
 export function peaceTermsFor(s: GameState, warId: number): { war: ReturnType<typeof warBetween> } { return { war: s.wars.find((w) => w.id === warId) }; }

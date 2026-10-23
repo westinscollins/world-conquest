@@ -1,11 +1,13 @@
+import { Fragment } from 'react';
 import { store, useGame } from '../store';
-import { Section, Btn, Bar, Stat } from '../common';
-import { num, neg } from '../format';
+import { Section, Btn, Bar, Stat, Tip } from '../common';
+import { num, neg, money, moneyIC } from '../format';
 import { PROV, distKm } from '../../engine/geo';
 import { atWar, controlledBy, isFriendly, ownedBy } from '../../engine/world';
 import { scoreFor } from '../../engine/diplomacy';
 import { armyStrength, armyOrg, militaryStrength } from '../../engine/military';
-import { POSTURES } from '../../engine/config';
+import { POSTURES, STRIKES, NUKE } from '../../engine/config';
+import { munitionCost, nukeProgramCost, warheadCost } from '../../engine/strikes';
 import { fmtDate } from '../../engine/events';
 import type { Battle, Posture, Stance, War } from '../../engine/types';
 import { focusProvince } from '../commands';
@@ -45,8 +47,10 @@ export function WarPanel() {
             </button>
           ))}
         </div>
-        <p className="small muted">Set one army's orders in its panel. Select an army, then shift-click others to move them together. Right-click a province to send them there.</p>
+        <p className="small muted">Select an army, then shift-click others (or shift-drag a box on the map) to move them together. Right-click a province to send them; shift+right-click adds a waypoint. Hover a province to see attack odds. Keys: Tab next army · M move · H halt · R retreat · F attack · D defend · G hold.</p>
       </Section>
+
+      <StrikeForces />
 
       {!wars.length && <p className="muted">You are at peace. Declare war from Diplomacy → select a nation. Your armies' orders apply the moment a war starts.</p>}
       {wars.map((w) => <WarSummary key={w.id} w={w} />)}
@@ -143,5 +147,43 @@ function BattleRow({ b }: { b: Battle }) {
         </div>
       )}
     </div>
+  );
+}
+
+const SALVOS = [1, 5, 10];
+/** Drones, cruise missiles and the nuclear option. */
+function StrikeForces() {
+  const g = useGame();
+  const n = g.nations[g.player];
+  const atWarNow = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
+  const aim = (kind: 'drone' | 'missile' | 'nuke', count: number) => {
+    if (!atWarNow) { store.toast('Strikes need a war: you can only hit provinces of nations you are fighting.', 'bad'); return; }
+    store.setUI({ strike: { kind, count }, panel: null, selectedArmy: null });
+  };
+  return (
+    <Section title="Strike forces" icon="battle">
+      <div className="arsenal">
+        {(['drone', 'missile'] as const).map((k) => (
+          <Fragment key={k}>
+            <Tip wide tip={<div><b>{STRIKES[k].label}</b><br />{STRIKES[k].desc}<br />Enemy air wings near the target shoot some down.</div>}><b>{STRIKES[k].label}s: {n.arsenal[k]}</b></Tip>
+            <span className="row gap">{SALVOS.map((c) => <Btn key={c} small onClick={() => say(store.cmd('doBuyMunitions', [k, c]))}>Buy {c} ({money(munitionCost(k, n) * c, { digits: 1 })})</Btn>)}</span>
+            <span className="row gap">{[1, 5].map((c) => <Btn key={c} small kind="primary" disabled={n.arsenal[k] < 1} onClick={() => aim(k, c)}>Fire {c}</Btn>)}</span>
+          </Fragment>
+        ))}
+      </div>
+      <p className="small muted">Fire, then click a highlighted enemy province on the map. Strikes kill and disorganise troops there, cut their dig-in, and destroy rail, depots, power and factories — weakening supply and the enemy economy. Drones reach 700 km from land you hold, missiles 2,500 km; from a fleet off the coast, any distance.</p>
+      <div className="nuke-box">
+        <div className="row gap"><b>☢ Nuclear weapons: {n.arsenal.nuke}</b>{n.warheads.length > 0 && <span className="small muted">{n.warheads.length} ICBM{n.warheads.length > 1 ? 's' : ''} being built ({Math.min(...n.warheads)}d)</span>}<div style={{ flex: 1 }} />
+          {n.nukeProgram < 0 && <Btn small onClick={() => store.setUI({ confirm: { title: 'Start a nuclear programme?', danger: true, body: `Costs ${moneyIC(nukeProgramCost(n), { digits: 0 })} and takes about ${(NUKE.programDays / 365).toFixed(1)} years. Relations with every nation fall by 10.`, onOk: () => say(store.cmd('doNuclearProgram', [])) } })}>Start programme ({money(nukeProgramCost(n), { digits: 0 })})</Btn>}
+          {n.nukeProgram > 0 && <span className="small">Programme: {n.nukeProgram} days left</span>}
+          {n.nukeProgram === 0 && <Btn small onClick={() => say(store.cmd('doBuildWarhead', []))}>Build ICBM ({money(warheadCost(n), { digits: 0 })}, {NUKE.warheadDays}d)</Btn>}
+          {n.arsenal.nuke > 0 && <Btn small kind="danger" onClick={() => aim('nuke', 1)}>Launch…</Btn>}
+        </div>
+        <p className="small" style={{ margin: '6px 0 0' }}>
+          A nuclear strike destroys ~85% of the armies in a province and wrecks it for decades. <b className="warn">Why you shouldn't:</b> the whole world embargoes you for {NUKE.embargoDays / 365} years (no trade, imports, exports or treaties, and −12% of your output), every alliance ends, relations with everyone collapse, every nation gets a casus belli against you, your stability and war support crash — and nuclear-armed enemies retaliate at once.
+        </p>
+        {n.embargoUntil > g.day && <p className="bad small">You are under the global embargo until {fmtDate(g, n.embargoUntil)}.</p>}
+      </div>
+    </Section>
   );
 }

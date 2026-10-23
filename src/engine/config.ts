@@ -7,7 +7,7 @@
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
@@ -248,3 +248,24 @@ export function weatherFor(lat: number, month: number, roll: number, terrain: Te
   if (roll < 0.3) return 'rain';
   return 'clear';
 }
+
+// ---------------------------------------------------------------- precision strikes & strategic weapons
+export interface StrikeSpec { label: string; plural: string; cost: number; range: number; kill: number; org: number; hitBuilding: number; damage: number; intercept: number; desc: string }
+/** Conventional strikes: bought into a stockpile, fired at a province of a nation you are at war with. */
+export const STRIKES: Record<'drone' | 'missile', StrikeSpec> = {
+  drone: { label: 'Attack drone', plural: 'attack drones', cost: 1.2, range: 700, kill: 0.012, org: 0.05, hitBuilding: 0.3, damage: 0.02, intercept: 1,
+    desc: 'Cheap loitering munitions. Short range (700 km from land you hold, or from a fleet offshore). Wear down troops and occasionally knock out a building.' },
+  missile: { label: 'Cruise missile', plural: 'cruise missiles', cost: 5, range: 2500, kill: 0.025, org: 0.08, hitBuilding: 1, damage: 0.05, intercept: 0.5,
+    desc: 'Long range (2,500 km, unlimited from a fleet offshore), harder to shoot down. Each hit destroys a building level — rail, depots, power and factories first.' },
+};
+/** Enemy air wings in and around the target shoot down incoming strikes. */
+export const AIR_DEFENSE = { PER_AIR_WING: 0.09, MAX: 0.7 };
+export const NUKE = {
+  programCost: 350, programDays: 900,   // a nuclear programme: years of work and a fortune
+  warheadCost: 60, warheadDays: 180,    // each ICBM with its warhead
+  kill: 0.85, nearbyKill: 0.15, popLoss: 0.35, devLoss: 0.5,
+  embargoDays: 3650,                    // the whole world cuts trade with you for 10 years
+  relations: -80, stability: -25, warSupport: -25,
+};
+/** Strategic arsenals at the start (abstracted: each is a usable strategic strike). */
+export const START_NUKES: Record<string, number> = { USA: 40, RUS: 40, CHN: 15, FRA: 8, GBR: 8, IND: 5, PAK: 5, ISR: 3, PRK: 2 };

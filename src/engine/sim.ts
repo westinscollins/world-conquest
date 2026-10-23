@@ -17,6 +17,7 @@ import { armiesIn, atWar, isAtWar, invalidateArmies, isFriendly } from './world'
 import { setController, resistanceMonthly } from './territory';
 import { relationsWeekly, updateWarScore, checkCapitulation } from './diplomacy';
 import { seaTransportDaily, fleetsDaily, shipyardDaily } from './naval';
+import { strategicDaily } from './strikes';
 import { aiWeekly, aiArmiesDaily, armyAutomation } from './ai';
 import { dateOf, addEvent } from './events';
 import { checkVictory, checkAchievements } from './victory';
@@ -42,6 +43,7 @@ export function tick(s: GameState) {
     if (n.mobilization !== target) n.mobilization = Math.max(0, Math.min(1, n.mobilization + (target > n.mobilization ? 1 : -1) / ECON.MOBILIZATION_DAYS));
     trainingDaily(s, n);
     shipyardDaily(s, n);
+    strategicDaily(s, n);
     constructionDaily(s, n);
     researchDaily(s, n);
   }

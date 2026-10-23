@@ -10,7 +10,7 @@ import { setController, transferProvince } from '../src/engine/territory';
 import { serialize, deserialize } from '../src/engine/save';
 import { supplyDaily, supplyReport } from '../src/engine/supply';
 import { ownedBy, armiesIn, atWar, invalidateArmies, neighborsOf } from '../src/engine/world';
-import { moveArmy, doDeclareWar, proposePeace, build, hireGeneral, doAssignGeneral, setPosture, retreatArmy, setAllStances, moveArmies } from '../src/engine/actions';
+import { moveArmy, doDeclareWar, proposePeace, build, hireGeneral, doAssignGeneral, setPosture, retreatArmy, setAllStances, moveArmies, doStrike, doBuyMunitions } from '../src/engine/actions';
 import { UNITS, MIL } from '../src/engine/config';
 import type { GameState, Army, UnitType } from '../src/engine/types';
 
@@ -422,3 +422,51 @@ describe('war controls', () => {
     for (const a of mine) expect(a.path[a.path.length - 1] === dest || a.location === dest).toBe(true);
   });
 });
+
+describe('strikes and strategic weapons', () => {
+  const setup = () => {
+    const s = newGame('serbia', { seed: 9 });
+    const me = s.nations.SRB;
+    const target = PROV[me.capital].neighbors.map((p) => s.provinces[p].owner).find((o) => o !== 'SRB')!;
+    declareWar(s, me, target);
+    const p = ownedBy(s, target).find((q) => PROV[q].neighbors.some((x) => s.provinces[x].owner === 'SRB'))!;
+    return { s, me, target, p };
+  };
+  it('drones cost money, kill troops and wreck buildings; range is enforced', () => {
+    const { s, me, target, p } = setup();
+    expect(doStrike(s, 'drone', p, 5).ok).toBe(false); // none in stock
+    const t0 = me.treasury;
+    expect(doBuyMunitions(s, 'drone', 10).ok).toBe(true);
+    expect(me.treasury).toBeLessThan(t0);
+    const army = createArmy(s, target, p, [newUnit(s, 'infantry', 1, 0.2), newUnit(s, 'infantry', 1, 0.2)]);
+    const before = armyStrength(army);
+    const infra0 = Object.values(s.provinces[p].buildings).reduce((t, v) => t + v, 0);
+    const r = doBuyMunitions(s, 'missile', 3) && doStrike(s, 'missile', p, 3);
+    expect(r.ok).toBe(true);
+    expect(doStrike(s, 'drone', p, 10).ok).toBe(true);
+    expect(armyStrength(s.armies[army.id] ?? army)).toBeLessThan(before);
+    expect(Object.values(s.provinces[p].buildings).reduce((t, v) => t + v, 0)).toBeLessThan(infra0);
+    expect(s.strikes.length).toBe(2);
+    // a far-away enemy province is out of drone range
+    const far = s.provinces.find((q) => q.owner !== 'SRB' && distKmP(s, q.id) > 3000)!;
+    declareWar(s, me, far.controller);
+    doBuyMunitions(s, 'drone', 1);
+    expect(doStrike(s, 'drone', far.id, 1).ok).toBe(false);
+  });
+  it('nuclear use brings a world embargo, and nuclear enemies retaliate', () => {
+    const s = newGame('serbia', { seed: 9 });
+    const me = s.nations.SRB;
+    me.arsenal.nuke = 1;
+    declareWar(s, me, 'RUS');
+    const p = ownedBy(s, 'RUS')[0];
+    const r = doStrike(s, 'nuke', p, 1);
+    expect(r.ok).toBe(true);
+    expect(me.embargoUntil).toBeGreaterThan(s.day + 3000);
+    expect(me.infamy).toBe(100);
+    expect(s.strikes.some((x) => x.by === 'RUS' && x.kind === 'nuke')).toBe(true);
+    const b = budgetOf(s, 'SRB');
+    expect(b.expenses.some((l) => l.key === 'embargo')).toBe(true);
+    expect(b.income.some((l) => l.key === 'trade' || l.key === 'exports')).toBe(false);
+  });
+});
+function distKmP(s: GameState, p: number) { return Math.min(...ownedBy(s, 'SRB').map((q) => Math.hypot(PROV[q].lat - PROV[p].lat, 0) * 111)); }

@@ -55,6 +55,9 @@ await step('war room', async () => {
   try {
     await page.waitForSelector('.orders');
     await page.screenshot({ path: out + '/p-warroom.png' });
+    await page.click('.arsenal button:has-text("Buy 5") >> nth=0');
+    const drones = await st(() => window.__wc.game.nations[window.__wc.game.player].arsenal.drone);
+    if (drones < 5) throw new Error('drones not bought');
     await page.click('.orders button:has-text("Defend")');
     const ok = await st(() => Object.values(window.__wc.game.armies).filter(a => a.owner === window.__wc.game.player).every(a => a.stance === 'defend'));
     if (!ok) throw new Error('orders not applied');

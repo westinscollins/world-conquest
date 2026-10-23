@@ -21,6 +21,7 @@ export interface SupplyNet {
 }
 
 const RANGE_KM = 520;
+const MAX_HOP_KM = 400;
 // static: connected components of the sea-zone graph
 const SEA_COMP: number[] = (() => {
   const comp = new Array(WORLD.seas.length).fill(-1);
@@ -68,6 +69,7 @@ function hubsFor(s: GameState, n: Nation): Map<number, { cap: number; kind: stri
     if (st.buildings.depot > 0 && st.owner === n.id) add(p, 26 * n.techMods.supplyThroughput, 'Supply depot');
     if (st.buildings.port > 0 && st.owner === n.id && st.status === 'core') homePorts.push(p);
     if (PROV[p].cityPop > 1.5e6 && st.owner === n.id && st.status === 'core' && p !== n.capital) add(p, 10 + PROV[p].cityPop / 1e6, 'Major city');
+    else if (st.pop > 6e6 && st.owner === n.id && st.status === 'core' && p !== n.capital) add(p, 6 + st.pop / 2e6, 'Regional centre');
   }
   const homeComps = new Set<number>();
   for (const h of homePorts) for (const z of PROV[h].seas) homeComps.add(SEA_COMP[z]);
@@ -99,7 +101,11 @@ export function blockadeLevel(s: GameState, nation: string, p: number): number {
 
 export function throughputOf(s: GameState, n: Nation, p: number) {
   const st = s.provinces[p];
-  return (5 + 3 * st.infra + 4 * st.buildings.railway) * n.techMods.supplyThroughput * (1 - 0.5 * st.damage);
+  // large or populous provinces (one province can stand for a whole Chinese or Russian region)
+  // have many roads, rail lines and towns, so they can feed proportionally more troops
+  const g = PROV[p];
+  const size = Math.min(5, Math.max(1, Math.sqrt(g.areaKm / 60000))) + Math.min(3, g.pop / 2e7);
+  return (5 + 3 * st.infra + 4 * st.buildings.railway) * size * n.techMods.supplyThroughput * (1 - 0.5 * st.damage);
 }
 
 export function computeNet(s: GameState, n: Nation): SupplyNet {
@@ -144,7 +150,8 @@ export function computeNet(s: GameState, n: Nation): SupplyNet {
       if (!passable(to)) continue;
       const st = s.provinces[to];
       const infra = st.infra + st.buildings.railway * 2;
-      const nd = d + (distKm(p, to) / (0.6 + 0.18 * infra)) * (strait ? 2.2 : 1);
+      // one province can be a whole region with its own road and rail grid: cap the distance per hop
+      const nd = d + (Math.min(MAX_HOP_KM, distKm(p, to)) / (0.6 + 0.18 * infra)) * (strait ? 2.2 : 1);
       const ncap = hcap / (1 + (nd / range) ** 2);
       if (ncap > best[to] && ncap > 0.3) push(ncap, to, hub, nd);
     }
