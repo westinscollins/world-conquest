@@ -8,11 +8,13 @@
 
 export type NetMode = 'auto' | 'direct' | 'server' | 'mqtt';
 
-/** Public MQTT brokers reachable over secure WebSockets (port 443 first: it passes most school and office firewalls). */
+/**
+ * Public MQTT brokers reachable over secure WebSockets, verified by the live check
+ * (tests/e2e/live.mjs). Port 443 first: it passes most school and office firewalls.
+ */
 export const DEFAULT_BROKERS = [
-  'wss://mqtt.eclipseprojects.io:443/mqtt',
+  'wss://public:public@public.cloud.shiftr.io:443',
   'wss://broker.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
   'wss://test.mosquitto.org:8081/mqtt',
 ];
 

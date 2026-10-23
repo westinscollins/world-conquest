@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 import { spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 const url = process.argv[2] || 'https://westinscollins.github.io/world-conquest/';
-const CANDIDATE_BROKERS = ['wss://public:public@public.cloud.shiftr.io:443', 'ws://mqtt.eclipseprojects.io:80/mqtt'];
+const CANDIDATE_BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt', 'wss://mqtt-dashboard.com:8884/mqtt'];
 const lines = [];
 const say = (s) => { console.log(s); lines.push(s); };
 let failed = 0;
@@ -73,8 +73,8 @@ for (const [name, q, via] of scenarios) {
   const ok = r.status === 0;
   if (!ok) failed++;
   say(`- ${ok ? '✅' : '❌'} ${name}${fails.length ? ` — ${fails.join('; ')}` : ''}`);
-  const via = out.match(/guest connected via (\w+)/)?.[1];
-  if (via) say(`  - connected via ${via}`);
+  const got = out.match(/guest connected via (\w+)/)?.[1];
+  if (got) say(`  - connected via ${got}`);
   if (!ok) say(`  - log tail: ${out.split('\n').filter((l) => l.trim() && !l.startsWith('   rejoin')).slice(-6).join(' | ').slice(0, 900)}`);
 }
 // one annotation with the whole report (readable through the GitHub API)
