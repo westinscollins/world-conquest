@@ -15,8 +15,8 @@ await step('start tutorial', async () => { await page.click('text=Tutorial: The 
 await step('economy panel', async () => { await page.click('.nav-btn:has-text("Economy")'); await page.waitForSelector('.ledger'); await page.screenshot({ path: out + '/p-economy.png' }); });
 await step('government tab', async () => { await page.click('.tab:has-text("Government")'); await page.click('.policy-opts button:has-text("Free market")'); const ok = await st(() => window.__wc.game.nations[window.__wc.game.player].gov.policies.economy === 'market'); if (!ok) throw new Error('policy not set'); await page.click('.tab:has-text("Budget")'); });
 await step('industry tab', async () => { await page.click('.tab:has-text("Industry")'); await page.waitForSelector('td:has-text("Armored Brigade")'); });
-await step('research', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tech.avail button:has-text("Research") >> nth=0'); await page.screenshot({ path: out + '/p-research.png' }); });
-await step('build road', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tab:has-text("Construction")'); await page.click('.build-item:has-text("Highway") button:has-text("Build")'); });
+await step('research', async () => { await page.click('.tab:has-text("Technology")'); await page.click('.tech.avail button:has-text("Research") >> nth=0'); await page.screenshot({ path: out + '/p-research.png' }); });
+await step('build road', async () => { await page.click('.nav-btn:has-text("Economy")'); await page.click('.tab:has-text("Construction")'); await page.click('.build-item:has-text("Highway") button:has-text("Build")'); });
 await step('recruit', async () => { await page.click('.side-panel .tab:has-text("Recruit")'); await page.click('.build-item:has-text("Infantry Brigade") button:has-text("Recruit")'); });
 await step('hire general', async () => { await page.click('.nav-btn:has-text("Military")'); await page.click('.tab:has-text("Generals")'); await page.click('button:has-text("Hire") >> nth=0'); await page.screenshot({ path: out + '/p-military.png' }); });
 await step('select army & supply', async () => {
@@ -51,14 +51,36 @@ await step('attack with intel report', async () => {
   else console.log('     (no defenders: plain move)');
 });
 await step('run time very fast', async () => { await page.click('.speeds button >> nth=3'); await page.waitForTimeout(9000); await page.click('.speeds button >> nth=0'); await page.screenshot({ path: out + '/p-war.png' }); });
+await step('regime panel', async () => {
+  await page.click('.nav-btn:has-text("Regime")');
+  await page.click('.tab:has-text("Propaganda")');
+  await page.click('.decree:has-text("National pride") button');
+  const on = await st(() => window.__wc.game.nations[window.__wc.game.player].regime.propaganda.includes('pride'));
+  if (!on) throw new Error('campaign not launched');
+  await page.screenshot({ path: out + '/p-regime.png' });
+  await page.click('.drawer-h .iconbtn');
+});
+await step('war room roster', async () => {
+  await page.click('.nav-btn:has-text("War Room")');
+  await page.click('.tab:has-text("Armies")');
+  await page.fill('.range-in', '1-3');
+  await page.click('.roster-select button:has-text("Select")');
+  const n = await st(() => (window.__wc.ui.selectedArmy != null ? 1 : 0) + window.__wc.ui.group.length);
+  if (n < 1) throw new Error('nothing selected');
+  await page.click('.bulk button:has-text("Defend")');
+  await page.click('.tab:has-text("Overview")');
+  await page.click('.drawer-h .iconbtn');
+});
 await step('war room', async () => {
   await page.click('.nav-btn:has-text("War Room")');
   try {
     await page.waitForSelector('.orders');
     await page.screenshot({ path: out + '/p-warroom.png' });
-    await page.click('.arsenal button:has-text("Buy 5") >> nth=0');
+    await page.click('.tab:has-text("Strikes")');
+    await page.click('.arsenal button:has-text("Buy 5") >> nth=1');
     const drones = await st(() => window.__wc.game.nations[window.__wc.game.player].arsenal.drone);
     if (drones < 5) throw new Error('drones not bought');
+    await page.click('.tab:has-text("Overview")');
     await page.click('.orders button:has-text("Defend")');
     const ok = await st(() => Object.values(window.__wc.game.armies).filter(a => a.owner === window.__wc.game.player).every(a => a.stance === 'defend'));
     if (!ok) throw new Error('orders not applied');

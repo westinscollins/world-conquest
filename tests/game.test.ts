@@ -530,3 +530,66 @@ import * as A from '../src/engine/actions';
 import { provinceOutput } from '../src/engine/economy';
 import { rel as relOf } from '../src/engine/world';
 function peekRelT(s: GameState, a: string, b: string) { return relOf(s, a, b).value; }
+
+describe('regime and population', () => {
+  it('approval, legitimacy and opposition respond to policy, propaganda and repression', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const n = s.nations.SRB;
+    s.tutorial = null;
+    n.taxRate = 0.45; // brutal taxes
+    runDays(s, 400);
+    const angry = n.regime.groups.business;
+    expect(angry).toBeLessThan(45);
+    const opp0 = n.regime.opposition;
+    expect(opp0).toBeGreaterThan(5);
+    expect(A.doInterior(s, 'arrests').ok).toBe(false); // needs secret police
+    expect(A.doSetSecurity(s, 2).ok).toBe(true);
+    expect(A.doInterior(s, 'arrests').ok).toBe(true);
+    expect(n.regime.opposition).toBeLessThan(opp0);
+    expect(budgetOf(s, 'SRB').expenses.some((l) => l.key === 'security')).toBe(true);
+    expect(A.doToggleCampaign(s, 'cult').ok).toBe(true);
+    const leg = n.regime.legitimacy;
+    runDays(s, 90);
+    expect(n.regime.legitimacy).toBeGreaterThan(leg);
+    expect(budgetOf(s, 'SRB').expenses.some((l) => l.key === 'propaganda')).toBe(true);
+  });
+  it('high opposition makes provinces revolt; martial law calms them', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const n = s.nations.SRB;
+    s.tutorial = null;
+    for (const a of Object.values(s.armies)) if (a.owner === 'SRB') delete s.armies[a.id];
+    invalidateArmies();
+    for (let i = 0; i < 5; i++) { n.regime.opposition = 85; runDays(s, 30); }
+    const p = ownedBy(s, 'SRB').sort((a, b) => s.provinces[b].resistance - s.provinces[a].resistance)[0];
+    expect(s.provinces[p].resistance).toBeGreaterThan(60);
+    A.doMartialLaw(s, p);
+    const before = s.provinces[p].resistance;
+    for (let i = 0; i < 2; i++) { n.regime.opposition = 85; runDays(s, 30); }
+    expect(s.provinces[p].resistance).toBeLessThan(before);
+  });
+});
+
+describe('war planning', () => {
+  it('bulk orders, war economy, mercenaries and joint operations', () => {
+    const s = newGame('serbia', { seed: 7 });
+    const me = s.nations.SRB;
+    const before = Object.values(s.armies).filter((a) => a.owner === 'SRB').length;
+    expect(A.doMercenaries(s, 'infantry', me.capital).ok).toBe(true);
+    const mine = Object.values(s.armies).filter((a) => a.owner === 'SRB');
+    expect(mine.reduce((t, a) => t + a.units.length, 0)).toBeGreaterThan(0);
+    expect(mine.length).toBeGreaterThanOrEqual(before);
+    expect(A.doStances(s, mine.map((a) => a.id), 'defend').ok).toBe(true);
+    for (const a of mine) expect(a.stance).toBe('defend');
+    const t0 = trainDays('armored', me);
+    expect(A.doWarEconomy(s, 'total').ok).toBe(true);
+    expect(trainDays('armored', me)).toBeLessThan(t0);
+    const enemy = PROV[me.capital].neighbors.map((p) => s.provinces[p].owner).find((o) => o !== 'SRB')!;
+    declareWar(s, me, enemy);
+    const target = ownedBy(s, enemy).find((q) => PROV[q].neighbors.some((x) => s.provinces[x].owner === 'SRB'))!;
+    const r = A.doOperation(s, mine.map((a) => a.id), target);
+    expect(r.ok).toBe(true);
+    expect(s.operations.length).toBe(1);
+    runDays(s, 40);
+    expect(s.operations.length === 0 || s.operations[0].state === 'attacking').toBe(true);
+  });
+});

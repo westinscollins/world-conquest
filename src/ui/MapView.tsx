@@ -4,7 +4,8 @@ import type { GameState, Army } from '../engine/types';
 import { PROV, WORLD } from '../engine/geo';
 import { store, useStore, type MapMode } from './store';
 import { TERRAIN, UNITS, WEATHER, STRIKES } from '../engine/config';
-import { checkStrike, interceptRate, strikeDistance } from '../engine/strikes';
+import { checkStrike, interceptRate, strikeDistance, type StrikeKind } from '../engine/strikes';
+import { armyNumbers, ctrlGroup, groupOf, selectedIds } from './selection';
 import { estimateBattle } from '../engine/battle';
 import { atWar, isFriendly, peekRel, armiesIn } from '../engine/world';
 import { supplyMap } from '../engine/supply';
@@ -66,6 +67,7 @@ function fillsFor(g: GameState, mode: MapMode): string[] {
         break;
       }
       case 'terrain': out[i] = TERRAIN[PROV[i].terrain].color; break;
+      case 'unrest': out[i] = st.resistance < 1 ? '#3f6f4f' : ramp(st.resistance / 100, [[0, '#6f9f5f'], [0.4, '#d9b44a'], [0.7, '#d0602a'], [1, '#7a0f0f']]); break;
       case 'resources': {
         const r = PROV[i].resources;
         out[i] = r.oil ? ramp(r.oil / 3, [[0, '#6b6b6b'], [1, '#141414']]) : r.rare ? '#7a4fa0' : r.steel ? ramp(r.steel / 2, [[0, '#8a9aa8'], [1, '#4a5a6a']]) : ramp(r.food / 4, [[0, '#d8cfa0'], [1, '#4f8f3a']]);
@@ -286,6 +288,12 @@ export function MapView() {
     const fleetEl = t.closest?.('[data-fleet]');
     const battleEl = t.closest?.('[data-battle]');
     audio.sfx('click');
+    if (ui.pickOperation) {
+      const sp = t.getAttribute?.('data-p') ?? armyEl?.getAttribute('data-loc');
+      if (sp != null) { const r = store.cmd('doOperation', [selectedIds(), +sp]); if (r) store.toast(r.message, r.ok ? 'good' : 'bad'); }
+      store.setUI({ pickOperation: false });
+      return;
+    }
     if (ui.strike) {
       const sp = t.getAttribute?.('data-p') ?? armyEl?.getAttribute('data-loc') ?? (battleEl ? String(store.game!.battles[+battleEl.getAttribute('data-battle')!]?.province) : null);
       if (sp != null) strikeAt(+sp);
@@ -317,7 +325,7 @@ export function MapView() {
     const t = e.target as Element;
     const seaEl = t.closest?.('[data-sea]');
     const p = t.getAttribute?.('data-p') ?? t.closest?.('[data-army]')?.getAttribute('data-loc');
-    if (ui.strike) { store.setUI({ strike: null }); return; } // right-click cancels targeting
+    if (ui.strike || ui.pickOperation) { store.setUI({ strike: null, pickOperation: false }); return; } // right-click cancels targeting
     onMapRightClick(p != null ? +p : null, seaEl ? +seaEl.getAttribute('data-sea')! : null, e.shiftKey);
   };
 
@@ -378,6 +386,7 @@ export function MapView() {
         <Paths g={g} px={px} selArmy={selArmy} />
         <Labels labels={labels} k={k} px={px} g={g} />
         {ui.strike && <StrikeTargets g={g} kind={ui.strike.kind} />}
+        <ProvinceMarkers g={g} px={px} k={k} />
         <Battles g={g} px={px} />
         <Blasts px={px} />
         <Armies g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} />
@@ -386,6 +395,7 @@ export function MapView() {
       </svg>
       {hover && <MapTooltip g={g} p={hover.p} x={hover.x} y={hover.y} mode={ui.mapMode} />}
       {box && <div className="select-box" style={{ left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }} />}
+      {ui.pickOperation && <div className="strike-banner">Coordinated operation: click the enemy province {selectedIds().length} armies should attack together · right-click or Esc to cancel</div>}
       {ui.strike && <div className="strike-banner">{ui.strike.kind === 'nuke' ? '☢ NUCLEAR STRIKE: click a target province' : `Click an enemy province to fire ${Math.min(ui.strike.count, g.nations[g.player].arsenal[ui.strike.kind])} ${STRIKES[ui.strike.kind].plural}`} · highlighted = in range · right-click or Esc to cancel</div>}
       <Legend mode={ui.mapMode} />
     </div>
@@ -570,9 +580,9 @@ function LiveLayer({ px }: { px: number }) {
 }
 
 /** Strike mode: provinces you can hit right now. */
-function StrikeTargets({ g, kind }: { g: GameState; kind: 'drone' | 'missile' | 'nuke' }) {
+function StrikeTargets({ g, kind }: { g: GameState; kind: StrikeKind }) {
   const n = g.nations[g.player];
-  const list = useMemo(() => g.provinces.filter((st) => !checkStrike(g, { ...n, arsenal: { drone: 1, missile: 1, nuke: 1 } }, kind, st.id, 1)).map((st) => st.id),
+  const list = useMemo(() => g.provinces.filter((st) => !checkStrike(g, { ...n, arsenal: { drone: 1, missile: 1, nuke: 1, ballistic: 1, recon: 1 } }, kind, st.id, 1)).map((st) => st.id),
     [g, kind, store.version]); // eslint-disable-line react-hooks/exhaustive-deps
   return <g className={`strike-targets ${kind}`}>{list.map((p) => <path key={p} d={PROV[p].path} data-p={p} />)}</g>;
 }
@@ -593,6 +603,31 @@ function Blasts({ px }: { px: number }) {
       })}
     </g>
   );
+}
+
+/** Organisation shown as a ring segment around your army dots. */
+function orgArc(cx: number, cy: number, r: number, v: number) {
+  const a = Math.max(0.001, Math.min(0.999, v)) * Math.PI * 2;
+  const x = cx + r * Math.sin(a), y = cy - r * Math.cos(a);
+  return `M${cx},${cy - r} A${r},${r} 0 ${a > Math.PI ? 1 : 0} 1 ${x},${y}`;
+}
+/** Revolts, martial law, partisans and scorched earth. */
+function ProvinceMarkers({ g, px, k }: { g: GameState; px: number; k: number }) {
+  const els: JSX.Element[] = [];
+  for (const st of g.provinces) {
+    const p = PROV[st.id];
+    const revolt = st.status === 'core' && st.controller === st.owner && st.resistance >= 70;
+    const mineOrNear = st.owner === g.player || st.controller === g.player || k > 3;
+    if (!mineOrNear) continue;
+    const icons: [string, string][] = [];
+    if (revolt) icons.push(['🔥', 'In revolt']);
+    if (st.martialLaw) icons.push(['⛔', 'Martial law']);
+    if ((st.partisansUntil ?? 0) > g.day) icons.push(['✊', 'Partisans active']);
+    if ((st.scorchedUntil ?? 0) > g.day) icons.push(['♨', 'Scorched earth']);
+    if (!icons.length) continue;
+    els.push(<g key={st.id} transform={`translate(${p.lx},${p.ly + 12 * px}) scale(${px})`} className="prov-marker">{icons.map(([ic, title], i) => <text key={i} x={(i - (icons.length - 1) / 2) * 13} y={0} textAnchor="middle" fontSize={11}><title>{title}</title>{ic}</text>)}</g>);
+  }
+  return <g className="prov-markers" pointerEvents="none">{els}</g>;
 }
 
 function natoSymbol(type: string, w: number, h: number) {
@@ -620,6 +655,7 @@ function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: nu
     (byLoc.get(a.location) || byLoc.set(a.location, []).get(a.location)!).push(a);
   }
   const els: JSX.Element[] = [];
+  const nums = armyNumbers(g);
   for (const [loc, list] of byLoc) {
     const p = PROV[loc];
     // show own, enemy and selected armies; allies only when zoomed in (hide neutral clutter)
@@ -644,6 +680,13 @@ function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: nu
           {sel && <circle cx={cx} cy={cy} r={r + 3 * px} className="dot-sel" />}
           <circle cx={cx} cy={cy} r={r} fill={n?.color ?? '#555'} stroke={sel ? '#fff' : mine ? '#f4d27a' : hostile ? '#ff5a4a' : '#151515'} strokeWidth={(sel ? 2 : 1.4) * px} />
           {a.lastSupplyRatio < 0.6 && mine && <circle cx={cx + r * 0.75} cy={cy - r * 0.75} r={2.2 * px} fill="#e05a4a" stroke="#000" strokeWidth={0.5 * px} />}
+          {mine && <path d={orgArc(cx, cy, r + 1.6 * px, armyOrg(a))} className="org-arc" strokeWidth={1.6 * px} />}
+          {mine && (k > 2.2 || sel) && (
+            <g className="army-tag" transform={`translate(${cx + r + 2 * px},${cy})`}>
+              <rect x={0} y={-6.5 * px} width={(String(nums.get(a.id)).length * 6 + (k > 4 ? 30 : 0) + 10) * px} height={13 * px} rx={3 * px} />
+              <text x={4 * px} y={4 * px} fontSize={9.5 * px}>#{nums.get(a.id)}{k > 4 ? ` ${Math.round(str / 1000)}k` : ''}{groupOf(a.id) != null ? ` ·${groupOf(a.id)}` : ''}</text>
+            </g>
+          )}
         </g>,
       );
     });
@@ -670,6 +713,7 @@ function MapTooltip({ g, p, x, y, mode }: { g: GameState; p: number; x: number; 
   if (mode === 'supply') { const sm = supplyMap(g, g.nations[g.player]); extra = sm[p] < 0 ? 'Supply: not reachable' : `Supply capacity: ${sm[p].toFixed(0)}/day`; }
   if (mode === 'infrastructure') extra = `Infrastructure: ${st.infra} (roads ${st.buildings.road}, rail ${st.buildings.railway})`;
   if (mode === 'resources') extra = `Food ${geo.resources.food} · Steel ${geo.resources.steel} · Oil ${geo.resources.oil} · Rare ${geo.resources.rare}`;
+  if (mode === 'unrest') extra = st.status === 'core' && st.owner === st.controller ? `Unrest: ${Math.round(st.resistance)}${st.resistance >= 70 ? ' — IN REVOLT' : ''}${st.martialLaw ? ' · martial law' : ''}` : `Resistance to occupation: ${Math.round(st.resistance)}`;
   if (mode === 'diplomacy' && st.owner !== g.player) extra = `Relations with you: ${(peekRel(g, st.owner, g.player)?.value ?? 0).toFixed(0)}`;
   return (
     <div className="tooltip map-tip" style={{ left: x + 16, top: y + 12 }}>
@@ -724,6 +768,7 @@ function Legend({ mode }: { mode: MapMode }) {
     terrain: Object.values(TERRAIN).map((t) => [t.color, t.label]),
     resources: [['#141414', 'Oil'], ['#4a5a6a', 'Steel'], ['#7a4fa0', 'Rare metals'], ['#4f8f3a', 'Fertile']],
     infrastructure: [['#3a2f2a', 'Poor'], ['#b07a2a', 'Moderate'], ['#ffe27a', 'Excellent']],
+    unrest: [['#3f6f4f', 'Calm'], ['#d9b44a', 'Restless'], ['#d0602a', 'Revolt (70+)'], ['#7a0f0f', 'Insurrection']],
     supply: [['#2f8f4f', 'Well supplied'], ['#c9a227', 'Limited'], ['#7a1e1e', 'Critical'], ['#282830', 'Unreachable']],
     military: [['#1f4fa0', 'Your / allied forces'], ['#a01f1f', 'Enemy forces'], ['#9a9a9a', 'Neutral']],
     diplomacy: [['#d9b44a', 'You'], ['#3f9f5f', 'Ally'], ['#8fcf7f', 'Subject'], ['#b02a2a', 'At war'], ['#5a9a6a', 'Friendly'], ['#a04a3a', 'Hostile']],

@@ -16,7 +16,7 @@
  */
 
 export type Mood = 'menu' | 'peace' | 'war';
-export type Sfx = 'click' | 'battle' | 'chime' | 'alarm' | 'fanfare' | 'coins';
+export type Sfx = 'click' | 'battle' | 'chime' | 'alarm' | 'fanfare' | 'coins' | 'warhorn' | 'peace';
 
 const STORAGE_KEY = 'wc-audio';
 const LOOKAHEAD = 0.6; // seconds scheduled ahead
@@ -129,9 +129,9 @@ const DEFS: Record<Mood, MoodDef> = {
     ],
   },
   war: {
-    bpm: 100,
+    bpm: 118,
     scale: AEOLIAN,
-    reverb: 0.32,
+    reverb: 0.28,
     seed: 0x5eed03,
     progs: [
       [ch(0, MIN), ch(8, MAJ), ch(10, MAJ), ch(0, MIN)],
@@ -1100,15 +1100,19 @@ class MoodPlayer {
       const iv = this.ostinato[i];
       if (iv === null) continue;
       const m = b + iv;
-      const vel = i === 0 ? 0.12 : i === 4 ? 0.1 : 0.075;
+      const vel = i === 0 ? 0.15 : i === 4 ? 0.13 : 0.095;
       sy.brass(out, t + k * beatDur * 0.5, [m, m + 12], beatDur * 0.32, vel, 0.02, 0.55, i % 4 === 0);
     }
     // timpani
-    if (beatInBar === 0) sy.timpani(out, t, timpPitch(b), 0.42, 1.2, -0.15);
-    if (beatInBar === 2) sy.timpani(out, t, timpPitch(b + 7), 0.28, 1.0, 0.15);
+    if (beatInBar === 0) sy.timpani(out, t, timpPitch(b), 0.5, 1.2, -0.15);
+    if (beatInBar === 2) sy.timpani(out, t, timpPitch(b + 7), 0.36, 1.0, 0.15);
+    // war drums: pounding low hits on the off-beats
+    if (beatInBar === 1 || beatInBar === 3) sy.timpani(out, t + beatDur * 0.5, timpPitch(b) - 12, 0.22, 0.5, beatInBar === 1 ? -0.4 : 0.4);
+    // horn call over the top every other bar
+    if (beatInBar === 0 && bar % 2 === 1) sy.brass(out, t, voicing(c, 62).slice(-3), barDur * 0.45, 0.07, 0.15, 1.1, false);
     if (beatInBar === 3 && bar === 7) sy.timpRoll(out, t, timpPitch(b), beatDur - 0.02, 0.05, 0.3);
-    // side drum march from the second section on
-    if (s >= 1) {
+    // side drum march from the start
+    if (s >= 0) {
       if (beatInBar === 3 && (bar === 3 || bar === 7)) {
         sy.snareRoll(out, t, beatDur * 0.95, 0.03, 0.12);
       } else {
@@ -1418,6 +1422,26 @@ class AudioManager {
         const tl = t + notes.length * 0.12;
         sy.brass(out, tl, [62, 66, 69, 74], 0.75, 0.2, 0.04, 1.2);
         sy.timpani(out, tl, 38, 0.45, 1.4);
+        break;
+      }
+      case 'warhorn': {
+        // war declared: a martial trumpet call over a timpani roll
+        const out = send(0.5);
+        const call: [number, number][] = [[62, 0.16], [62, 0.08], [62, 0.08], [69, 0.34], [66, 0.16], [69, 0.62]];
+        let at = t;
+        for (const [m, d] of call) { sy.brass(out, at, [m, m + 12], d * 0.9, 0.2, 0.015, 1.3); at += d + 0.03; }
+        sy.timpRoll(out, t, 38, at - t, 0.06, 0.32);
+        sy.timpani(out, at, 38, 0.6, 1.8);
+        sy.boom(out, at, 0.5);
+        break;
+      }
+      case 'peace': {
+        // peace: a soft, warm major chord and bells
+        const out = send(0.6);
+        sy.strings(out, t, [62, 66, 69, 74], 2.6, 0.12, 0.4, 1.6, 1800);
+        sy.bell(out, t + 0.3, mtof(78), 0.12, 2);
+        sy.bell(out, t + 0.55, mtof(81), 0.1, 2.2);
+        sy.bell(out, t + 0.8, mtof(86), 0.09, 2.6);
         break;
       }
       case 'coins': {

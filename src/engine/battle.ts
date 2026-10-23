@@ -9,7 +9,7 @@
  * armour and positions matter more than raw numbers. Randomness is seeded and bounded (±12%/day).
  */
 import type { Army, Battle, BattleFactor, BattleSide, GameState, Posture, Unit, War } from './types';
-import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL } from './config';
+import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE } from './config';
 import { PROV, isStrait, landLinks, distKm } from './geo';
 import { Stream } from './rng';
 import { armiesIn, atWar, isFriendly, warBetween, invalidateArmies, controlledBy } from './world';
@@ -178,6 +178,11 @@ function modifiers(s: GameState, b: Battle, A: SideEval, D: SideEval, aArm: Army
   aDefMods['Supply'] = 0.6 + 0.4 * Math.min(1, A.supply);
   const pa = POSTURES[b.attackerPosture], pd = POSTURES[b.defenderPosture];
   atk['Posture'] = pa.attack;
+  // air campaigns and reconnaissance
+  const aN = s.nations[b.attacker.nation], dN = s.nations[b.defender.nation];
+  if (aN?.regime?.air.mission === 'cas' && A.air > 0) atk['Close air support'] = 1.08;
+  if (dN?.regime?.air.mission === 'cas' && D.air > 0) dAtkMods['Close air support'] = 1.08;
+  if ((aN?.regime?.recon[b.province] ?? 0) > s.day) atk['Targeting data'] = 1.06;
   def['Posture'] = pd.defense;
   dAtkMods['Posture'] = pd.attack < 1 ? Math.max(0.85, pd.attack) : pd.attack;
   aDefMods['Posture'] = pa.defense;
@@ -284,8 +289,9 @@ export function battleDaily(s: GameState, b: Battle) {
   const defD = D.defense * defMult;
   const defA = A.breakthrough * aDefMult + A.defense * 0.25 * aDefMult; // attackers rely on breakthrough
   // defence absorbs attacks up to its value; prepared positions also blunt what gets through
-  const dmgToD = (Math.min(hitsA, defD) * 0.1 + Math.max(0, hitsA - defD) * 0.4) / Math.sqrt(Math.max(0.5, defMult));
-  const dmgToA = (Math.min(hitsD, defA) * 0.1 + Math.max(0, hitsD - defA) * 0.4) / Math.sqrt(Math.max(0.5, aDefMult));
+  const roeA = ROE[s.nations[atkOwner]?.regime?.roe ?? 'standard'].damage, roeD = ROE[s.nations[b.defender.nation]?.regime?.roe ?? 'standard'].damage;
+  const dmgToD = roeA * (Math.min(hitsA, defD) * 0.1 + Math.max(0, hitsA - defD) * 0.4) / Math.sqrt(Math.max(0.5, defMult));
+  const dmgToA = roeD * (Math.min(hitsD, defA) * 0.1 + Math.max(0, hitsD - defA) * 0.4) / Math.sqrt(Math.max(0.5, aDefMult));
   const nA = s.nations[atkOwner], nD = s.nations[b.defender.nation];
   const casA = pa.casualties * (A.trait === 'aggressive' ? 1.15 : A.trait === 'cautious' ? 0.8 : 1);
   const casD = pd.casualties * (D.trait === 'cautious' ? 0.8 : 1);

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { store, useGame } from '../store';
 import { Section, Btn, Bar, Tabs, Stat } from '../common';
 import { TECHS, BRANCHES, canResearch, researchRate } from '../../engine/research';
+import { licensors, licenseCost } from '../../engine/warplans';
 import { chooseResearch, queueResearch } from '../../engine/actions';
 import { ACHIEVEMENTS, victoryProgress } from '../../engine/victory';
 import { TUTORIAL } from '../../engine/tutorial';
@@ -10,13 +11,13 @@ import { ownedBy, livingNations } from '../../engine/world';
 import { num, pct, money } from '../format';
 import { focusProvince } from '../commands';
 
-export function ResearchPanel() {
+export function ResearchPanel({ embedded }: { embedded?: boolean } = {}) {
   const g = useGame();
   const n = g.nations[g.player];
   const rate = researchRate(g, n);
   const cur = n.research.current ? TECHS.find((t) => t.id === n.research.current) : null;
-  return (
-    <div className="panel-body">
+  const body = (
+    <>
       <div className="grid3">
         <Stat label="Research rate" value={`${rate.toFixed(1)} RP/yr`} tip="From research funding (Economy) and Research Institutes." />
         <Stat label="Current" value={cur ? cur.name : 'none'} />
@@ -41,6 +42,7 @@ export function ResearchPanel() {
                       {avail && !active && <Btn small kind="primary" onClick={() => store.cmd('chooseResearch', [t.id])}>Research</Btn>}
                       {!active && !queued && <Btn small kind="ghost" onClick={() => store.cmd('queueResearch', [t.id])}>Queue</Btn>}
                       {queued && <span className="chip">queued</span>}
+                      {avail && licensors(g, n, t.id).length > 0 && <Btn small title={`Buy the know-how from ${licensors(g, n, t.id).map((x) => g.nations[x]?.name).join(', ')}`} disabled={n.treasury < licenseCost(n, t.id)} onClick={() => { const r = store.cmd('doLicenseTech', [t.id]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>License {money(licenseCost(n, t.id), { digits: 0 })}</Btn>}
                       {active && <span className="chip good">in progress {pct(n.research.progress / t.cost)}</span>}
                     </div>
                   )}
@@ -50,8 +52,10 @@ export function ResearchPanel() {
           </div>
         ))}
       </div>
-    </div>
+      <p className="small muted">Funding is set in Economy → Budget. Allies and trade partners will license technologies they already have for money (instant).</p>
+    </>
   );
+  return embedded ? body : <div className="panel-body">{body}</div>;
 }
 
 export function StatsPanel() {
@@ -132,13 +136,17 @@ export function HelpPanel() {
       <Section title="How to play" icon="info">
         <ul className="help">
           <li><b>Map:</b> drag to pan, wheel to zoom. Left-click selects provinces and armies; <b>right-click</b> orders the selected army to move or attack. Map modes (bottom-left) show terrain, resources, infrastructure, supply, military and diplomacy.</li>
-          <li><b>Time:</b> Space pauses; keys 1–3 set speed. Orders can be given while paused.</li>
+          <li><b>Time:</b> Space pauses; + and − change speed (1–3 also set speed until you assign those numbers to control groups). Orders can be given while paused.</li>
           <li><b>Economy:</b> taxes fund everything. Each formation, building and project has explicit costs and upkeep — check the budget before expanding. Deficits drain the treasury, then debt, then default.</li>
           <li><b>Army:</b> recruit in your provinces: one price covers training and full equipment, and the unit appears ready to fight when training ends. Factories make units cheaper and faster. Mobilise before major wars for full organisation.</li>
           <li><b>War Room</b> (top of the left bar): every war's losses and territory, every battle in progress — change posture, retreat or send reinforcements — and one-click orders for all armies (Attack, Defend, Hold, Withdraw). Shift-click armies to move several together.</li>
           <li><b>Controlling armies:</b> hover a province with an army selected to see attack odds and travel time. Shift-click or shift-drag a box to select several armies; shift+right-click adds waypoints. The army bar above the map modes lists every army. Keys: Tab next army, M move, H halt, R retreat, F attack, D defend, G hold. An enemy province's panel has “Attack with all nearby armies”.</li>
           <li><b>Strikes:</b> buy attack drones and cruise missiles in the War Room, then fire at enemy provinces in range to kill troops and destroy rail, depots, power and factories. Fleets off a coast extend range.</li>
           <li><b>Nuclear weapons</b> (nuclear powers, or after a costly programme) devastate a province — but the whole world embargoes you for 10 years, ends your alliances and gains a casus belli, and armed enemies retaliate.</li>
+          <li><b>Regime</b> (left bar): six social groups (workers, middle class, business, officers, traditionalists, youth) each approve or disapprove of you; with your legitimacy they set stability and feed an opposition movement that escalates from dissent to protests, strikes, insurgency and revolution. Run propaganda campaigns, choose your police (up to a police state), and use the interior ministry: crackdowns, mass arrests, bans, amnesties, concessions, referendums, rigged elections, officer purges, emergency drafts and food subsidies. Provinces above 70 unrest revolt — garrison them or declare martial law.</li>
+          <li><b>War Room tabs:</b> Armies — a numbered roster; type “1-6” to select armies 1 to 6 and give them one order (move, attack nearest, joint operation, defend, hold, halt, retreat, dig in, merge, posture). Number keys recall control groups, Shift+number stores one. Operations — coordinated offensives where several armies wait at their start lines and attack the same day. Strategy — war economy, rules of engagement, air campaigns (close air support, strategic bombing, air defence), mercenaries and border fortification. Strikes — recon drones, attack drones, cruise and ballistic missiles, air-defence batteries and nuclear weapons.</li>
+          <li><b>Province war actions:</b> martial law, scorched earth (burn your own province before the enemy takes it) and funding partisans behind enemy lines.</li>
+          <li><b>Technology</b> is now in Economy → Technology; allies and trade partners can license you technologies they already have.</li>
           <li><b>Government</b> (Economy → Government): set public-services spending, choose national policies (economic model, trade, labour, conscription, media), enact decrees (austerity, stimulus, printing money, war bonds…) and invest in a sovereign wealth fund.</li>
           <li><b>Regional focus:</b> give each core province a specialisation (industry, agriculture, commerce, military) from its panel.</li>
           <li><b>Statecraft & spies</b> (Diplomacy → a nation): send aid, impose sanctions, guarantee independence, build spy networks and run covert operations (steal technology, sabotage, incite unrest).</li>

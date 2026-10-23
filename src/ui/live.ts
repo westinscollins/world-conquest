@@ -7,7 +7,7 @@ import { isFriendly } from '../engine/world';
 
 export interface LiveFloat { id: number; province: number; text: string; mine: boolean; amount: number; t: number }
 export interface LiveFlash { id: number; province: number; gained: boolean; t: number }
-export interface LiveBlast { id: number; province: number; kind: 'drone' | 'missile' | 'nuke'; t: number }
+export interface LiveBlast { id: number; province: number; kind: string; t: number }
 export interface LiveTick { id: number; text: string; kind: 'good' | 'bad'; province: number; t: number }
 
 const FLOAT_MS = 2600, FLASH_MS = 4200, TICK_MS = 12000, BLAST_MS = 3500;
@@ -24,6 +24,8 @@ class Live {
   private ctrl: string[] = [];
   private losses = new Map<number, [number, number]>();
   private nextId = 1;
+  private counted = new Set<number>();
+  private battleCount = -1;
 
   reset(g: GameState | null) {
     this.g = g;
@@ -52,6 +54,7 @@ class Live {
     }
     // casualties in battles the player (or an ally) is fighting
     let mineToday = 0, enemyToday = 0;
+    const prevKnown = new Set(this.losses.keys());
     const seen = new Set<number>();
     for (const id of g.activeBattles) {
       const b = g.battles[id];
@@ -68,7 +71,27 @@ class Live {
       this.float(b.province, mine, true, now);
       this.float(b.province, theirs, false, now);
     }
-    for (const id of [...this.losses.keys()]) if (!seen.has(id)) this.losses.delete(id);
+    // battles that ended since the last update: count their final losses too
+    for (const id of [...this.losses.keys()]) {
+      if (seen.has(id)) continue;
+      const b = g.battles[id];
+      const prev = this.losses.get(id)!;
+      this.losses.delete(id);
+      if (!b || (b.attacker.nation !== me && b.defender.nation !== me)) continue;
+      const cur = sides(g, b);
+      const dA = Math.max(0, cur[0] - prev[0]), dD = Math.max(0, cur[1] - prev[1]);
+      if (b.attacker.nation === me) { mineToday += dA; enemyToday += dD; } else { mineToday += dD; enemyToday += dA; }
+    }
+    // battles that started and ended between two updates
+    if (g.stats.battles !== this.battleCount) for (const b of Object.values(g.battles)) {
+      if (b.endDay == null || b.endDay < g.day - 1 || this.counted.has(b.id) || seen.has(b.id)) continue;
+      this.counted.add(b.id);
+      if (b.startDay < g.day - 1 || (b.attacker.nation !== me && b.defender.nation !== me)) continue;
+      if (prevKnown.has(b.id)) continue;
+      const cur = sides(g, b);
+      if (b.attacker.nation === me) { mineToday += cur[0]; enemyToday += cur[1]; } else { mineToday += cur[1]; enemyToday += cur[0]; }
+    }
+    this.battleCount = g.stats.battles;
     // strikes since the last day
     for (const r of g.strikes ?? []) {
       if (r.id <= this.lastStrike) continue;

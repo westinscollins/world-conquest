@@ -12,6 +12,10 @@ import { hashNoise } from './rng';
 import { isAtWar, ownedBy, controlledBy, rel, livingNations, neighborsOf, invalidateDiplo, peekRel } from './world';
 import { infraOf } from './economy';
 import { invalidateArmies } from './world';
+import { regimeEffect } from './regime';
+
+/** Effects other nations inflict (stored like decrees, with an expiry day). */
+export const HOSTILE: Record<string, GovEffect> = { cyberHit: { output: 0.97, construction: 1.15 } };
 
 export type { GovEffect };
 
@@ -47,7 +51,8 @@ export function govMods(s: GameState, n: Nation): Mods {
     }
   };
   for (const a in g.policies) apply(POLICY_AREAS[a as PolicyArea].options[g.policies[a as PolicyArea]]?.effect);
-  for (const d in g.decrees) if (g.decrees[d] > s.day) apply(DECREES[d]?.effect);
+  for (const d in g.decrees) if (g.decrees[d] > s.day) apply(DECREES[d]?.effect ?? HOSTILE[d]);
+  for (const e of regimeEffect(s, n)) apply(e);
   // public-services spending level
   const L = g.services;
   m.services *= L;
@@ -242,6 +247,17 @@ export function spyOp(s: GameState, n: Nation, to: string, op: string): { ok: bo
     t.stability = Math.max(0, t.stability - 6);
     for (const p of ownedBy(s, to)) if (s.provinces[p].status !== 'core') s.provinces[p].resistance = Math.min(100, s.provinces[p].resistance + 15);
     msg = `Dissidents funded: ${t.name} stability −6.`;
+  } else if (op === 'cyber') {
+    t.gov.decrees.cyberHit = s.day + 60;
+    touchGov();
+    msg = `Cyber attack succeeded: ${t.name}'s power grid and logistics are crippled for 60 days.`;
+    addEvent(s, 'war', `${t.name} suffers a massive cyber attack on its infrastructure.`, [to, n.id], { important: t.isPlayer });
+  } else if (op === 'coup') {
+    t.stability = Math.max(0, t.stability - 20);
+    if (t.regime) { t.regime.opposition = Math.min(100, t.regime.opposition + 25); t.regime.legitimacy = Math.max(0, t.regime.legitimacy - 20); }
+    for (const a of Object.values(s.armies)) if (a.owner === to) for (const u of a.units) u.org *= 0.6;
+    msg = `Coup attempt in ${t.name}: the government survives, badly shaken.`;
+    addEvent(s, 'unrest', `Coup attempt in ${t.name}! Rebel officers seized the radio station before loyal troops restored order.`, [to], { important: true });
   } else if (op === 'intel') {
     n.intel = Math.min(0.95, n.intel + 0.04);
     msg = 'Military mapped: your intelligence estimates are more accurate.';
@@ -351,6 +367,39 @@ export const EVENTS: Record<string, EventSpec> = {
     options: [
       { label: 'Develop a state mine', desc: 'Pay 3% of output; the province gets a free mine level.', run: (s, n, e) => { pay(n, 0.03); const st = s.provinces[e.province!]; if (st.buildings.mine < 3) st.buildings.mine++; } },
       { label: 'Sell the rights', desc: '+3% of output in cash.', run: (s, n) => gain(n, 0.03) },
+    ],
+  },
+  militaryCoup: {
+    title: 'Military coup!', when: () => false,
+    text: () => 'Tanks surround the presidential palace. Disloyal generals demand that the government resign.',
+    options: [
+      { label: 'Crush the plotters', desc: 'Loyal units fight it out: every army −40% organisation, officers +20 (the purge), stability −8.', run: (s, n) => { for (const a of Object.values(s.armies)) if (a.owner === n.id) for (const u of a.units) u.org *= 0.6; if (n.regime) n.regime.groups.military = Math.min(100, n.regime.groups.military + 20); stab(n, -8); } },
+      { label: 'Negotiate with the generals', desc: 'Raise the military budget: pay 4% of output, officers +25, legitimacy −10.', run: (s, n) => { pay(n, 0.04); if (n.regime) { n.regime.groups.military = Math.min(100, n.regime.groups.military + 25); n.regime.legitimacy = Math.max(0, n.regime.legitimacy - 10); } } },
+    ],
+  },
+  protests: {
+    title: 'Mass protests', when: (s, n) => (n.regime?.opposition ?? 0) > 35,
+    text: () => 'Hundreds of thousands march on the capital square demanding change.',
+    options: [
+      { label: 'Send in the riot police', desc: 'Opposition −10, youth −12, workers −6, infamy +2.', run: (s, n) => { if (n.regime) { n.regime.opposition = Math.max(0, n.regime.opposition - 10); n.regime.groups.youth = Math.max(0, n.regime.groups.youth - 12); n.regime.groups.workers = Math.max(0, n.regime.groups.workers - 6); } n.infamy = Math.min(100, n.infamy + 2); } },
+      { label: 'Address the crowds', desc: 'Promise reforms: pay 1% of output, opposition −4, legitimacy −4.', run: (s, n) => { pay(n, 0.01); if (n.regime) { n.regime.opposition = Math.max(0, n.regime.opposition - 4); n.regime.legitimacy = Math.max(0, n.regime.legitimacy - 4); } } },
+      { label: 'Ignore them', desc: 'Opposition +6.', run: (s, n) => { if (n.regime) n.regime.opposition = Math.min(100, n.regime.opposition + 6); } },
+    ],
+  },
+  dissident: {
+    title: 'Famous dissident', when: (s, n) => (n.regime?.opposition ?? 0) > 20,
+    text: () => 'A celebrated writer has published a scathing attack on the government. Foreign media love it.',
+    options: [
+      { label: 'Arrest the writer', desc: 'Opposition −5 now, youth −8, middle class −5, infamy +1.', run: (s, n) => { if (n.regime) { n.regime.opposition = Math.max(0, n.regime.opposition - 5); n.regime.groups.youth = Math.max(0, n.regime.groups.youth - 8); n.regime.groups.middle = Math.max(0, n.regime.groups.middle - 5); } n.infamy = Math.min(100, n.infamy + 1); } },
+      { label: 'Let them speak', desc: 'Opposition +3, legitimacy +2 (tolerance looks confident).', run: (s, n) => { if (n.regime) { n.regime.opposition = Math.min(100, n.regime.opposition + 3); n.regime.legitimacy = Math.min(100, n.regime.legitimacy + 2); } } },
+    ],
+  },
+  victoryParade: {
+    title: 'Victory parade', when: (s, n) => n.stats.battlesWon > 2 && isAtWar(s, n.id),
+    text: () => 'Our armies have won great victories. The ministry proposes a parade through the capital.',
+    options: [
+      { label: 'Hold the parade', desc: 'Pay 1% of output: legitimacy +6, officers +6, war support +8.', run: (s, n) => { pay(n, 0.01); if (n.regime) { n.regime.legitimacy = Math.min(100, n.regime.legitimacy + 6); n.regime.groups.military = Math.min(100, n.regime.groups.military + 6); } n.warSupport = Math.min(100, n.warSupport + 8); } },
+      { label: 'No time for celebrations', desc: 'No effect.', run: () => {} },
     ],
   },
   election: {

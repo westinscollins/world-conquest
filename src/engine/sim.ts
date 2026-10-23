@@ -19,6 +19,8 @@ import { relationsWeekly, updateWarScore, checkCapitulation } from './diplomacy'
 import { seaTransportDaily, fleetsDaily, shipyardDaily } from './naval';
 import { strategicDaily } from './strikes';
 import { eventsDaily } from './policy';
+import { revoltsMonthly, airDaily } from './regime';
+import { operationsDaily, partisansDaily } from './warplans';
 import { aiWeekly, aiArmiesDaily, armyAutomation } from './ai';
 import { dateOf, addEvent } from './events';
 import { checkVictory, checkAchievements } from './victory';
@@ -46,6 +48,7 @@ export function tick(s: GameState) {
     shipyardDaily(s, n);
     strategicDaily(s, n);
     eventsDaily(s, n);
+    airDaily(s, n);
     constructionDaily(s, n);
     researchDaily(s, n);
   }
@@ -82,12 +85,15 @@ export function tick(s: GameState) {
   if (newMonth) {
     updateMarket(s);
     resistanceMonthly(s);
+    revoltsMonthly(s);
   }
   for (const w of s.wars) updateWarScore(s, w);
   checkCapitulation(s);
 
   // ---- AI & automation
   aiArmiesDaily(s);
+  operationsDaily(s);
+  partisansDaily(s);
   for (const a of Object.values(s.armies)) if (s.nations[a.owner]?.isPlayer && a.stance !== 'hold') armyAutomation(s, a);
   if (s.day % 7 === 0) relationsWeekly(s);
   for (const n of nations) if (!n.isPlayer && n.alive && nationIndex(n.id) === s.day % 7) aiWeekly(s, n);

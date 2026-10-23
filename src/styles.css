@@ -409,3 +409,30 @@ svg.map.moving { cursor: crosshair; }
 .diplo-detail .statecraft { grid-template-columns: 1fr; gap: 2px; }
 .diplo-detail .statecraft > span:nth-child(odd) { margin-top: 6px; font-weight: 600; }
 .diplo-detail .statecraft .row { flex-wrap: wrap; }
+.org-arc { fill: none; stroke: #7fe08a; opacity: .9; pointer-events: none; }
+.army-tag rect { fill: rgba(10, 12, 18, .82); stroke: rgba(244, 210, 122, .55); stroke-width: .6; vector-effect: non-scaling-stroke; }
+.army-tag text { fill: #f4e6c0; font-weight: 700; pointer-events: none; }
+.prov-marker text { paint-order: stroke; stroke: rgba(0,0,0,.6); stroke-width: 2px; }
+/* ---- regime & war room */
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.opp-meter { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.opp-meter.hot { border-color: var(--bad); background: rgba(120, 20, 10, .15); }
+.opp-bar { position: relative; height: 10px; background: rgba(255,255,255,.07); border-radius: 5px; margin-top: 6px; overflow: hidden; }
+.opp-bar > div { height: 100%; background: linear-gradient(90deg, #d9b44a, #d0602a, #a01f1f); }
+.opp-bar > span { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.35); }
+.group-row { display: grid; grid-template-columns: 130px 1fr 34px 16px; gap: 8px; align-items: center; margin: 4px 0; font-size: 12.5px; }
+.g-bar { position: relative; height: 8px; background: rgba(255,255,255,.07); border-radius: 4px; }
+.g-bar > div { height: 100%; border-radius: 4px; }
+.g-target { position: absolute; top: -3px; width: 2px; height: 14px; background: #fff; opacity: .8; }
+.policy-opts.four { grid-template-columns: repeat(4, 1fr); }
+.policy-opts .posture span { font-size: 10.5px; }
+.roster-select { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.range-in { width: 110px; }
+.cg { width: 28px; height: 26px; border-radius: 5px; border: 1px solid var(--line2); background: rgba(255,255,255,.03); color: var(--muted); cursor: pointer; font-size: 12px; position: relative; }
+.cg.set { color: var(--gold2); border-color: var(--gold); }
+.cg small { position: absolute; right: 2px; bottom: 0; font-size: 8.5px; color: var(--muted); }
+.bulk { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; background: rgba(255,255,255,.02); position: sticky; top: 0; z-index: 2; backdrop-filter: blur(6px); }
+.bulk b { margin-right: 6px; font-size: 12.5px; }
+.roster tr.sel td { background: rgba(217,179,92,.12); }
+.roster td, .roster th { padding: 3px 5px; }
+.war-actions.calm { border-color: var(--line); background: rgba(255,255,255,.02); align-items: center; }

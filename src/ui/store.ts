@@ -14,8 +14,8 @@ import { runCommand } from '../engine/commands';
 import { Session } from './net/session';
 import type { Result } from '../engine/actions';
 
-export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy';
-export type Panel = null | 'war' | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
+export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy' | 'unrest';
+export type Panel = null | 'war' | 'regime' | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
 
 export interface UIState {
   screen: 'menu' | 'game';
@@ -32,7 +32,9 @@ export interface UIState {
   /** Extra armies selected with shift-click; they move together with the selected army. */
   group: number[];
   /** Strike targeting mode: the next province clicked is hit. */
-  strike: null | { kind: 'drone' | 'missile' | 'nuke'; count: number };
+  strike: null | { kind: 'drone' | 'missile' | 'nuke' | 'ballistic' | 'recon'; count: number };
+  /** Waiting for a map click to choose the target of a coordinated operation. */
+  pickOperation: boolean;
   toasts: { id: number; text: string; kind: 'info' | 'good' | 'bad' | 'war' }[];
   confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void };
   peaceWar: number | null;
@@ -46,7 +48,7 @@ class Store {
   net: Session | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
-    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], strike: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
+    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], strike: null, pickOperation: false, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;
   private listeners = new Set<() => void>();
@@ -74,7 +76,8 @@ class Store {
     this.ui = { ...this.ui, screen: 'game', speed: 0, selectedProvince: g.nations[g.player].capital, selectedArmy: null, selectedNation: null, panel: g.tutorial ? 'help' : null, lastAutosave: g.day, battleReport: null, intel: null };
     this.emit();
     this.loop();
-    audio.setMood(this.moodFor());
+    this.lastMood = this.moodFor();
+    audio.setMood(this.lastMood);
   }
   quitToMenu() {
     cancelAnimationFrame(this.raf);
@@ -105,6 +108,7 @@ class Store {
     if (this.net?.role === 'guest') { this.net.sendCommand(name, args, done); return undefined; }
     const r = runCommand(g, g.player, name, args);
     live.update(g); // show strike blasts and captures at once, even while paused
+    this.syncMood();
     if (this.net?.role === 'host') this.net.record(['c', this.net.myPeer, g.player, name, args]);
     this.emit();
     done?.(r);
@@ -129,6 +133,16 @@ class Store {
     setTimeout(() => { this.ui = { ...this.ui, toasts: this.ui.toasts.filter((t) => t.id !== id) }; this.emit(); }, kind === 'war' ? 7000 : 4500);
   }
 
+  /** Switch the music the moment a war starts or ends: a trumpet call for war, a soft chord for peace. */
+  syncMood() {
+    const mood = this.moodFor();
+    if (mood === this.lastMood) return;
+    const was = this.lastMood;
+    this.lastMood = mood;
+    audio.setMood(mood);
+    if (mood === 'war') audio.sfx('warhorn');
+    else if (was === 'war') audio.sfx('peace');
+  }
   moodFor(): 'peace' | 'war' {
     const g = this.game;
     if (!g) return 'peace';
@@ -164,7 +178,7 @@ class Store {
     this.raf = requestAnimationFrame(step);
   };
 
-  private lastMood: string = 'peace';
+  private lastMood: 'peace' | 'war' = 'peace';
   private lastEmit = 0;
   private wasDeficit = false;
   /** Guest: a day arrived from the host. */
@@ -183,7 +197,7 @@ class Store {
       for (const e of g.events.filter((x) => ids.has(x.id))) {
         const kind = e.kind === 'war' ? 'war' : e.kind === 'battle' ? (e.text.includes(`${g.nations[g.player].name} victorious`) ? 'good' : e.text.includes('victorious') ? 'bad' : 'info') : e.kind === 'achievement' ? 'good' : 'info';
         this.toast(e.text, kind);
-        if (e.kind === 'war' && e.text.includes('declared war on ' + g.nations[g.player].name)) { if (!online) this.ui = { ...this.ui, speed: 0 }; audio.sfx('alarm'); }
+        if (e.kind === 'war' && e.text.includes('declared war on ' + g.nations[g.player].name)) { if (!online) this.ui = { ...this.ui, speed: 0 }; }
         else if (e.kind === 'battle') audio.sfx('battle');
         else if (e.kind === 'achievement') audio.sfx('fanfare');
       }
@@ -199,8 +213,7 @@ class Store {
       }
       this.wasDeficit = deficit;
     }
-    const mood = this.moodFor();
-    if (mood !== this.lastMood) { this.lastMood = mood; audio.setMood(mood); }
+    this.syncMood();
     if (g.day - this.ui.lastAutosave >= 30) {
       this.ui = { ...this.ui, lastAutosave: g.day };
       saveGame('autosave', g).catch(() => this.toast('Autosave failed (storage full or unavailable).', 'bad'));

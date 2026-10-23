@@ -1,5 +1,5 @@
 import type { Army, EquipKind, GameState, Nation, ShipType, Unit, UnitType, Fleet, General, GeneralTrait } from './types';
-import { MIL, UNITS, SHIPS, SHIP_UPKEEP_SHARE, TERRAIN, WEATHER, ECON, RESOURCE } from './config';
+import { MIL, UNITS, SHIPS, SHIP_UPKEEP_SHARE, TERRAIN, WEATHER, ECON, RESOURCE, WAR_ECONOMY, REVOLT_AT } from './config';
 import { PROV, distKm, isStrait, landLinks } from './geo';
 import { atWar, isFriendly, invalidateArmies, armiesIn } from './world';
 import { addEvent } from './events';
@@ -203,7 +203,7 @@ export function pathDays(s: GameState, a: Army, path: number[]): number {
 }
 
 // ---------------------------------------------------------------- recruitment & training
-export function trainDays(type: UnitType, n?: Nation) { return Math.round(UNITS[type].trainDays * (1 - industryBonus(n).speed)); }
+export function trainDays(type: UnitType, n?: Nation) { return Math.round(UNITS[type].trainDays * (1 - industryBonus(n).speed) * (n?.regime ? WAR_ECONOMY[n.regime.warEconomy].train : 1)); }
 
 export interface RecruitCheck { ok: boolean; reason?: string; cost: number; manpower: number; days: number; upkeep: number; }
 export function checkRecruit(s: GameState, n: Nation, type: UnitType, province: number): RecruitCheck {
@@ -213,6 +213,7 @@ export function checkRecruit(s: GameState, n: Nation, type: UnitType, province: 
   const p = s.provinces[province];
   if (p.owner !== n.id || p.controller !== n.id) return { ...res, ok: false, reason: 'You must own and control the province.' };
   if (p.status === 'occupied') return { ...res, ok: false, reason: 'Cannot recruit in occupied territory.' };
+  if (p.resistance >= REVOLT_AT) return { ...res, ok: false, reason: 'The province is in open revolt.' };
   if (n.treasury < cost) return { ...res, ok: false, reason: 'Insufficient funds.' };
   if (n.manpower < sp.personnel) return { ...res, ok: false, reason: 'Insufficient manpower.' };
   if (n.bankrupt) return { ...res, ok: false, reason: 'The state is bankrupt.' };

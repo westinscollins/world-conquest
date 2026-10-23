@@ -7,7 +7,7 @@
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
@@ -252,7 +252,11 @@ export function weatherFor(lat: number, month: number, roll: number, terrain: Te
 // ---------------------------------------------------------------- precision strikes & strategic weapons
 export interface StrikeSpec { label: string; plural: string; cost: number; range: number; kill: number; org: number; hitBuilding: number; damage: number; intercept: number; desc: string }
 /** Conventional strikes: bought into a stockpile, fired at a province of a nation you are at war with. */
-export const STRIKES: Record<'drone' | 'missile', StrikeSpec> = {
+export const STRIKES: Record<'drone' | 'missile' | 'ballistic' | 'recon', StrikeSpec> = {
+  ballistic: { label: 'Ballistic missile', plural: 'ballistic missiles', cost: 14, range: 4000, kill: 0.05, org: 0.12, hitBuilding: 2, damage: 0.1, intercept: 0.25,
+    desc: 'Heavy, fast and hard to intercept (4,000 km). Each hit flattens two building levels and kills many troops.' },
+  recon: { label: 'Recon drone', plural: 'recon drones', cost: 0.6, range: 900, kill: 0, org: 0, hitBuilding: 0, damage: 0, intercept: 0.8,
+    desc: 'Unarmed. Reveals the exact enemy forces in a province for 30 days and gives your attacks there +6% (targeting data).' },
   drone: { label: 'Attack drone', plural: 'attack drones', cost: 1.2, range: 700, kill: 0.012, org: 0.05, hitBuilding: 0.3, damage: 0.02, intercept: 1,
     desc: 'Cheap loitering munitions. Short range (700 km from land you hold, or from a fleet offshore). Wear down troops and occasionally knock out a building.' },
   missile: { label: 'Cruise missile', plural: 'cruise missiles', cost: 5, range: 2500, kill: 0.025, org: 0.08, hitBuilding: 1, damage: 0.05, intercept: 0.5,
@@ -352,8 +356,86 @@ export const SPY = {
     steal: { label: 'Steal technology', need: 0.4, cost: 4, desc: 'Copy their research: +25% progress on your current technology.' },
     sabotage: { label: 'Sabotage industry', need: 0.4, cost: 5, desc: 'Destroy a factory, power plant or depot in one of their provinces.' },
     unrest: { label: 'Incite unrest', need: 0.3, cost: 3, desc: 'Fund dissidents: −6 stability for them, +15 resistance in their occupied lands.' },
+    cyber: { label: 'Cyber attack', need: 0.5, cost: 6, desc: 'Hack their grid and logistics: −3% output and −20% supply throughput for 60 days.' },
+    coup: { label: 'Sponsor a coup', need: 0.8, cost: 15, desc: 'Back disloyal generals: their stability −20, opposition +25, legitimacy −20, armies lose organisation.' },
     intel: { label: 'Map their military', need: 0.2, cost: 2, desc: 'Better intelligence on them (+15% intel quality for battle estimates).' },
   } as Record<string, { label: string; need: number; cost: number; desc: string }>,
 };
 
 export const AID_AMOUNTS = [5, 20, 50];
+
+// ---------------------------------------------------------------- regime: population, opposition, propaganda, repression
+export const GROUPS: Record<'workers' | 'middle' | 'business' | 'military' | 'clergy' | 'youth', { label: string; weight: number; desc: string }> = {
+  workers: { label: 'Workers', weight: 0.3, desc: 'Factory and farm labour. Care about taxes, wages, food and public services.' },
+  middle: { label: 'Middle class', weight: 0.2, desc: 'Professionals and shopkeepers. Hate inflation and repression; like stability and services.' },
+  business: { label: 'Business elite', weight: 0.15, desc: 'Owners and financiers. Want low taxes, free markets and open trade.' },
+  military: { label: 'Officer corps', weight: 0.15, desc: 'Want a big budget, victories and respect. Low loyalty means coup risk.' },
+  clergy: { label: 'Traditionalists', weight: 0.1, desc: 'Religious and rural conservatives. Like order, faith and tradition; dislike a free press.' },
+  youth: { label: 'Students & youth', weight: 0.1, desc: 'Idealistic and restless. Hate censorship, conscription and police; fuel protest movements.' },
+};
+export type GroupKey = keyof typeof GROUPS;
+
+/** Ongoing propaganda campaigns: yearly cost as a share of output; group approval and other effects (per month). */
+export const PROPAGANDA: Record<string, { label: string; desc: string; cost: number; groups: Partial<Record<GroupKey, number>>; legitimacy?: number; opposition?: number; warSupport?: number; warOnly?: boolean }> = {
+  cult: { label: 'Cult of personality', desc: 'Portraits, statues and songs: the leader is the nation.', cost: 0.004, groups: { clergy: 2, youth: -4, middle: -2 }, legitimacy: 2.5 },
+  pride: { label: 'National pride', desc: 'Flags, anthems and a glorious history for everyone.', cost: 0.003, groups: { workers: 4, middle: 3, clergy: 4, military: 3, business: 1, youth: 1 } },
+  miracle: { label: 'Economic miracle', desc: 'Statistics, ribbon-cuttings and promises of prosperity.', cost: 0.003, groups: { middle: 6, business: 5, workers: 2 } },
+  army: { label: 'Glory of the armed forces', desc: 'Parades and war films. Recruits enlist proudly.', cost: 0.003, groups: { military: 9, youth: 2 }, warSupport: 8 },
+  bread: { label: 'Bread and circuses', desc: 'Free concerts, football and cheap bread.', cost: 0.006, groups: { workers: 9, youth: 5, middle: 1 } },
+  faith: { label: 'Faith and tradition', desc: 'Religion and family values in schools and broadcasts.', cost: 0.002, groups: { clergy: 10, youth: -3, middle: -1 } },
+  enemyWithin: { label: 'Enemy within', desc: 'Blame traitors and foreign agents. Discredits the opposition, but divides society.', cost: 0.002, groups: { youth: -5, middle: -3, clergy: 3, military: 2 }, opposition: -1.2 },
+  gates: { label: 'Enemy at the gates', desc: 'Wartime: the homeland is in danger, rally to the flag.', cost: 0.003, groups: { workers: 3, middle: 3, military: 4, clergy: 3 }, warSupport: 15, warOnly: true },
+};
+/** Effectiveness of propaganda by media policy; more than three campaigns breeds cynicism. */
+export const PROPAGANDA_MEDIA: Record<string, number> = { free: 0.6, regulated: 1, state: 1.4 };
+export const PROPAGANDA_SATURATION = 3;
+
+export const SECURITY = [
+  { label: 'Ordinary police', cost: 0, opposition: 0, unrest: 0, desc: 'Normal policing. No political surveillance.' },
+  { label: 'Political police', cost: 0.004, opposition: 0.7, unrest: 6, desc: 'Watches dissidents. Opposition grows more slowly.' },
+  { label: 'Secret police', cost: 0.01, opposition: 1.5, unrest: 12, desc: 'Informers everywhere, night arrests. Enables mass arrests. Youth and middle class resent it.' },
+  { label: 'Police state', cost: 0.02, opposition: 2.6, unrest: 20, desc: 'Total surveillance. Opposition barely breathes — but nobody loves you.' },
+];
+
+/** One-off interior actions. Cost as a share of output. */
+export const INTERIOR: Record<string, { label: string; desc: string; cooldown: number; cost: number; needSecurity?: number; needMedia?: string }> = {
+  crackdown: { label: 'Crack down on protests', desc: 'Riot police clear the streets: opposition −15, unrest −25 in revolting provinces. Workers and youth −10, infamy +2.', cooldown: 120, cost: 0.002 },
+  arrests: { label: 'Mass arrests', desc: 'Round up the opposition: opposition −25. Middle class and youth −15. Needs secret police.', cooldown: 240, cost: 0.004, needSecurity: 2 },
+  concessions: { label: 'Grant concessions', desc: 'Raise wages, release prisoners: opposition −10, workers +8, middle +5, legitimacy −3.', cooldown: 180, cost: 0.02 },
+  amnesty: { label: 'Political amnesty', desc: 'Free political prisoners: youth +10, middle +6, legitimacy +2, opposition +3.', cooldown: 365, cost: 0 },
+  ban: { label: 'Ban the opposition', desc: 'Outlaw opposition parties: opposition −30 now, but it grows 50% faster underground for 2 years. Legitimacy −5. Needs political police.', cooldown: 730, cost: 0, needSecurity: 1 },
+  referendum: { label: 'Hold a referendum', desc: 'Ask the people to endorse you. Wins (approval above 55 or legitimacy above 60) give legitimacy +20; a loss costs −15 and emboldens the opposition.', cooldown: 1095, cost: 0.01 },
+  rig: { label: 'Rig the elections', desc: 'Stuff the ballot boxes: legitimacy +10 at home, but youth −10, middle −8, infamy +3, and the regime is marked as rigged. Needs state media.', cooldown: 1095, cost: 0.004, needMedia: 'state' },
+  purge: { label: 'Purge the officer corps', desc: 'Remove disloyal generals: coup risk gone and officers +15 later, but every army loses 30% organisation now and officers −20.', cooldown: 720, cost: 0 },
+  draft: { label: 'Emergency draft', desc: 'Call up reservists: +1% of the population in manpower. Workers −8, youth −12, stability −4.', cooldown: 365, cost: 0 },
+  subsidies: { label: 'Food subsidies', desc: 'One year of cheap bread: workers +12, opposition −5. Costs 1.5% of output.', cooldown: 365, cost: 0.015 },
+};
+
+export const STAGES = [
+  { at: 0, label: 'Quiet', desc: 'No organised opposition.' },
+  { at: 20, label: 'Dissent', desc: 'Critics meet in cafés and online. No effect yet.' },
+  { at: 40, label: 'Protests', desc: 'Demonstrations in the cities: output −1%.' },
+  { at: 60, label: 'Strikes', desc: 'General strikes: output −4%, tax collection −5%, unrest rising everywhere.' },
+  { at: 75, label: 'Insurgency', desc: 'Armed groups attack the state: provinces revolt, garrisons take losses.' },
+  { at: 90, label: 'Revolution', desc: 'The regime is about to fall. Two months at this level and the government collapses.' },
+];
+export const REVOLT_AT = 70;    // province unrest at which a province is in open revolt
+
+export const WAR_ECONOMY: Record<'peace' | 'partial' | 'total', { label: string; desc: string; effect: GovEffect; train: number }> = {
+  peace: { label: 'Civilian economy', desc: 'Normal economy.', effect: {}, train: 1 },
+  partial: { label: 'Partial mobilisation', desc: 'Factories switch shifts to war work: recruiting −10% cost and 15% faster, manpower +25%, output −3%, growth −0.2%, stability −2.', effect: { recruit: 0.9, manpower: 1.25, output: 0.97, growth: -0.002, stability: -2 }, train: 0.85 },
+  total: { label: 'Total war economy', desc: 'Everything for the front: recruiting −20% and 30% faster, manpower +50%, wages −10%, but output −8%, growth −0.6%, stability −6 and workers resent it.', effect: { recruit: 0.8, manpower: 1.5, upkeep: 0.9, output: 0.92, growth: -0.006, stability: -6 }, train: 0.7 },
+};
+export const ROE: Record<'restrained' | 'standard' | 'ruthless', { label: string; desc: string; damage: number }> = {
+  restrained: { label: 'Restrained', desc: 'Protect civilians: 7% less damage dealt, occupied lands resist less, infamy fades faster, youth and middle class approve.', damage: 0.93 },
+  standard: { label: 'Standard', desc: 'Normal rules of engagement.', damage: 1 },
+  ruthless: { label: 'Ruthless', desc: 'No restraint: 12% more damage dealt, but occupied lands resist harder, infamy grows each month at war and youth disapprove.', damage: 1.12 },
+};
+export const AIR_MISSIONS: Record<'none' | 'cas' | 'bombing' | 'defense', { label: string; desc: string }> = {
+  none: { label: 'No air campaign', desc: 'Air wings only fight with their armies.' },
+  cas: { label: 'Close air support', desc: 'Every battle you fight gets +8% attack (needs air wings).' },
+  bombing: { label: 'Strategic bombing', desc: 'Bomb the chosen enemy\'s factories, rail and power every 10 days (more air wings = more hits; costs fuel).' },
+  defense: { label: 'Air defence', desc: 'Fighters guard your skies: +20% interception of enemy drones and missiles.' },
+};
+export const SAM_COST = 8, SAM_EACH = 0.04, SAM_MAX = 10;
+export const MERCENARY_MULT = 2.5;

@@ -1,10 +1,11 @@
 import type { Budget, GameState, LedgerLine, Nation, ProvinceState, ResourceKind, BuildingKind, ConstructionOrder } from './types';
-import { BUILDINGS, ECON, RESOURCE, RESOURCE_DEMAND, DIPLO, DEVELOP, INTEGRATE, REPAIR_COST_PER_DAMAGE, MIL, UNITS } from './config';
+import { BUILDINGS, ECON, RESOURCE, RESOURCE_DEMAND, DIPLO, DEVELOP, INTEGRATE, REPAIR_COST_PER_DAMAGE, MIL, UNITS, SECURITY } from './config';
 import { PROV, isCoastal } from './geo';
 import { ownedBy, peekRel, isAtWar, enemiesOf, alliesOf, diploVersionNow } from './world';
 import { unitUpkeep, shipUpkeep, unitOpsCostPerDay, GENERAL_SALARY, totalFactories, armySupplyDemand } from './military';
 import { addEvent, fmtDate } from './events';
 import { govMods, focusOf, sanctionLoss, govMonthly, aiGovernment } from './policy';
+import { regimeCosts, regimeMonthly } from './regime';
 
 export const RES_KINDS: ResourceKind[] = ['food', 'steel', 'oil', 'rare'];
 
@@ -22,7 +23,7 @@ export function provinceOutput(s: GameState, p: ProvinceState, n?: Nation): numb
   const stab = n ? 0.85 + 0.15 * (n.stability / 100) : 1;
   const mob = n ? 1 - (1 - ECON.MOBILIZED_OUTPUT) * n.mobilization : 1;
   const gov = n ? govMods(s, n).output : 1;
-  return (base + flat) * (1 - 0.75 * p.damage) * statusMult * resist * ctrl * stab * mob * gov * (focus === 'commerce' ? 1.06 : 1);
+  return (base + flat) * (1 - 0.75 * p.damage) * statusMult * resist * ctrl * stab * mob * gov * (focus === 'commerce' ? 1.06 : 1) * (p.martialLaw ? 0.7 : 1);
 }
 
 export function infraOf(p: ProvinceState) {
@@ -225,6 +226,9 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
   expenses.push({ key: 'military', label: 'Military wages & maintenance', amount: agg.upkeepUnits, detail: `${agg.units} formations, ${Math.round(agg.personnel).toLocaleString()} personnel${n.mobilization > 0.05 ? `, mobilisation ${Math.round(n.mobilization * 100)}%` : ''}` });
   if (agg.navalUpkeep > 0) expenses.push({ key: 'naval', label: 'Naval upkeep', amount: agg.navalUpkeep });
   if (agg.opsDaily > 0) expenses.push({ key: 'ops', label: 'Field operations (fuel, ammunition)', amount: agg.opsDaily * 365, detail: 'Armies on campaign, moving or in battle' });
+  const rc = regimeCosts(n, agg.output);
+  if (rc.security > 0) expenses.push({ key: 'security', label: 'Internal security', amount: rc.security, detail: SECURITY[n.regime.security]?.label });
+  if (rc.propaganda > 0) expenses.push({ key: 'propaganda', label: 'Propaganda ministry', amount: rc.propaganda, detail: `${n.regime.propaganda.length} campaign${n.regime.propaganda.length > 1 ? 's' : ''}` });
   if (agg.generals > 0) expenses.push({ key: 'generals', label: 'General staff', amount: agg.generals * GENERAL_SALARY * pi });
   if (n.researchFunding > 0) expenses.push({ key: 'research', label: 'Research funding', amount: n.researchFunding });
   if (n.debt > 0) expenses.push({ key: 'interest', label: 'Debt interest', amount: n.debt * n.interestRate, detail: `${fmt(n.debt)} at ${(n.interestRate * 100).toFixed(1)}%` });
@@ -315,6 +319,7 @@ export function monthlyEconomy(s: GameState, n: Nation, agg: NationAgg) {
   const farms = Math.min(5, agg.owned.filter((id) => focusOf(s.provinces[id]) === 'agriculture').length * 0.5);
   const target = 72 + gm.stability + farms - (n.taxRate - ECON.BASE_TAX) * 130 - n.warExhaustion * 0.35 + foodBonus - deficit - n.infamy * 0.08 - (n.bankrupt ? 30 : 0) - (agg.nonCore / Math.max(1, agg.owned.length)) * 12 - Math.max(0, n.priceIndex - 1.1) * 40;
   n.stability += (Math.max(0, Math.min(100, target)) - n.stability) * 0.12;
+  n.stability -= Math.min(5, agg.owned.filter((id) => s.provinces[id].martialLaw).length);
   n.stability = Math.max(0, Math.min(100, n.stability));
   // war support
   const wsTarget = (atWarNow ? 70 - n.warExhaustion * 0.6 : 55) + gm.warSupport;
@@ -333,6 +338,7 @@ export function monthlyEconomy(s: GameState, n: Nation, agg: NationAgg) {
   const cap = pop * (ECON.MANPOWER_SHARE + (ECON.MOBILIZED_MANPOWER_SHARE - ECON.MANPOWER_SHARE) * n.mobilization);
   n.manpower = Math.min(cap, n.manpower + (pop * ECON.MANPOWER_REGEN) / 12);
   govMonthly(s, n);
+  regimeMonthly(s, n);
   if (!n.isPlayer) aiGovernment(s, n);
   if (n.bankrupt) n.stability = Math.max(0, n.stability - 4);
   // stats & history

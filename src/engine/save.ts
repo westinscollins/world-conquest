@@ -6,6 +6,7 @@ import { infraOf } from './economy';
 import { recomputeTechMods } from './research';
 import { NPROV } from './geo';
 import { newGov } from './policy';
+import { newRegime } from './regime';
 
 export interface SaveMeta { slot: string; name: string; nation: string; day: number; savedAt: number; version: number; campaign: string; }
 
@@ -46,6 +47,10 @@ export function migrate(raw: any): GameState {
     raw.strikes ??= [];
   }
   if (raw.version < 6) for (const n of Object.values<any>(raw.nations)) n.gov ??= newGov();
+  if (raw.version < 7) {
+    for (const n of Object.values<any>(raw.nations)) { n.regime ??= newRegime(); n.arsenal.ballistic ??= 0; n.arsenal.recon ??= 0; }
+    raw.operations ??= [];
+  }
   s.version = SAVE_VERSION;
   // derived data is recomputed rather than trusted
   for (const p of s.provinces) p.infra = infraOf(p);

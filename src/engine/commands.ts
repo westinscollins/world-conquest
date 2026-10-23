@@ -23,6 +23,12 @@ export const COMMANDS = {
   doSetServices: A.doSetServices, doSetPolicy: A.doSetPolicy, doDecree: A.doDecree, doInvestFund: A.doInvestFund, doWithdrawFund: A.doWithdrawFund,
   doSetFocus: A.doSetFocus, doSendAid: A.doSendAid, doSanction: A.doSanction, doGuarantee: A.doGuarantee, doSpyNetwork: A.doSpyNetwork,
   doSpyOp: A.doSpyOp, doAnswerEvent: A.doAnswerEvent,
+  doSetSecurity: A.doSetSecurity, doToggleCampaign: A.doToggleCampaign, doInterior: A.doInterior, doMartialLaw: A.doMartialLaw,
+  doWarEconomy: A.doWarEconomy, doRoe: A.doRoe, doAirMission: A.doAirMission, doBuySam: A.doBuySam,
+  doOperation: A.doOperation, doCancelOperation: A.doCancelOperation, doAttackNearest: A.doAttackNearest, doDigIn: A.doDigIn,
+  doScorched: A.doScorched, doPartisans: A.doPartisans, doFortifyBorder: A.doFortifyBorder, doMercenaries: A.doMercenaries,
+  doLicenseTech: A.doLicenseTech, doStances: A.doStances, doHaltMany: A.doHaltMany, doRetreatMany: A.doRetreatMany,
+  doPostureMany: A.doPostureMany, doMergeMany: A.doMergeMany,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export const isCommand = (n: string): n is CommandName => Object.prototype.hasOwnProperty.call(COMMANDS, n);

@@ -5,7 +5,7 @@ import { BUILDINGS, TERRAIN, WEATHER, UNITS, ECON, FOCUS, FOCUS_CHANGE_COST } fr
 import { provinceOutput, buildCost, resourceYield, collectionEfficiency } from '../engine/economy';
 import type { GameState, Nation, ProvinceState } from '../engine/types';
 import { provinceWeather } from '../engine/weather';
-import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf } from '../engine/world';
+import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf, isAtWar } from '../engine/world';
 import { supplyMap } from '../engine/supply';
 import { build, doProvinceStatus, doRecruit, doRelease } from '../engine/actions';
 import { checkRecruit, armyStrength, militaryStrength, industryBonus } from '../engine/military';
@@ -49,6 +49,14 @@ export function ProvincePanel() {
         {(tab === 'info' || !showTabs) && (
           <>
             {atWar(g, g.player, st.controller) && <WarActions p={p} />}
+            {st.owner === g.player && (
+              <div className="war-actions calm">
+                {st.controller === g.player && st.status === 'core' && <span className={st.resistance >= 70 ? 'bad small' : 'small'}>Unrest {Math.round(st.resistance)}{st.resistance >= 70 ? ' — IN REVOLT' : ''}</span>}
+                {st.controller === g.player && <Btn small kind={st.martialLaw ? 'danger' : undefined} title="Troops rule the streets: unrest falls fast, output −30%, stability −1/month" onClick={() => say(store.cmd('doMartialLaw', [p]))}>{st.martialLaw ? 'Lift martial law' : 'Martial law'}</Btn>}
+                {st.controller === g.player && isAtWar(g, g.player) && <Btn small kind="danger" title="Destroy half of every building so an invader gains nothing; the enemy gets little supply here for a year" onClick={() => store.setUI({ confirm: { title: `Scorched earth in ${PROV[p].name}?`, danger: true, body: 'Half of every building (rail, depots, factories, power…) is destroyed and war damage +40%. An enemy occupying it will barely be supplied for a year. Your own people suffer: stability −3, workers −5.', onOk: () => say(store.cmd('doScorched', [p])) } })}>Scorched earth</Btn>}
+                {st.controller !== g.player && atWar(g, g.player, st.controller) && <Btn small kind="primary" title="Partisans harass the occupier for 120 days: their armies here lose men and organisation, their supply −30%" onClick={() => say(store.cmd('doPartisans', [p]))}>Fund partisans ({money(3 * player.priceIndex)}){(st.partisansUntil ?? 0) > g.day ? ` · ${st.partisansUntil! - g.day}d left` : ''}</Btn>}
+              </div>
+            )}
             {mine && st.controller === g.player && st.status === 'core' && (
               <Section title="Regional focus" icon="map" right={<span className="small muted">change costs {money(FOCUS_CHANGE_COST * player.priceIndex)}</span>}>
                 <div className="focus-row">

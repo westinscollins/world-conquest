@@ -11,17 +11,18 @@ import { PROV } from '../../engine/geo';
 import type { UnitType } from '../../engine/types';
 import { researchRate } from '../../engine/research';
 import { GovernmentTab } from './GovernmentTab';
+import { ResearchPanel } from './OtherPanels';
 
 export function EconomyPanel() {
   const g = useGame();
-  const [tab, setTab] = useState<'budget' | 'gov' | 'production' | 'resources' | 'projects'>('budget');
+  const [tab, setTab] = useState<'budget' | 'gov' | 'tech' | 'production' | 'resources' | 'projects'>('budget');
   const n = g.nations[g.player];
   if (g.tutorial && !g.tutorial.flags.economy) setTimeout(() => store.act((s) => markTutorial(s, 'economy')), 0);
   const b = n.budget;
   const facs = totalFactories(g, n, ownedBy(g, g.player));
   return (
     <div className="panel-body">
-      <Tabs tabs={[['budget', 'Budget'], ['gov', 'Government'], ['production', 'Industry'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['budget', 'Budget'], ['gov', 'Government'], ['tech', 'Technology'], ['production', 'Industry'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
       {tab === 'budget' && (
         <>
           <BudgetAdvisor />
@@ -71,6 +72,7 @@ export function EconomyPanel() {
         </>
       )}
       {tab === 'gov' && <GovernmentTab />}
+      {tab === 'tech' && <ResearchPanel embedded />}
       {tab === 'production' && (
         <>
           <div className="grid3">

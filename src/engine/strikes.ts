@@ -6,7 +6,7 @@
  * and nuclear retaliation from any armed enemy.
  */
 import type { BuildingKind, GameState, Nation, StrikeRecord } from './types';
-import { STRIKES, NUKE, AIR_DEFENSE, UNITS } from './config';
+import { STRIKES, NUKE, AIR_DEFENSE, UNITS, SAM_MAX, SAM_EACH } from './config';
 import { PROV, distKm } from './geo';
 import { atWar, armiesIn, controlledBy, enemiesOf, invalidateArmies, invalidateDiplo, rel, livingNations } from './world';
 import { addEvent } from './events';
@@ -14,10 +14,11 @@ import { hashNoise } from './rng';
 import { armyStrength, deleteArmy, industryBonus } from './military';
 import { infraOf } from './economy';
 
-export type StrikeKind = 'drone' | 'missile' | 'nuke';
+export type StrikeKind = 'drone' | 'missile' | 'nuke' | 'ballistic' | 'recon';
+export type Munition = Exclude<StrikeKind, 'nuke'>;
 
 /** Price of one drone or missile for this nation. */
-export function munitionCost(kind: 'drone' | 'missile', n: Nation) {
+export function munitionCost(kind: Munition, n: Nation) {
   return STRIKES[kind].cost * (1 - industryBonus(n).discount) * n.priceIndex;
 }
 export function nukeProgramCost(n: Nation) { return NUKE.programCost * n.priceIndex; }
@@ -43,7 +44,10 @@ export function interceptRate(s: GameState, by: string, p: number, kind: StrikeK
   if (kind === 'nuke') return 0;
   let wings = 0;
   for (const q of [p, ...PROV[p].neighbors]) for (const a of armiesIn(s, q)) if (atWar(s, a.owner, by)) for (const u of a.units) if (u.type === 'air') wings += (q === p ? 1 : 0.5) * (u.strength / UNITS.air.personnel);
-  return Math.min(AIR_DEFENSE.MAX, wings * AIR_DEFENSE.PER_AIR_WING) * STRIKES[kind].intercept;
+  // the defender's SAM batteries and an air-defence mission add to the interception
+  const owner = s.nations[s.provinces[p].controller];
+  const extra = owner?.regime ? Math.min(SAM_MAX * SAM_EACH, owner.regime.sam * SAM_EACH) + (owner.regime.air.mission === 'defense' ? 0.2 : 0) : 0;
+  return Math.min(0.85, Math.min(AIR_DEFENSE.MAX, wings * AIR_DEFENSE.PER_AIR_WING) + extra) * STRIKES[kind].intercept;
 }
 
 export function checkStrike(s: GameState, n: Nation, kind: StrikeKind, p: number, count = 1): string | null {
@@ -52,8 +56,8 @@ export function checkStrike(s: GameState, n: Nation, kind: StrikeKind, p: number
   const hostileArmies = armiesIn(s, p).some((a) => atWar(s, a.owner, n.id));
   if (!atWar(s, n.id, st.controller) && !hostileArmies) return 'You can only strike provinces held by, or occupied by, a nation you are at war with.';
   if (count < 1) return 'Choose how many to launch.';
-  if (n.arsenal[kind] < count) return kind === 'nuke' ? 'You have no nuclear weapons ready.' : `You only have ${n.arsenal[kind]} ${STRIKES[kind].plural}. Buy more in the War Room.`;
-  if (!inRange(s, n.id, kind, p)) return `${PROV[p].name} is out of range (${STRIKES[kind as 'drone'].range.toLocaleString()} km from land you hold). Advance, or move a fleet off the coast.`;
+  if (n.arsenal[kind] < count) return kind === 'nuke' ? 'You have no nuclear weapons ready.' : `You only have ${n.arsenal[kind]} ${STRIKES[kind as Munition].plural}. Buy more in the War Room.`;
+  if (!inRange(s, n.id, kind, p)) return `${PROV[p].name} is out of range (${STRIKES[kind as Munition].range.toLocaleString()} km from land you hold). Advance, or move a fleet off the coast.`;
   return null;
 }
 
@@ -66,6 +70,18 @@ export function launchStrike(s: GameState, n: Nation, kind: StrikeKind, p: numbe
   if (err) return { ok: false, message: err };
   if (kind === 'nuke') return nuclearStrike(s, n, p);
   const spec = STRIKES[kind];
+  if (kind === 'recon') {
+    n.arsenal.recon -= count;
+    const rate = interceptRate(s, n.id, p, kind);
+    const lost = Math.min(count, Math.floor(count * rate + hashNoise(s.seed, p, s.day, count, 3)));
+    if (lost >= count) return { ok: true, message: `All ${count} recon drone${count > 1 ? 's were' : ' was'} shot down over ${PROV[p].name}.` };
+    n.regime.recon[p] = s.day + 30;
+    const foes = armiesIn(s, p).filter((a) => atWar(s, a.owner, n.id));
+    const comp = new Map<string, number>();
+    for (const a of foes) for (const u of a.units) comp.set(UNITS[u.type].short, (comp.get(UNITS[u.type].short) ?? 0) + 1);
+    const men = foes.reduce((t, a) => t + armyStrength(a), 0);
+    return { ok: true, message: `Recon over ${PROV[p].name}: ${foes.length ? `${Math.round(men).toLocaleString()} enemy troops (${[...comp].map(([k, v]) => `${v} ${k}`).join(', ')})` : 'no enemy troops'}. Targeting data valid 30 days (+6% attack).` };
+  }
   const st = s.provinces[p];
   const target = st.controller;
   n.arsenal[kind] -= count;
@@ -208,7 +224,7 @@ function summarise(list: string[]) {
 }
 
 // ---------------------------------------------------------------- procurement
-export function buyMunitions(s: GameState, n: Nation, kind: 'drone' | 'missile', count: number): string | null {
+export function buyMunitions(s: GameState, n: Nation, kind: Munition, count: number): string | null {
   void s;
   if (count < 1 || count > 100) return 'Order between 1 and 100.';
   const cost = munitionCost(kind, n) * count;
@@ -262,9 +278,10 @@ export function aiStrikes(s: GameState, n: Nation) {
     const missiles = out > 400 ? Math.min(12, Math.floor((spend * 0.4) / munitionCost('missile', n))) : 0;
     if (drones > 0) buyMunitions(s, n, 'drone', drones);
     if (missiles > 0) buyMunitions(s, n, 'missile', missiles);
+    if (out > 2000 && n.arsenal.ballistic < 6) buyMunitions(s, n, 'ballistic', 2);
   }
   // targets: the largest enemy army in range, else the most valuable enemy province in range
-  for (const kind of ['drone', 'missile'] as const) {
+  for (const kind of ['drone', 'missile', 'ballistic'] as const) {
     if (n.arsenal[kind] < 1) continue;
     let best: number | null = null, bs = 0;
     for (const a of Object.values(s.armies)) {
@@ -272,9 +289,9 @@ export function aiStrikes(s: GameState, n: Nation) {
       const v = armyStrength(a) * (a.battleId != null ? 1.5 : 1);
       if (v > bs && inRange(s, n.id, kind, a.location)) { bs = v; best = a.location; }
     }
-    if (best == null && kind === 'missile') {
+    if (best == null && kind !== 'drone') {
       for (const e of enemies) for (const p of controlledBy(s, e)) { const st = s.provinces[p]; const v = st.buildings.factory + st.buildings.power + st.buildings.railway + st.buildings.depot * 2; if (v > bs && inRange(s, n.id, kind, p)) { bs = v; best = p; } }
     }
-    if (best != null) launchStrike(s, n, kind, best, Math.min(n.arsenal[kind], kind === 'drone' ? 8 : 4));
+    if (best != null) launchStrike(s, n, kind, best, Math.min(n.arsenal[kind], kind === 'drone' ? 8 : kind === 'missile' ? 4 : 2));
   }
 }

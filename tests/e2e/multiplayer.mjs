@@ -54,7 +54,7 @@ ok(`identical state after play (${ha} vs ${hb})`, ha === hb && !ha.startsWith('0
 await A.evaluate(() => window.__wc.cmd('doTreaty', ['DEU', 'trade']));
 await B.waitForTimeout(1500);
 await B.click('.nav-btn:has-text("Diplomacy")'); await B.click('.tab:has-text("Proposals")');
-await B.click('.offer button:has-text("Accept")');
+await B.click('.offer:has-text("trade") button:has-text("Accept")');
 for (let i = 0; i < 20 && !(await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade)); i++) await A.waitForTimeout(250);
 ok('trade treaty between the two players', await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade));
 await B.screenshot({ path: out + '/mp-guest.png' });

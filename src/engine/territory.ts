@@ -1,3 +1,4 @@
+import { coreUnrestTarget } from './regime';
 import type { GameState, ProvinceStatus, Nation } from './types';
 import { PROV, COUNTRY_GEO } from './geo';
 import { invalidateDiplo, invalidateTerritory, ownedBy, controlledBy, armiesIn, atWar, warBetween } from './world';
@@ -132,7 +133,7 @@ export function releaseSubject(s: GameState, n: Nation, target: string): string 
 /** Monthly unrest: resistance growth, uprisings, defection to the former owner. */
 export function resistanceMonthly(s: GameState) {
   for (const st of s.provinces) {
-    if (st.status === 'core' && st.controller === st.owner) { st.resistance = Math.max(0, st.resistance - 5); continue; }
+    if (st.status === 'core' && st.controller === st.owner) { st.resistance += (coreUnrestTarget(s, st.id) - st.resistance) * 0.25; continue; } // domestic unrest
     const owner = s.nations[st.owner];
     const garrison = armiesIn(s, st.id).filter((a) => a.owner === st.controller).reduce((t, a) => t + a.units.length, 0);
     let delta = 0;

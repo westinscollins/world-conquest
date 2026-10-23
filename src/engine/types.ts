@@ -47,6 +47,9 @@ export interface ProvinceState {
   capturedDay?: number;
   capturedFrom?: string;
   focus?: ProvinceFocus;   // regional development focus (core provinces)
+  martialLaw?: boolean;    // troops rule the streets: unrest falls fast, output suffers
+  partisansUntil?: number; // funded partisans harass the occupier until this day
+  scorchedUntil?: number;  // scorched earth: an occupier gets little supply here until this day
 }
 export type ProvinceFocus = 'industry' | 'agriculture' | 'commerce' | 'military';
 
@@ -156,11 +159,12 @@ export interface Nation {
   resourceNet: Record<ResourceKind, number>;  // production - demand (units/yr)
   reparations: { to: string; amount: number; until: number }[];
   claims: Record<string, number>; // casus belli against nation -> expiry day
-  arsenal: { drone: number; missile: number; nuke: number };
+  arsenal: { drone: number; missile: number; nuke: number; ballistic: number; recon: number };
   nukeProgram: number;       // -1 none, >0 days left, 0 = nuclear power
   warheads: number[];        // days left for each ICBM under construction
   embargoUntil: number;      // the world refuses all trade until this day (after using nuclear weapons)
   gov: Government;
+  regime: Regime;
   subjectSince?: number;
   intel: number;             // 0..1 baseline intelligence quality
   lastWarDay: number;
@@ -182,6 +186,26 @@ export interface Government {
   event: null | { kind: string; day: number; deadline: number; province?: number; other?: string };
   nextEvent: number;                       // day the next national event may happen
 }
+
+export type GroupId = 'workers' | 'middle' | 'business' | 'military' | 'clergy' | 'youth';
+export interface Regime {
+  groups: Record<GroupId, number>;   // approval 0..100
+  legitimacy: number;                // 0..100: the ruler's standing
+  opposition: number;                // 0..100: strength of the movement against the government
+  oppositionPeak: number;            // months at revolution level
+  security: number;                  // 0 none .. 3 police state
+  propaganda: string[];              // active campaigns
+  cooldowns: Record<string, number>; // repression / interior actions
+  banUntil: number;                  // opposition banned (it grows faster underground)
+  rigged: number;                    // elections rigged (lasting mark on the regime)
+  warEconomy: 'peace' | 'partial' | 'total';
+  roe: 'restrained' | 'standard' | 'ruthless';
+  air: { mission: 'none' | 'cas' | 'bombing' | 'defense'; target: string | null };
+  sam: number;                       // air-defence batteries
+  recon: Record<number, number>;     // province -> day reconnaissance data expires
+  last: { won: number; lost: number; provinces: number };
+}
+export interface Operation { id: number; owner: string; armyIds: number[]; target: number; staging: Record<number, number>; state: 'staging' | 'attacking'; start: number; deadline: number }
 
 export interface TechMods {
   industry: number; taxEff: number; adminCost: number; supplyRange: number; supplyThroughput: number;
@@ -292,5 +316,6 @@ export interface GameState {
   notifications: number[];   // event ids not yet seen as toast
   stats: { battles: number; wars: number; peaceDeals: number; annexations: number };
   strikes: StrikeRecord[];   // recent strikes (for the map and reports)
+  operations: Operation[];   // coordinated offensives in progress
 }
-export interface StrikeRecord { id: number; day: number; by: string; target: string; province: number; kind: 'drone' | 'missile' | 'nuke'; count: number; intercepted: number; killed: number; buildings: string[] }
+export interface StrikeRecord { id: number; day: number; by: string; target: string; province: number; kind: 'drone' | 'missile' | 'nuke' | 'ballistic' | 'recon' | 'bombing'; count: number; intercepted: number; killed: number; buildings: string[] }

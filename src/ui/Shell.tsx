@@ -4,6 +4,9 @@ import { Icon } from './icons';
 import { Modal, Btn } from './common';
 import { EconomyPanel } from './panels/EconomyPanel';
 import { WarPanel } from './panels/WarPanel';
+import { RegimePanel } from './panels/RegimePanel';
+import { selectedIds, setSelection, ctrlGroup, setCtrlGroup } from './selection';
+import { stageOf } from '../engine/regime';
 import { live } from './live';
 import { num, neg } from './format';
 import { PROV } from '../engine/geo';
@@ -19,10 +22,9 @@ import { cls } from './format';
 import { audio } from '../audio/music';
 
 const NAV: [Exclude<Panel, null>, string, string][] = [
-  ['war', 'War Room', 'battle'], ['economy', 'Economy', 'coin'], ['military', 'Military', 'manpower'], ['diplomacy', 'Diplomacy', 'handshake'],
-  ['research', 'Research', 'flask'], ['stats', 'Objectives', 'crown'], ['help', 'Help', 'book'],
+  ['war', 'War Room', 'battle'], ['regime', 'Regime', 'people'], ['economy', 'Economy', 'coin'], ['military', 'Military', 'manpower'], ['diplomacy', 'Diplomacy', 'handshake'], ['stats', 'Objectives', 'crown'], ['help', 'Help', 'book'],
 ];
-const TITLES: Record<string, string> = { war: 'War Room', economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
+const TITLES: Record<string, string> = { war: 'War Room', regime: 'Regime & Population', economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
 
 export function LeftNav() {
   const { g, ui } = useStore();
@@ -38,6 +40,7 @@ export function LeftNav() {
             <span>{l}</span>
             {k === 'diplomacy' && offers > 0 && <span className="badge">{offers}</span>}
             {k === 'war' && fights > 0 && <span className="badge">{fights}</span>}
+            {k === 'regime' && stageOf(g.nations[g.player].regime.opposition).index >= 2 && <span className="badge">!</span>}
           </button>
         ))}
       </nav>
@@ -45,6 +48,7 @@ export function LeftNav() {
         <div className="drawer">
           <div className="drawer-h"><span>{TITLES[ui.panel]}</span><button className="iconbtn" onClick={() => store.setUI({ panel: null })}><Icon name="close" /></button></div>
           {ui.panel === 'war' && <WarPanel />}
+          {ui.panel === 'regime' && <RegimePanel />}
           {ui.panel === 'economy' && <EconomyPanel />}
           {ui.panel === 'military' && <MilitaryPanel />}
           {ui.panel === 'diplomacy' && <DiplomacyPanel />}
@@ -59,7 +63,7 @@ export function LeftNav() {
 
 export function MapModes() {
   const { ui } = useStore();
-  const modes: [MapMode, string][] = [['political', 'Political'], ['terrain', 'Terrain'], ['resources', 'Resources'], ['infrastructure', 'Infrastructure'], ['supply', 'Supply'], ['military', 'Military'], ['diplomacy', 'Diplomacy']];
+  const modes: [MapMode, string][] = [['political', 'Political'], ['terrain', 'Terrain'], ['resources', 'Resources'], ['infrastructure', 'Infrastructure'], ['supply', 'Supply'], ['military', 'Military'], ['diplomacy', 'Diplomacy'], ['unrest', 'Unrest']];
   return (
     <div className="mapmodes">
       {modes.map(([m, l]) => <button key={m} className={cls('mm', ui.mapMode === m && 'on')} onClick={() => store.setUI({ mapMode: m })}>{l}</button>)}
@@ -128,7 +132,7 @@ export function ArmyBar() {
   if (!list.length) return null;
   return (
     <div className="army-bar">
-      {list.map((a) => {
+      {list.map((a, i) => {
         const sel = ui.selectedArmy === a.id || ui.group.includes(a.id);
         const str = armyStrength(a), max = armyMaxStrength(a) || 1;
         return (
@@ -138,7 +142,7 @@ export function ArmyBar() {
               else store.setUI({ selectedArmy: a.id, selectedProvince: a.location, selectedFleet: null, group: [] });
             }}
             onDoubleClick={() => focusProvince(a.location)}>
-            {a.battleId != null ? '⚔' : a.path.length ? '→' : a.stance === 'advance' ? '▲' : a.stance === 'defend' ? '■' : '●'} {a.name.replace(' Army', '')}
+            <b>#{i + 1}</b> {a.battleId != null ? '⚔' : a.path.length ? '→' : a.stance === 'advance' ? '▲' : a.stance === 'defend' ? '■' : '●'} {a.name.replace(' Army', '')}
             <span className="mini"><div style={{ width: `${(str / max) * 100}%`, background: armyOrg(a) < 0.35 ? 'var(--bad)' : undefined }} /></span>
             <span className="muted">{num(Math.round(str / 1000))}k</span>
           </button>
@@ -253,6 +257,7 @@ export function OutcomeModal() {
   );
 }
 
+const lastDigit: number[] = new Array(10).fill(-1e9);
 /** Global keyboard shortcuts. */
 export function useHotkeys() {
   useEffect(() => {
@@ -260,8 +265,17 @@ export function useHotkeys() {
       const tag = (e.target as HTMLElement)?.tagName;
       if (!store.game || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') { e.preventDefault(); store.togglePause(); }
-      else if (e.key === '1' || e.key === '2' || e.key === '3') store.setSpeed(+e.key);
-      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, group: [] });
+      else if (/^Digit[1-9]$/.test(e.code)) {
+        // control groups: Shift+number stores the selected armies, number recalls them (1-3 set speed if unused)
+        const k = +e.code.slice(5);
+        if (e.shiftKey) { const ids = selectedIds(); if (ids.length) { setCtrlGroup(k, ids); store.toast(`Group ${k}: ${ids.length} armies`, 'info'); } }
+        else if (ctrlGroup(k).some((id) => store.game!.armies[id]?.owner === store.game!.player)) setSelection(ctrlGroup(k), e.timeStamp - lastDigit[k] < 350);
+        else if (k <= 3) store.setSpeed(k);
+        lastDigit[k] = e.timeStamp;
+      }
+      else if (e.key === '+' || e.key === '=') store.setSpeed(Math.min(3, store.ui.speed + 1));
+      else if (e.key === '-') store.setSpeed(Math.max(0, store.ui.speed - 1));
+      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, pickOperation: false, group: [] });
       else if (e.key === 'Tab') { e.preventDefault(); cycleArmy(e.shiftKey ? -1 : 1); }
       else armyHotkey(e.key.toLowerCase());
     };

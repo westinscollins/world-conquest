@@ -1,12 +1,13 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
+import { ArmyRoster, OperationsTab, StrategyTab } from './WarTabs';
 import { store, useGame } from '../store';
-import { Section, Btn, Bar, Stat, Tip } from '../common';
+import { Section, Btn, Bar, Stat, Tip, Tabs } from '../common';
 import { num, neg, money, moneyIC } from '../format';
 import { PROV, distKm } from '../../engine/geo';
 import { atWar, controlledBy, isFriendly, ownedBy } from '../../engine/world';
 import { scoreFor } from '../../engine/diplomacy';
 import { armyStrength, armyOrg, militaryStrength } from '../../engine/military';
-import { POSTURES, STRIKES, NUKE } from '../../engine/config';
+import { POSTURES, STRIKES, NUKE, SAM_COST, SAM_MAX } from '../../engine/config';
 import { munitionCost, nukeProgramCost, warheadCost } from '../../engine/strikes';
 import { fmtDate } from '../../engine/events';
 import type { Battle, Posture, Stance, War } from '../../engine/types';
@@ -22,47 +23,52 @@ const ORDERS: [Stance, string, string][] = [
 ];
 const say = (r?: { ok: boolean; message: string }) => r && store.toast(r.message, r.ok ? 'info' : 'bad');
 
-/** War Room: one screen to run your wars — live losses, every battle, and orders for all armies. */
+/** War Room: one screen to run your wars — live losses, every battle, every army, every lever. */
 export function WarPanel() {
   const g = useGame();
   const me = g.player;
+  const [tab, setTab] = useState<'overview' | 'armies' | 'operations' | 'strategy' | 'strikes'>('overview');
   const armies = Object.values(g.armies).filter((a) => a.owner === me);
   const wars = g.wars.filter((w) => w.attackers.includes(me) || w.defenders.includes(me));
   const battles = g.activeBattles.map((id) => g.battles[id]).filter((b): b is Battle => !!b && b.result == null && (b.attacker.nation === me || b.defender.nation === me));
   const [lost7, killed7] = live.recent(g, 7);
   const count = (st: Stance) => armies.filter((a) => a.stance === st).length;
+  const ops = g.operations.filter((o) => o.owner === me).length;
   return (
     <div className="panel-body">
-      <div className="grid3">
+      <div className="grid4">
         <Stat label="Military strength" value={militaryStrength(g, me).toLocaleString()} tip="Fixed points per formation and warship (incl. units in training). Changes only when you raise, disband or lose units." />
-        <Stat label="Soldiers" value={num(armies.reduce((t, a) => t + armyStrength(a), 0))} />
+        <Stat label="Soldiers" value={num(armies.reduce((t, a) => t + armyStrength(a), 0))} tip={`${armies.length} armies`} />
         <Stat label="Battles now" value={battles.length} tone={battles.length ? 'bad' : undefined} />
+        <Stat label="War support" value={`${g.nations[me].warSupport.toFixed(0)}%`} tone={g.nations[me].warSupport < 35 ? 'bad' : undefined} />
       </div>
-
-      <Section title="Orders for all armies" icon="sword">
-        <div className="orders">
-          {ORDERS.map(([st, label, tip]) => (
-            <button key={st} className="btn" title={tip} onClick={() => { audio.sfx('click'); say(store.cmd('setAllStances', [st])); }}>
-              {label}<small>{count(st)} armies</small>
-            </button>
-          ))}
-        </div>
-        <p className="small muted">Select an army, then shift-click others (or shift-drag a box on the map) to move them together. Right-click a province to send them; shift+right-click adds a waypoint. Hover a province to see attack odds. Keys: Tab next army · M move · H halt · R retreat · F attack · D defend · G hold.</p>
-      </Section>
-
-      <StrikeForces />
-
-      {!wars.length && <p className="muted">You are at peace. Declare war from Diplomacy → select a nation. Your armies' orders apply the moment a war starts.</p>}
-      {wars.map((w) => <WarSummary key={w.id} w={w} />)}
-      {wars.length > 0 && (
-        <p className="small muted">Last 7 days: <b className="bad">{num(lost7)}</b> of your soldiers lost · <b>{num(killed7)}</b> enemy soldiers lost.</p>
+      <Tabs tabs={[['overview', 'Overview'], ['armies', `Armies (${armies.length})`], ['operations', `Operations${ops ? ` (${ops})` : ''}`], ['strategy', 'Strategy'], ['strikes', 'Strikes']]} value={tab} onChange={setTab} />
+      {tab === 'overview' && (
+        <>
+          <Section title="Orders for all armies" icon="sword">
+            <div className="orders">
+              {ORDERS.map(([st, label, tip]) => (
+                <button key={st} className="btn" title={tip} onClick={() => { audio.sfx('click'); say(store.cmd('setAllStances', [st])); }}>
+                  {label}<small>{count(st)} armies</small>
+                </button>
+              ))}
+            </div>
+            <p className="small muted">For precise control use the Armies tab: select armies by number (e.g. 1-6), then give them one order.</p>
+          </Section>
+          {!wars.length && <p className="muted">You are at peace. Declare war from Diplomacy → select a nation. Your armies' orders apply the moment a war starts.</p>}
+          {wars.map((w) => <WarSummary key={w.id} w={w} />)}
+          {wars.length > 0 && <p className="small muted">Last 7 days: <b className="bad">{num(lost7)}</b> of your soldiers lost · <b>{num(killed7)}</b> enemy soldiers lost.</p>}
+          {battles.length > 0 && (
+            <Section title={`Battles in progress (${battles.length})`} icon="sword">
+              {battles.map((b) => <BattleRow key={b.id} b={b} />)}
+            </Section>
+          )}
+        </>
       )}
-
-      {battles.length > 0 && (
-        <Section title={`Battles in progress (${battles.length})`} icon="sword">
-          {battles.map((b) => <BattleRow key={b.id} b={b} />)}
-        </Section>
-      )}
+      {tab === 'armies' && <ArmyRoster />}
+      {tab === 'operations' && <OperationsTab />}
+      {tab === 'strategy' && <StrategyTab />}
+      {tab === 'strikes' && <StrikeForces />}
     </div>
   );
 }
@@ -156,14 +162,14 @@ function StrikeForces() {
   const g = useGame();
   const n = g.nations[g.player];
   const atWarNow = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
-  const aim = (kind: 'drone' | 'missile' | 'nuke', count: number) => {
+  const aim = (kind: 'drone' | 'missile' | 'nuke' | 'ballistic' | 'recon', count: number) => {
     if (!atWarNow) { store.toast('Strikes need a war: you can only hit provinces of nations you are fighting.', 'bad'); return; }
     store.setUI({ strike: { kind, count }, panel: null, selectedArmy: null });
   };
   return (
     <Section title="Strike forces" icon="battle">
       <div className="arsenal">
-        {(['drone', 'missile'] as const).map((k) => (
+        {(['recon', 'drone', 'missile', 'ballistic'] as const).map((k) => (
           <Fragment key={k}>
             <Tip wide tip={<div><b>{STRIKES[k].label}</b><br />{STRIKES[k].desc}<br />Enemy air wings near the target shoot some down.</div>}><b>{STRIKES[k].label}s: {n.arsenal[k]}</b></Tip>
             <span className="row gap">{SALVOS.map((c) => <Btn key={c} small onClick={() => say(store.cmd('doBuyMunitions', [k, c]))}>Buy {c} ({money(munitionCost(k, n) * c, { digits: 1 })})</Btn>)}</span>
@@ -171,7 +177,8 @@ function StrikeForces() {
           </Fragment>
         ))}
       </div>
-      <p className="small muted">Fire, then click a highlighted enemy province on the map. Strikes kill and disorganise troops there, cut their dig-in, and destroy rail, depots, power and factories — weakening supply and the enemy economy. Drones reach 700 km from land you hold, missiles 2,500 km; from a fleet off the coast, any distance.</p>
+      <p className="small muted">Fire, then click a highlighted enemy province on the map. Strikes kill and disorganise troops there, cut their dig-in, and destroy rail, depots, power and factories — weakening supply and the enemy economy. Recon drones reach 900 km, attack drones 700 km, cruise missiles 2,500 km, ballistic missiles 4,000 km — and from a fleet off the coast, any distance.</p>
+      <div className="row gap"><b>Air defence: {n.regime.sam} SAM batteries</b><span className="small muted">each shoots down 4% more incoming strikes (max {SAM_MAX})</span><div style={{ flex: 1 }} /><Btn small disabled={n.regime.sam >= SAM_MAX || n.treasury < SAM_COST} onClick={() => say(store.cmd('doBuySam', []))}>Buy battery ({money(SAM_COST * n.priceIndex)})</Btn></div>
       <div className="nuke-box">
         <div className="row gap"><b>☢ Nuclear weapons: {n.arsenal.nuke}</b>{n.warheads.length > 0 && <span className="small muted">{n.warheads.length} ICBM{n.warheads.length > 1 ? 's' : ''} being built ({Math.min(...n.warheads)}d)</span>}<div style={{ flex: 1 }} />
           {n.nukeProgram < 0 && <Btn small onClick={() => store.setUI({ confirm: { title: 'Start a nuclear programme?', danger: true, body: `Costs ${moneyIC(nukeProgramCost(n), { digits: 0 })} and takes about ${(NUKE.programDays / 365).toFixed(1)} years. Relations with every nation fall by 10.`, onOk: () => say(store.cmd('doNuclearProgram', [])) } })}>Start programme ({money(nukeProgramCost(n), { digits: 0 })})</Btn>}

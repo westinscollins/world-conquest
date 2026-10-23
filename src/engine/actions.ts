@@ -11,8 +11,10 @@ import { setProvinceStatus, releaseSubject } from './territory';
 import { embark, moveFleet, orderShip } from './naval';
 import { PROV } from './geo';
 import { addEvent } from './events';
-import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS } from './config';
+import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS, SECURITY, PROPAGANDA, INTERIOR, WAR_ECONOMY, ROE, AIR_MISSIONS } from './config';
 import { canResearch } from './research';
+import { setSecurity, toggleCampaign, interiorAction, toggleMartialLaw, setWarEconomy, setRoe, setAirMission, buySam } from './regime';
+import { createOperation, cancelOperation, attackNearest, digIn, scorchedEarth, fundPartisans, fortifyBorder, hireMercenaries, licenseTech } from './warplans';
 import { setServices, setPolicy, issueDecree, investFund, withdrawFund, setFocus, sendAid, toggleSanction, toggleGuarantee, buildSpyNetwork, spyOp, resolveEvent } from './policy';
 import { buyMunitions, launchStrike, startNuclearProgram, buildWarhead, type StrikeKind } from './strikes';
 import { invalidateArmies, warBetween } from './world';
@@ -296,7 +298,7 @@ export function setHumanControl(s: GameState, nation: string, human: boolean): R
   return ok(`${n.name} is now ${human ? 'human' : 'AI'}-controlled.`);
 }
 
-export function doBuyMunitions(s: GameState, kind: 'drone' | 'missile', count: number): Result {
+export function doBuyMunitions(s: GameState, kind: 'drone' | 'missile' | 'ballistic' | 'recon', count: number): Result {
   const e = buyMunitions(s, P(s), kind, count);
   return e ? fail(e) : ok(`Bought ${count} ${STRIKES[kind].plural}. Launch them from the War Room or an enemy province's panel.`);
 }
@@ -351,6 +353,48 @@ export function doGuarantee(s: GameState, to: string): Result { const on = !P(s)
 export function doSpyNetwork(s: GameState, to: string): Result { return r0(buildSpyNetwork(s, P(s), to), `Spy network in ${s.nations[to]?.name} expanded to ${Math.round((P(s).gov.spies[to] ?? 0) * 100)}%.`); }
 export function doSpyOp(s: GameState, to: string, op: string): Result { return spyOp(s, P(s), to, op); }
 export function doAnswerEvent(s: GameState, option: number): Result { return r0(resolveEvent(s, P(s), option), 'Decision taken.'); }
+
+// ---------------------------------------------------------------- regime & interior
+const rr = (r: string | null, msg: string): Result => (r == null ? ok(msg) : r.startsWith('#') ? ok(r.slice(1)) : fail(r));
+export function doSetSecurity(s: GameState, level: number): Result { return rr(setSecurity(s, P(s), level), `Internal security: ${SECURITY[level]?.label}.`); }
+export function doToggleCampaign(s: GameState, id: string): Result { const on = !P(s).regime.propaganda.includes(id); return rr(toggleCampaign(s, P(s), id), `${PROPAGANDA[id]?.label} ${on ? 'launched' : 'ended'}.`); }
+export function doInterior(s: GameState, id: string): Result { return rr(interiorAction(s, P(s), id), `${INTERIOR[id]?.label}: done.`); }
+export function doMartialLaw(s: GameState, p: number): Result { return rr(toggleMartialLaw(s, P(s), p), s.provinces[p]?.martialLaw ? `Martial law declared in ${PROV[p].name}.` : `Martial law lifted in ${PROV[p].name}.`); }
+export function doWarEconomy(s: GameState, level: 'peace' | 'partial' | 'total'): Result { return rr(setWarEconomy(s, P(s), level), `${WAR_ECONOMY[level]?.label}.`); }
+export function doRoe(s: GameState, roe: 'restrained' | 'standard' | 'ruthless'): Result { return rr(setRoe(s, P(s), roe), `Rules of engagement: ${ROE[roe]?.label}.`); }
+export function doAirMission(s: GameState, mission: 'none' | 'cas' | 'bombing' | 'defense', target: string | null): Result { return rr(setAirMission(s, P(s), mission, target), `Air force: ${AIR_MISSIONS[mission]?.label}${target ? ` against ${s.nations[target]?.name}` : ''}.`); }
+export function doBuySam(s: GameState): Result { return rr(buySam(s, P(s)), `Air-defence battery deployed (${P(s).regime.sam} total).`); }
+// ---------------------------------------------------------------- war planning
+export function doOperation(s: GameState, armyIds: number[], target: number): Result { return createOperation(s, P(s), armyIds, target); }
+export function doCancelOperation(s: GameState, id: number): Result { return rr(cancelOperation(s, P(s), id), 'Operation cancelled.'); }
+export function doAttackNearest(s: GameState, armyIds: number[]): Result { return attackNearest(s, P(s), armyIds); }
+export function doDigIn(s: GameState, armyIds: number[]): Result { return digIn(s, P(s), armyIds); }
+export function doScorched(s: GameState, p: number): Result { return rr(scorchedEarth(s, P(s), p), `${PROV[p].name} burned.`); }
+export function doPartisans(s: GameState, p: number): Result { return rr(fundPartisans(s, P(s), p), `Partisans funded in ${PROV[p].name} for 120 days.`); }
+export function doFortifyBorder(s: GameState): Result { return fortifyBorder(s, P(s)); }
+export function doMercenaries(s: GameState, type: UnitType, p: number): Result { return rr(hireMercenaries(s, P(s), type, p), 'Mercenaries hired.'); }
+export function doLicenseTech(s: GameState, tech: string): Result { return rr(licenseTech(s, P(s), tech), 'Technology licensed.'); }
+/** Bulk orders for many armies at once. */
+export function doStances(s: GameState, ids: number[], st: Stance): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player) { a.stance = st; k++; } } return ok(`${k} armies: ${STANCE_TEXT[st]}.`); }
+export function doHaltMany(s: GameState, ids: number[]): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null) { a.path = []; a.moveProgress = 0; k++; } } return ok(`${k} armies halted.`); }
+export function doRetreatMany(s: GameState, ids: number[]): Result {
+  let k = 0;
+  for (const id of ids) {
+    const a = s.armies[id];
+    if (!a || a.owner !== s.player) continue;
+    if (a.battleId != null) { if (retreatArmy(s, id).ok) k++; continue; }
+    a.stance = 'withdraw'; a.path = []; k++;
+  }
+  return ok(`${k} armies falling back to home territory.`);
+}
+export function doPostureMany(s: GameState, ids: number[], p: Posture): Result { let k = 0; for (const id of ids) if (s.armies[id]?.owner === s.player) { setPosture(s, id, p); k++; } return ok(`${k} armies: ${p} posture.`); }
+export function doMergeMany(s: GameState, ids: number[]): Result {
+  const byLoc = new Map<number, Army[]>();
+  for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null && !a.path.length && !a.embarked) (byLoc.get(a.location) || byLoc.set(a.location, []).get(a.location)!).push(a); }
+  let k = 0;
+  for (const list of byLoc.values()) for (const o of list.slice(1)) if (mergeArmies(s, list[0].id, o.id).ok) k++;
+  return k ? ok(`${k} armies merged.`) : fail('Merging needs two or more selected armies halted in the same province.');
+}
 
 export function peaceTermsFor(s: GameState, warId: number): { war: ReturnType<typeof warBetween> } { return { war: s.wars.find((w) => w.id === warId) }; }
 export type { Army };

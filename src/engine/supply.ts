@@ -106,7 +106,7 @@ export function throughputOf(s: GameState, n: Nation, p: number) {
   // have many roads, rail lines and towns, so they can feed proportionally more troops
   const g = PROV[p];
   const size = Math.min(5, Math.max(1, Math.sqrt(g.areaKm / 60000))) + Math.min(3, g.pop / 2e7);
-  return (5 + 3 * st.infra + 4 * st.buildings.railway) * size * (focusOf(st) === 'military' ? 1.4 : 1) * n.techMods.supplyThroughput * (1 - 0.5 * st.damage);
+  return (5 + 3 * st.infra + 4 * st.buildings.railway) * size * (focusOf(st) === 'military' ? 1.4 : 1) * ((st.scorchedUntil ?? 0) > s.day && n.id !== st.owner ? 0.35 : 1) * ((st.partisansUntil ?? 0) > s.day && n.id !== st.owner ? 0.7 : 1) * ((n.gov?.decrees.cyberHit ?? 0) > s.day ? 0.8 : 1) * n.techMods.supplyThroughput * (1 - 0.5 * st.damage);
 }
 
 export function computeNet(s: GameState, n: Nation): SupplyNet {
