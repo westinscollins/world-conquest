@@ -29,6 +29,13 @@ export interface SessionHooks {
   getSpeed(): number;
 }
 
+/** Plain-language explanation of a room error. */
+export function netError(e: unknown, what: string): string {
+  const code = (e as { code?: string })?.code ?? '';
+  if (code === 'not_permitted') return `${what}: your access to this page is view-only. Ask the owner to share it with you with permission to edit or contribute, then reload.`;
+  if (code === 'not_granted' || code === 'revoked') return `${what}: you can't connect to this page's online rooms. You must be signed in to claude.ai and have access to the page (ask the owner to share it with you), then reload.`;
+  return `${what}: ${(e as Error)?.message || 'connection problem'}.`;
+}
 const rid = () => Math.random().toString(36).slice(2, 8);
 export const newRoomCode = () => Array.from({ length: 6 }, () => 'abcdefghjkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 31)]).join('');
 
@@ -69,6 +76,7 @@ export class Session {
   }
 
   get kind() { return this.room?.kind ?? 'local'; }
+  connected() { return this.room?.connected() ?? false; }
   get myPeer() { return this.room?.myPeer() ?? ''; }
 
   async open() {
@@ -80,7 +88,11 @@ export class Session {
     this.unsub.push(this.room.on('need', (m) => this.onNeed(m)));
     this.unsub.push(this.room.on('meta', (m) => this.onMeta(m)));
     await this.announce();
-    if (this.role === 'host') this.flushTimer = setInterval(() => this.flush(), 100);
+    if (this.role === 'host') {
+      let beat = 0;
+      // flush every 100 ms; every 2 s also announce the latest batch number so a guest that lost the last one notices
+      this.flushTimer = setInterval(() => { this.flush(); if (++beat % 20 === 0 && this.phase === 'playing') void this.room.emit('step', { hb: this.seq }).catch(() => {}); }, 100);
+    }
     else this.watchdog = setInterval(() => this.guestWatchdog(), 500);
   }
 
@@ -239,13 +251,18 @@ export class Session {
     if (this.phase !== 'playing' || this.stalled) { this.hooks.toast('Not connected to the game right now; order not sent.', 'bad'); return; }
     const id = rid();
     this.pending.set(id, done ?? null);
-    this.room.emit('cmd', { id, n: name, a: args }).catch(() => this.hooks.toast('Order could not be sent (connection problem).', 'bad'));
+    this.room.emit('cmd', { id, n: name, a: args }).catch((e) => { this.pending.delete(id); this.hooks.toast(netError(e, 'Order could not be sent'), 'bad'); });
     setTimeout(() => { if (this.pending.delete(id)) this.hooks.toast('The host did not confirm your last order. It may have been lost — check and try again.', 'bad'); }, 12000);
   }
-  requestSpeed(i: number) { void this.room.emit('meta', { speed: i }).catch(() => {}); }
+  requestSpeed(i: number) { void this.room.emit('meta', { speed: i }).catch((e) => this.hooks.toast(netError(e, 'Could not change the speed'), 'bad')); }
 
   private onStep(m: NetMessage) {
     if (this.role !== 'guest' || m.peer !== this.hostPeer) return;
+    const hb = (m.data as { hb?: number })?.hb;
+    if (typeof hb === 'number') {
+      if (hb > this.applied && this.phase === 'playing' && !this.stalled) this.gapSince = this.gapSince || Date.now() - 1000;
+      return;
+    }
     const b = m.data as Batch;
     if (!b || typeof b.q !== 'number' || !Array.isArray(b.e)) return;
     if (b.q <= this.applied) return;
@@ -268,6 +285,7 @@ export class Session {
       progressed = true;
     }
     this.gapSince = this.buffer.size ? (this.gapSince || Date.now()) : 0;
+    if (progressed) this.gapSince = this.buffer.size ? Date.now() : 0;
     if (progressed) this.hooks.onChange();
   }
   private applyEvent(g: GameState, e: Ev) {

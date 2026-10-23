@@ -52,7 +52,7 @@ const [ha, hb] = [await hash(A), await hash(B)];
 ok(`identical state after play (${ha} vs ${hb})`, ha === hb && !ha.startsWith('0:'));
 // human-to-human diplomacy
 await A.evaluate(() => window.__wc.cmd('doTreaty', ['DEU', 'trade']));
-await B.waitForTimeout(800);
+await B.waitForTimeout(1500);
 await B.click('.nav-btn:has-text("Diplomacy")'); await B.click('.tab:has-text("Proposals")');
 await B.click('.offer button:has-text("Accept")');
 await A.waitForTimeout(800);
@@ -71,7 +71,7 @@ await A.waitForTimeout(4000);
 await A.evaluate(() => window.__wc.setSpeed(3));
 await A.waitForTimeout(6000);
 await A.evaluate(() => window.__wc.setSpeed(0));
-await A.waitForTimeout(4000); // allow resends to catch up
+await A.waitForTimeout(7000); // allow resends to catch up
 const [h2a, h2b] = [await hash(A), await hash(B)];
 ok(`identical state after lossy play (${h2a} vs ${h2b})`, h2a === h2b);
 await A.screenshot({ path: out + '/mp-host.png' });

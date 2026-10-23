@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { store, createSession, useStore } from './store';
 import { Modal, Btn } from './common';
 import { NationPicker } from './NationPicker';
-import { newRoomCode, type Session } from './net/session';
+import { newRoomCode, netError, type Session } from './net/session';
 import { transportKind } from './net/transport';
 import { newGame } from '../engine/setup';
 import { listSaves, loadGame } from './storage';
@@ -19,7 +19,7 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   useStore();
   const [name, setName] = useState(savedName());
   const [code, setCode] = useState('');
-  const [kind, setKind] = useState<'online' | 'local' | null | undefined>(undefined);
+  const [kind, setKind] = useState<'online' | 'local' | 'unavailable' | undefined>(undefined);
   const [session, setSession] = useState<Session | null>(store.net);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +44,7 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
       if (role === 'host') await s.setNation('SRB');
       setSession(s);
     } catch (e) {
-      setErr(`Could not open the room: ${(e as Error).message}`);
+      setErr(netError(e, 'Could not open the room'));
     } finally { setBusy(false); }
   };
   const leave = async () => { await session?.close(); store.net = null; setSession(null); };
@@ -53,10 +53,10 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Online multiplayer" onClose={closeAll} wide>
       {kind === undefined && <p className="muted">Checking the connection…</p>}
-      {kind === null && <p className="error">Multiplayer is not available in this browser.</p>}
+      {kind === 'unavailable' && <div className="error"><b>Online play isn't available to you on this page.</b> To connect, you must be signed in to claude.ai and the game must be shared with you with permission to edit or contribute (the owner sets this in the page's Share menu). Ask the person who shared it to check your access, then reload the page.</div>}
       {kind === 'local' && <p className="note small">Local test mode: this copy of the game is not on the hosted page, so players can only connect from other tabs of this same browser. On the hosted page, players on different computers connect through the room code.</p>}
       {err && <div className="error">{err}</div>}
-      {!session && kind && (
+      {!session && (kind === 'online' || kind === 'local') && (
         <div className="mp-start">
           <label className="mp-field">Your name<input id="mp-name" maxLength={24} value={name} placeholder="e.g. Alex" onChange={(e) => setName(e.target.value)} /></label>
           <div className="mp-choice">
@@ -144,6 +144,9 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
           )}
           {s.loading && <div className="loadbar"><span>Receiving the game… {s.loading.got}/{s.loading.of}</span><div className="bar" style={{ height: 6 }}><div style={{ width: `${(s.loading.got / s.loading.of) * 100}%`, background: 'var(--gold)' }} /></div></div>}
           {s.status && <p className="warn small">{s.status}</p>}
+          <p className="small muted">Connection: {s.kind === 'online' ? 'online' : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
+          {s.role === 'guest' && !hostSeat && <p className="warn small">The host isn't visible in this room yet. Check the code matches exactly, and that the host's lobby also says “online”. If it still doesn't appear after a few seconds, leave and join again.</p>}
+          {s.role === 'host' && !guests.length && <p className="small muted">Waiting for players. Each player opens this same page, clicks Online multiplayer → Join and types the code. They appear here as soon as they join.</p>}
         </div>
         <div>
           <h4>Your nation</h4>

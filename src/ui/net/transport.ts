@@ -19,7 +19,15 @@ export interface NetRoom {
 export const TOPICS = ['step', 'cmd', 'snap', 'need', 'meta'] as const;
 export const MAX_MSG = 3600; // bytes of JSON per message (platform limit is 4 KiB)
 
-type RoomApi = {
+type RoomLike = {
+    emit(t: string, d?: unknown): Promise<void>;
+    on(t: string, fn: (m: { topic: string; data?: unknown; peer: string; isMe: boolean; sameTab: boolean }) => void, onErr?: (e: unknown) => void): () => void;
+    presence(p: Record<string, unknown>): Promise<void>;
+    peers(): readonly { peer: string; isMe: boolean; sameTab: boolean; presence: Record<string, unknown> }[];
+    onPeers(fn: (c: { peers: readonly NetPeer[]; joined: readonly NetPeer[]; left: readonly NetPeer[] }) => void, onErr?: (e: unknown) => void): () => void;
+    connected(): boolean;
+};
+type RoomApi = RoomLike & {
   join(name: string): Promise<{
     emit(t: string, d?: unknown): Promise<void>;
     on(t: string, fn: (m: { topic: string; data?: unknown; peer: string; isMe: boolean; sameTab: boolean }) => void, onErr?: (e: unknown) => void): () => void;
@@ -40,16 +48,32 @@ function onlineApi(): Promise<RoomApi | null> {
   return roomApi;
 }
 
-/** Which transport this page can use: 'online' (hosted page), 'local' (same-browser tabs), or none. */
-export async function transportKind(): Promise<'online' | 'local' | null> {
+/** True when this copy runs inside claude.ai (the hosted page), where only the online room may be used. */
+export function isHosted() {
+  return typeof window !== 'undefined' && !!(window as unknown as { claude?: unknown }).claude;
+}
+/**
+ * Which transport this page can use: 'online' (hosted page with the live room), 'local' (a copy
+ * running outside claude.ai: tabs of the same browser), or 'unavailable' (on claude.ai, but this
+ * viewer cannot connect to the room — never silently fall back to local there, or players end up
+ * in separate private rooms and cannot see each other).
+ */
+export async function transportKind(): Promise<'online' | 'local' | 'unavailable'> {
   if (await onlineApi()) return 'online';
-  return typeof BroadcastChannel !== 'undefined' ? 'local' : null;
+  if (isHosted()) return 'unavailable';
+  return typeof BroadcastChannel !== 'undefined' ? 'local' : 'unavailable';
 }
 
 export async function joinRoom(name: string): Promise<NetRoom> {
   const api = await onlineApi();
   if (api) {
-    const r = await api.join(name);
+    let r: Awaited<ReturnType<RoomApi['join']>>;
+    try {
+      r = await api.join(name);
+    } catch {
+      // named rooms refused for this viewer: share the page's main room, keyed by the room name
+      return lobbyRoom(api, name);
+    }
     return {
       kind: 'online',
       myPeer: () => r.peers().find((p) => p.sameTab)?.peer ?? null,
@@ -62,7 +86,25 @@ export async function joinRoom(name: string): Promise<NetRoom> {
       leave: () => r.leave(),
     };
   }
+  if (isHosted()) throw new Error('Online play is not available to you on this page (see the note above).');
   return new LocalRoom(name);
+}
+
+/** Fallback over the page's main room: every message and presence carries the room name and others are ignored. */
+function lobbyRoom(api: RoomLike, name: string): NetRoom {
+  const mine = (p: { presence: Record<string, unknown> }) => p.presence?.room === name;
+  const filter = (peers: readonly NetPeer[]) => peers.filter((p) => p.sameTab || mine(p));
+  return {
+    kind: 'online',
+    myPeer: () => api.peers().find((p) => p.sameTab)?.peer ?? null,
+    emit: (t, d) => api.emit(t, { room: name, d }),
+    on: (t, fn) => api.on(t, (m) => { const w = m.data as { room?: string; d?: unknown }; if (w?.room === name) fn({ topic: m.topic, data: w.d, peer: m.peer, isMe: m.isMe, sameTab: m.sameTab }); }),
+    presence: (p) => api.presence({ ...p, room: name }),
+    peers: () => filter(api.peers()),
+    onPeers: (fn) => api.onPeers((c) => fn(filter(c.peers), filter(c.joined), c.left)),
+    connected: () => api.connected(),
+    leave: async () => { await api.presence({ app: null, room: null, role: null, name: null, nation: null, phase: null, v: null }); },
+  };
 }
 
 /** BroadcastChannel stand-in with the same contract (incl. size limit and optional message loss). */
