@@ -28,7 +28,7 @@ await B.waitForSelector('text=Connected to Alice', { timeout: 40000 });
 {
   const via = await B.evaluate(() => window.__wc.net?.info?.()?.via ?? 'n/a');
   console.log('   guest connected via', via);
-  if (process.env.EXPECT_VIA) ok(`connected via ${process.env.EXPECT_VIA}`, via === process.env.EXPECT_VIA);
+  if (process.env.EXPECT_VIA) ok(`connected via one of: ${process.env.EXPECT_VIA}`, process.env.EXPECT_VIA.split(',').includes(via));
 }
 await B.fill('#nation-search', 'poland');
 ok('guest cannot pick the host\'s nation', await B.locator('.np-row:has-text("Poland")').isDisabled());

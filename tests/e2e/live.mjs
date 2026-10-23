@@ -1,6 +1,6 @@
 // Live check of online multiplayer against the REAL public services (run on a GitHub runner,
 // which has internet access): the PeerJS matchmaking server, WebRTC STUN/TURN, each MQTT relay
-// broker, and full two-player games over every connection path.
+// broker, full two-player games over every connection path, and a game whose host tab is in the background.
 //   node tests/e2e/live.mjs https://westinscollins.github.io/world-conquest/
 import { chromium } from 'playwright';
 import { spawnSync } from 'node:child_process';
@@ -59,15 +59,15 @@ say(`- verdict: ${await page.locator('.netcheck p').innerText()}`);
 await b.close();
 
 // 2. full two-player games over each path against the real services
+// [name, query, accepted paths]: each path is forced on its own, plus the automatic choice
 const scenarios = [
-  ['auto (expect direct WebRTC)', '?live=1', 'direct'],
-  ['WebRTC blocked (school-style network) → matchmaking-server tunnel', '?netsim=noice', 'server'],
+  ['automatic (any path)', '?live=1', 'direct,server,mqtt'],
+  ['school-style network: WebRTC blocked (automatic fallback)', '?netsim=noice', 'server,mqtt'],
+  ['matchmaking-server tunnel only (WebRTC blocked)', '?net=server&netsim=noice', 'server'],
   ['MQTT relay only', '?net=mqtt', 'mqtt'],
-  ['WebRTC blocked and matchmaking unreachable → MQTT relay', '?netsim=noice&peerhost=127.0.0.1:9', 'mqtt'],
+  ['direct WebRTC only', '?net=direct', 'direct'],
 ];
-say('### Two-player games');
-for (const [name, q, via] of scenarios) {
-  const r = spawnSync('node', ['tests/e2e/multiplayer.mjs', url, q], { env: { ...process.env, EXPECT_VIA: via, SHOTS: 'live-shots' }, encoding: 'utf8', timeout: 360000 });
+const report = (name, r) => {
   const out = (r.stdout || '') + (r.stderr || '');
   const fails = out.split('\n').filter((l) => l.startsWith('FAIL'));
   const ok = r.status === 0;
@@ -75,7 +75,17 @@ for (const [name, q, via] of scenarios) {
   say(`- ${ok ? '✅' : '❌'} ${name}${fails.length ? ` — ${fails.join('; ')}` : ''}`);
   const got = out.match(/guest connected via (\w+)/)?.[1];
   if (got) say(`  - connected via ${got}`);
+  for (const l of out.split('\n').filter((x) => /^ {3}(guest day|page timer)/.test(x))) say(`  - ${l.trim()}`);
   if (!ok) say(`  - log tail: ${out.split('\n').filter((l) => l.trim() && !l.startsWith('   rejoin')).slice(-6).join(' | ').slice(0, 900)}`);
+};
+say('### Two-player games');
+for (const [name, q, via] of scenarios) {
+  report(name, spawnSync('node', ['tests/e2e/multiplayer.mjs', url, q], { env: { ...process.env, EXPECT_VIA: via, SHOTS: 'live-shots' }, encoding: 'utf8', timeout: 420000 }));
+}
+// 3. the host switches to another tab: real background throttling, through each relay path
+say('### Host tab in the background');
+for (const [name, q] of [['matchmaking-server tunnel', '?net=server&netsim=noice'], ['MQTT relay', '?net=mqtt']]) {
+  report(name, spawnSync('node', ['tests/e2e/mp-background.mjs', url, q, '60'], { encoding: 'utf8', timeout: 420000 }));
 }
 // one annotation with the whole report (readable through the GitHub API)
 console.log(`::notice title=Live multiplayer report::${esc(lines.join('\n'))}`);

@@ -8,6 +8,7 @@ import { BaseLink, isWire, type Wire } from './wire';
 import type { HostListener, ListenerStatus } from './star';
 import { Batcher, fromB64, open, toB64, type RoomKeys } from './crypt';
 import { TIMING } from './config';
+import { after, every } from './clock';
 
 export const PREFIX = 'worldconquest-v1-';
 
@@ -40,6 +41,15 @@ function whenOpen(p: PeerLike, ms = TIMING.SIGNAL_OPEN_MS): Promise<void> {
       reject(new PeerError(e?.type === 'unavailable-id' ? 'That room code is already in use.' : `Matchmaking server error (${e?.type ?? 'unknown'}).`, e?.type === 'unavailable-id' ? 'id_taken' : 'network'));
     }) as never);
   });
+}
+
+/**
+ * Our own keep-alive for a matchmaking registration, on the background-safe clock: PeerJS's own
+ * heartbeat runs on page timers, which a background tab can slow to once a minute, and the server
+ * drops registrations that stay quiet for about that long.
+ */
+function keepAlive(p: PeerLike): () => void {
+  return every(20000, () => { if (p.open && !p.disconnected && !p.destroyed) { try { p.socket.send({ type: 'HEARTBEAT' }); } catch { /* reconnecting */ } } });
 }
 
 /** A WebRTC data channel to the other side. */
@@ -75,7 +85,8 @@ export class PeerHostListener implements HostListener {
   private state: 'connecting' | 'up' | 'reconnecting' | 'down' = 'connecting';
   private stopped = false;
   private attempts = 0;
-  private retry: ReturnType<typeof setTimeout> | null = null;
+  private retry: (() => void) | null = null;
+  private stopKeepAlive: (() => void) | null = null;
   private tunnels = new Map<string, ServerLink>(); // guest peer id -> link
   private add: (l: BaseLink) => void = () => {};
   private changed: () => void = () => {};
@@ -96,6 +107,8 @@ export class PeerHostListener implements HostListener {
   private async create() {
     const p = await newPeer(this.opts, this.id);
     this.peer = p;
+    this.stopKeepAlive?.();
+    this.stopKeepAlive = keepAlive(p);
     p.on('connection', ((c: Conn) => this.onConnection(c)) as never);
     p.on('disconnected', () => { if (this.stopped || p !== this.peer) return; this.state = 'reconnecting'; this.changed(); this.schedule(); });
     p.on('open', () => { if (p !== this.peer) return; this.state = 'up'; this.attempts = 0; this.changed(); });
@@ -113,11 +126,11 @@ export class PeerHostListener implements HostListener {
     if (this.stopped || this.retry) return;
     const delay = [500, 1000, 2000, 4000, 8000, 15000][Math.min(this.attempts, 5)];
     this.attempts++;
-    this.retry = setTimeout(() => {
+    this.retry = after(delay, () => {
       this.retry = null;
       if (recreate || this.attempts > 4) void this.recreate();
       else this.reconnectNow();
-    }, delay);
+    });
   }
   private reconnectNow() {
     const p = this.peer;
@@ -125,7 +138,7 @@ export class PeerHostListener implements HostListener {
     if (!p.disconnected) return;
     try { p.reconnect(); } catch { void this.recreate(); return; }
     // the server re-attaches a known id without a new 'open'; treat a quiet few seconds as success
-    setTimeout(() => { if (this.peer === p && !p.disconnected && this.state !== 'up') { this.state = 'up'; this.attempts = 0; this.changed(); } }, 3000);
+    after(3000, () => { if (this.peer === p && !p.disconnected && this.state !== 'up') { this.state = 'up'; this.attempts = 0; this.changed(); } });
   }
   private async recreate() {
     if (this.stopped) return;
@@ -168,7 +181,9 @@ export class PeerHostListener implements HostListener {
   }
   stop() {
     this.stopped = true;
-    if (this.retry) clearTimeout(this.retry);
+    this.retry?.();
+    this.retry = null;
+    this.stopKeepAlive?.();
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.wake);
       window.removeEventListener('focus', this.wake);
@@ -204,9 +219,24 @@ export function dialPeer(hostId: string, opts: Record<string, unknown>, keys: Ro
   let answered = false, finished = false;
   let helloTimer: ReturnType<typeof setInterval> | null = null;
   let tunnel: ServerLink | null = null;
+  let directLink: DirectLink | null = null;
   let signalResolve: (v: 'ok' | 'notfound' | 'network') => void = () => {};
   const signal = new Promise<'ok' | 'notfound' | 'network'>((r) => { signalResolve = r; });
-  const ready = newPeer(opts).then(async (p) => { peer = p; await whenOpen(p); return p; });
+  let released = false, stopKeepAlive: (() => void) | null = null;
+  /** Give up this guest's matchmaking registration (also closes its WebRTC connections). */
+  const release = () => {
+    if (released) return;
+    released = true;
+    stopKeepAlive?.();
+    try { peer?.destroy(); } catch { /* gone */ }
+  };
+  const ready = newPeer(opts).then(async (p) => {
+    peer = p;
+    if (released) { p.destroy(); throw new PeerError('cancelled', 'network'); }
+    await whenOpen(p);
+    if (!released) stopKeepAlive = keepAlive(p);
+    return p;
+  });
   ready.catch(() => signalResolve('network'));
 
   const direct = use.direct ? new Promise<DirectLink>((resolve, reject) => {
@@ -218,7 +248,7 @@ export function dialPeer(hostId: string, opts: Record<string, unknown>, keys: Ro
       const watchAnswer = setInterval(() => { if (c.peerConnection?.remoteDescription) { answered = true; clearInterval(watchAnswer); } }, 250);
       c.on('open', () => { c.send({ k: 'hello', gid, name } satisfies Wire); });
       c.on('data', ((d: unknown) => {
-        if (isWire(d) && d.k === 'welcome') { clearTimeout(t); clearInterval(watchAnswer); resolve(new DirectLink(String(d.gid ?? 'host'), c)); }
+        if (isWire(d) && d.k === 'welcome') { clearTimeout(t); clearInterval(watchAnswer); directLink = new DirectLink(String(d.gid ?? 'host'), c); resolve(directLink); }
       }) as never);
       c.on('error', () => { clearTimeout(t); clearInterval(watchAnswer); reject(new PeerError('direct connection failed', 'unreachable')); });
       c.on('iceStateChanged', ((s: string) => { if (s === 'failed') { clearTimeout(t); clearInterval(watchAnswer); reject(new PeerError('direct connection blocked', 'unreachable')); } }) as never);
@@ -269,7 +299,10 @@ export function dialPeer(hostId: string, opts: Record<string, unknown>, keys: Ro
       if (helloTimer) clearInterval(helloTimer);
       if (keep !== 'direct') { try { conn?.close(); } catch { /* closing */ } }
       if (keep !== 'server') tunnel?.dead();
-      if (!keep) { void ready.then((p) => p.destroy(), () => {}); }
+      // the registration is needed only while the chosen link lives (a goodbye goes out first)
+      const kept = keep === 'direct' ? directLink : keep === 'server' ? tunnel : null;
+      if (!kept) release();
+      else kept.onClose(() => { after(1000, release); });
     },
   };
 }

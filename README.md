@@ -42,7 +42,7 @@ How players connect depends on where the game runs:
   2. **Matchmaking-server tunnel:** messages ride the PeerJS signalling connection itself (HTTPS, port 443), for school and office networks that block WebRTC.
   3. **MQTT relay** over secure WebSockets to public brokers (port 443 first), if the matchmaking server is unreachable.
 
-  Relayed messages are end-to-end encrypted (AES-GCM) with a key derived from the room code. The host re-registers automatically after drops, sleep or network changes; closing the lobby window keeps the room open; **Copy invite link** shares a link that fills in the code; **Check my network** shows which paths the current network allows. Anyone with the link and the room code can join — no sign-in or approval.
+  Relayed messages are end-to-end encrypted (AES-GCM) with a key derived from the room code. The host re-registers automatically after drops, sleep or network changes, and a guest whose connection dies mid-game reconnects by itself and reloads the game from the host. The game keeps running when the host switches to another tab (network timers and the host's clock run on a worker, which browsers don't slow down in background tabs). Closing the lobby window keeps the room open; **Copy invite link** shares a link that fills in the code; **Check my network** shows which paths the current network allows. Anyone with the link and the room code can join — no sign-in or approval. The lobby shows each player's game version and warns when someone runs an old cached copy.
 - **Inside claude.ai (Artifact):** the claude.ai live room. Players must be signed in and have the page shared with them with edit/contribute access; public-link visitors cannot join.
 - **Tests:** `?transport=local` connects tabs of one browser (BroadcastChannel). Offline stand-ins for the public services: `node tests/e2e/peer-server.mjs` (PeerJS) and `node tests/e2e/mqtt-broker.mjs` (MQTT); then add `?peerhost=127.0.0.1:9000&relay=ws://127.0.0.1:8090/mqtt`. `&net=direct|server|mqtt` forces one path and `&netsim=noice` makes WebRTC fail. The **Live multiplayer check** GitHub workflow runs real two-browser games against the real public services after every deploy.
 
@@ -54,7 +54,8 @@ Q='?peerhost=127.0.0.1:9000&relay=ws://127.0.0.1:8090/mqtt'
 EXPECT_VIA=direct node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q"
 EXPECT_VIA=server node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q&netsim=noice"
 EXPECT_VIA=mqtt   node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q&net=mqtt"
-node tests/e2e/mp-errors.mjs && node tests/e2e/mp-reconnect.mjs
+node tests/e2e/mp-errors.mjs && node tests/e2e/mp-reconnect.mjs && node tests/e2e/mp-heal.mjs
+node tests/e2e/mp-background.mjs http://localhost:5173/ "$Q&net=server&netsim=noice"   # host tab really in the background
 ```
 
 ## Controls

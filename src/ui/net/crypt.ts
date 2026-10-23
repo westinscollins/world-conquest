@@ -1,5 +1,6 @@
 // Room encryption for relayed messages: the room code is the shared secret. Relays (the
 // matchmaking server, public MQTT brokers) only ever see random-looking bytes.
+import { after } from './clock';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -56,21 +57,21 @@ export function fromB64(s: string): Uint8Array {
 export class Batcher {
   private q: unknown[] = [];
   private size = 0;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: (() => void) | null = null;
   private chain: Promise<void> = Promise.resolve();
   constructor(private key: CryptoKey, private out: (bytes: Uint8Array) => void, private extra: Record<string, unknown> = {}, private delay = 20, private maxBytes = 12000) {}
   push(w: unknown) {
     const len = JSON.stringify(w).length;
     if (this.size + len > this.maxBytes && this.q.length) this.flush();
     this.q.push(w); this.size += len;
-    if (!this.timer) this.timer = setTimeout(() => this.flush(), this.delay);
+    if (!this.timer) this.timer = after(this.delay, () => { this.timer = null; this.flush(); });
   }
   flush() {
-    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.timer) { this.timer(); this.timer = null; }
     if (!this.q.length) return;
     const env = { ...this.extra, w: this.q };
     this.q = []; this.size = 0;
     this.chain = this.chain.then(async () => { try { this.out(await seal(this.key, env)); } catch { /* dropped; the session resyncs */ } });
   }
-  stop() { if (this.timer) clearTimeout(this.timer); this.timer = null; this.q = []; }
+  stop() { if (this.timer) this.timer(); this.timer = null; this.q = []; }
 }

@@ -12,6 +12,7 @@ import { saveGame } from './storage';
 import { audio } from '../audio/music';
 import { runCommand, stateHash } from '../engine/commands';
 import { Session } from './net/session';
+import { every } from './net/clock';
 import type { Result } from '../engine/actions';
 
 export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy' | 'unrest';
@@ -81,6 +82,7 @@ class Store {
   }
   quitToMenu() {
     cancelAnimationFrame(this.raf);
+    this.bgClock?.(); this.bgClock = null;
     if (this.net) { void this.net.close(); this.net = null; }
     this.game = null;
     this.ui = { ...this.ui, screen: 'menu', speed: 0, panel: null };
@@ -151,32 +153,36 @@ class Store {
 
   private loop = () => {
     cancelAnimationFrame(this.raf);
+    this.bgClock?.();
     this.lastT = performance.now();
-    const step = (t: number) => {
-      const dt = Math.min(0.25, (t - this.lastT) / 1000);
-      this.lastT = t;
-      const g = this.game;
-      const guest = this.net?.role === 'guest';
-      const host = this.net?.role === 'host';
-      if (g && !guest && this.ui.speed > 0 && (host || (!this.ui.confirm && !g.outcome))) {
-        this.acc += dt * SPEEDS[this.ui.speed];
-        let n = 0;
-        const t0 = performance.now();
-        while (this.acc >= 1 && n < 8 && performance.now() - t0 < 30) {
-          this.acc -= 1;
-          tick(g);
-          n++;
-          if (host) this.net!.recordTick(g);
-          this.afterTick(g);
-        }
-        if (this.acc > 3) this.acc = 3;
-        // redraw at most ~10 times per second while time runs: keeps fast speeds smooth
-        if (n && t - this.lastEmit > 100) { this.lastEmit = t; this.emit(); }
-      }
-      this.raf = requestAnimationFrame(step);
-    };
+    const step = (t: number) => { this.frame(t); this.raf = requestAnimationFrame(step); };
     this.raf = requestAnimationFrame(step);
+    // a hidden tab gets no animation frames: an online host keeps the shared clock running anyway
+    this.bgClock = every(100, () => { if (document.hidden && this.net?.role === 'host') this.frame(performance.now()); });
   };
+  private bgClock: (() => void) | null = null;
+  private frame(t: number) {
+    const dt = Math.max(0, Math.min(0.25, (t - this.lastT) / 1000)); // (frame times and clock ticks can interleave)
+    this.lastT = Math.max(this.lastT, t);
+    const g = this.game;
+    const guest = this.net?.role === 'guest';
+    const host = this.net?.role === 'host';
+    if (g && !guest && this.ui.speed > 0 && (host || (!this.ui.confirm && !g.outcome))) {
+      this.acc += dt * SPEEDS[this.ui.speed];
+      let n = 0;
+      const t0 = performance.now();
+      while (this.acc >= 1 && n < 8 && performance.now() - t0 < 30) {
+        this.acc -= 1;
+        tick(g);
+        n++;
+        if (host) this.net!.recordTick(g);
+        this.afterTick(g);
+      }
+      if (this.acc > 3) this.acc = 3;
+      // redraw at most ~10 times per second while time runs: keeps fast speeds smooth
+      if (n && t - this.lastEmit > 100) { this.lastEmit = t; this.emit(); }
+    }
+  }
 
   private lastMood: 'peace' | 'war' = 'peace';
   private lastEmit = 0;

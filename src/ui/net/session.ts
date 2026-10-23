@@ -13,10 +13,13 @@ import { runCommand, stateHash } from '../../engine/commands';
 import { tick } from '../../engine/sim';
 import { joinRoom, MAX_MSG, type NetRoom, type NetPeer, type NetMessage, type JoinProgress } from './transport';
 import { saveCode, fromSaveCode } from '../storage';
+import { every, after, sleep } from './clock';
 
 export type Ev = ['t'] | ['c', string, string, string, unknown[], string?] | ['h', number, string] | ['sp', number];
 interface Batch { q: number; e: Ev[] }
-export interface Seat { peer: string; name: string; nation: string | null; role: 'host' | 'guest'; phase: string; online: boolean }
+export interface Seat { peer: string; name: string; nation: string | null; role: 'host' | 'guest'; phase: string; online: boolean; build: string | null }
+/** This build's id (old builds don't send one). */
+export const BUILD = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
 
 export interface SessionHooks {
   onGame(g: GameState): void;                       // a (new or resynced) game is ready to show
@@ -63,7 +66,7 @@ export class Session {
   private seq = 0;
   private outbox: Ev[] = [];
   private history = new Map<number, Batch>();
-  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private stopFlush: (() => void) | null = null;
   private seatOf = new Map<string, string>(); // peer -> nation (host's authority)
   private away = new Set<string>();             // seated peers that disconnected
   private sending = 0;
@@ -76,7 +79,7 @@ export class Session {
   private stalled = false;
   private pending = new Map<string, ((r: { ok: boolean; message: string }) => void) | null>();
   private snap: { sid: string; q: number; n: number; parts: (string | undefined)[]; last: number } | null = null;
-  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private stopWatchdog: (() => void) | null = null;
 
   constructor(role: 'host' | 'guest', code: string, name: string, hooks: SessionHooks) {
     this.role = role; this.code = code; this.name = name || (role === 'host' ? 'Host' : 'Guest'); this.hooks = hooks;
@@ -87,45 +90,87 @@ export class Session {
   get myPeer() { return this.room?.myPeer() ?? ''; }
   info() { return this.room?.info?.() ?? null; }
 
+  private joinOpts() { return { onProgress: (p: JoinProgress) => { this.progress = p; this.hooks.onChange(); }, onChanged: () => this.hooks.onChange() }; }
+  /** Subscribe this session to the current room. */
+  private attach() {
+    for (const u of this.unsub) u();
+    this.unsub = [
+      this.room.onPeers((peers, joined, left) => this.peersChanged(peers, joined, left)),
+      this.room.on('step', (m) => this.onStep(m)),
+      this.room.on('cmd', (m) => this.onCmd(m)),
+      this.room.on('snap', (m) => this.onSnap(m)),
+      this.room.on('need', (m) => this.onNeed(m)),
+      this.room.on('meta', (m) => this.onMeta(m)),
+    ];
+  }
   async open() {
     for (let attempt = 0; ; attempt++) {
-      try { this.room = await joinRoom(`wc-${this.code}`, this.role, { onProgress: (p) => { this.progress = p; this.hooks.onChange(); }, onChanged: () => this.hooks.onChange() }); break; }
+      try { this.room = await joinRoom(`wc-${this.code}`, this.role, this.joinOpts()); break; }
       catch (e) {
         // public peer ids are global: if this code is taken, the host simply picks another
         if (this.role === 'host' && (e as { code?: string }).code === 'id_taken' && attempt < 3) { this.code = newRoomCode(); continue; }
         throw e;
       }
     }
-    this.unsub.push(this.room.onPeers((peers, joined, left) => this.peersChanged(peers, joined, left)));
-    this.unsub.push(this.room.on('step', (m) => this.onStep(m)));
-    this.unsub.push(this.room.on('cmd', (m) => this.onCmd(m)));
-    this.unsub.push(this.room.on('snap', (m) => this.onSnap(m)));
-    this.unsub.push(this.room.on('need', (m) => this.onNeed(m)));
-    this.unsub.push(this.room.on('meta', (m) => this.onMeta(m)));
+    this.attach();
     await this.announce();
     if (this.role === 'host') {
       let beat = 0;
       // flush every 100 ms; every 2 s also announce the latest batch number so a guest that lost the last one notices
-      this.flushTimer = setInterval(() => { this.flush(); if (++beat % 20 === 0 && this.phase === 'playing') void this.room.emit('step', { hb: this.seq }).catch(() => {}); }, 100);
+      this.stopFlush = every(100, () => { this.flush(); if (++beat % 20 === 0 && this.phase === 'playing') void this.room.emit('step', { hb: this.seq }).catch(() => {}); });
     }
-    else this.watchdog = setInterval(() => this.guestWatchdog(), 500);
+    else this.stopWatchdog = every(500, () => this.guestWatchdog());
+  }
+
+  private closed = false;
+  private reconnecting = false;
+  /**
+   * Guest: the link to the host died (Wi-Fi hiccup, sleep, network change). Join again with the
+   * same tab id; the host recognises us and sends the game again. Keeps trying until it works.
+   */
+  private async reconnect() {
+    if (this.reconnecting || this.closed) return;
+    this.reconnecting = true;
+    this.status = 'Connection to the host lost — reconnecting…';
+    this.hooks.onChange();
+    let delay = 1000;
+    while (!this.closed) {
+      try {
+        const room = await joinRoom(`wc-${this.code}`, 'guest', this.joinOpts());
+        if (this.closed) { await room.leave(); break; }
+        const old = this.room;
+        this.room = room;
+        this.attach();
+        try { await old.leave(); } catch { /* already gone */ }
+        await this.announce();
+        if (this.phase === 'playing') { this.status = 'Reconnected — reloading the game from the host…'; this.stalled = true; this.lastNeed = Date.now(); }
+        else this.status = '';
+        break;
+      } catch {
+        await sleep(delay);
+        delay = Math.min(15000, delay * 2);
+      }
+    }
+    this.reconnecting = false;
+    this.hooks.onChange();
   }
 
   async close() {
-    if (this.flushTimer) clearInterval(this.flushTimer);
-    if (this.watchdog) clearInterval(this.watchdog);
+    this.closed = true;
+    this.stopFlush?.();
+    this.stopWatchdog?.();
     for (const u of this.unsub) u();
     try { await this.room?.leave(); } catch { /* already gone */ }
   }
 
   async setNation(nation: string | null) { this.nation = nation; await this.announce(); this.hooks.onChange(); }
-  private announce() { return this.room.presence({ app: 'wc', v: 1, role: this.role, name: this.name.slice(0, 24), nation: this.nation, phase: this.phase }); }
+  private announce() { return this.room.presence({ app: 'wc', v: 1, b: BUILD, role: this.role, name: this.name.slice(0, 24), nation: this.nation, phase: this.phase }); }
 
   private peersChanged(peers: readonly NetPeer[], joined: readonly NetPeer[], left: readonly NetPeer[]) {
     const prevOnline = new Set(this.seats.filter((s) => s.online).map((s) => s.peer));
     this.seats = peers
       .filter((p) => p.presence?.app === 'wc')
-      .map((p) => ({ peer: p.peer, name: String(p.presence.name ?? 'Player').slice(0, 24), nation: (p.presence.nation as string) ?? null, role: p.presence.role === 'host' ? 'host' : 'guest', phase: String(p.presence.phase ?? 'lobby'), online: true }) as Seat);
+      .map((p) => ({ peer: p.peer, name: String(p.presence.name ?? 'Player').slice(0, 24), nation: (p.presence.nation as string) ?? null, role: p.presence.role === 'host' ? 'host' : 'guest', phase: String(p.presence.phase ?? 'lobby'), online: true, build: typeof p.presence.b === 'string' ? p.presence.b : null }) as Seat);
     const host = this.seats.find((s) => s.role === 'host' && !(s.peer === this.myPeer && this.role !== 'host'));
     if (host) this.hostPeer = host.peer;
     if (this.role === 'guest') {
@@ -240,10 +285,10 @@ export class Session {
       this.outgoing = { sid: rid(), chunks, to, q: this.seq };
       for (let i = 0; i < chunks.length; i++) {
         await this.room.emit('snap', { sid: this.outgoing.sid, to, q: this.outgoing.q, i, n: chunks.length, d: chunks[i] }).catch(() => {});
-        if (i % 12 === 11) await new Promise((r) => setTimeout(r, 650)); // stay well under the message budget
+        if (i % 12 === 11) await sleep(650); // stay well under the message budget
       }
       // give guests time to ask for missing chunks, then resume
-      await new Promise((r) => setTimeout(r, 2500));
+      await sleep(2500);
     } finally {
       this.sending--;
       if (!this.sending) this.hooks.onSpeed(this.resumeSpeed);
@@ -258,9 +303,9 @@ export class Session {
       for (const i of miss.slice(0, 120)) {
         if (o.chunks[i] == null) continue;
         await this.room.emit('snap', { sid: o.sid, to: o.to, q: o.q, i, n: o.chunks.length, d: o.chunks[i] }).catch(() => {});
-        if (++k % 12 === 0) await new Promise((r) => setTimeout(r, 650));
+        if (++k % 12 === 0) await sleep(650);
       }
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(1500);
     } finally { this.sending--; if (!this.sending) this.hooks.onSpeed(this.resumeSpeed); }
   }
   /** Host: speed changes are part of the stream so guests show the same clock state. */
@@ -273,7 +318,7 @@ export class Session {
     const id = rid();
     this.pending.set(id, done ?? null);
     this.room.emit('cmd', { id, n: name, a: args }).catch((e) => { this.pending.delete(id); this.hooks.toast(netError(e, 'Order could not be sent'), 'bad'); });
-    setTimeout(() => { if (this.pending.delete(id)) this.hooks.toast('The host did not confirm your last order. It may have been lost — check and try again.', 'bad'); }, 12000);
+    after(12000, () => { if (this.pending.delete(id)) this.hooks.toast('The host did not confirm your last order. It may have been lost — check and try again.', 'bad'); });
   }
   requestSpeed(i: number) { void this.room.emit('meta', { speed: i }).catch((e) => this.hooks.toast(netError(e, 'Could not change the speed'), 'bad')); }
 
@@ -335,6 +380,9 @@ export class Session {
   }
   private guestWatchdog() {
     const now = Date.now();
+    // public-site rooms (they report info()) heal themselves when the link to the host dies
+    if (!this.reconnecting && !this.closed && this.room?.info && !this.room.connected()) { void this.reconnect(); return; }
+    if (this.reconnecting) return;
     if (this.snap && now - this.snap.last > 1800 && now - this.lastNeed > 1800) {
       const miss: number[] = [];
       for (let i = 0; i < this.snap.n && miss.length < 120; i++) if (this.snap.parts[i] == null) miss.push(i); // (sparse array: no forEach)

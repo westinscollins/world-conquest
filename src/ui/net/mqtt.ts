@@ -1,5 +1,6 @@
 // A minimal MQTT 3.1.1 client over WebSockets (QoS 0 only) for the relay fallback.
 // Public brokers forward messages between players when no direct connection is possible.
+import { every } from './clock';
 
 export interface MqttOptions {
   clientId: string;
@@ -91,7 +92,7 @@ export function parsePublish(p: Parsed): { topic: string; payload: Uint8Array } 
 export class MqttClient {
   private ws: WebSocket | null = null;
   private reader = new PacketReader();
-  private ping: ReturnType<typeof setInterval> | null = null;
+  private stopPing: (() => void) | null = null;
   private nextId = 1;
   private closedByUs = false;
   up = false;
@@ -132,7 +133,7 @@ export class MqttClient {
             if (p.body[1] !== 0) { fail(`refused (${p.body[1]})`); return; }
             this.up = true; settled = true;
             const ka = (this.o.keepalive ?? 60) * 500;
-            this.ping = setInterval(() => this.raw(pingPacket()), ka);
+            this.stopPing = every(ka, () => this.raw(pingPacket()));
             resolve();
           } else if (p.type === 3) {
             const m = parsePublish(p);
@@ -154,8 +155,8 @@ export class MqttClient {
   private raw(b: Uint8Array) { if (this.ws && this.ws.readyState === 1) this.ws.send(b); }
   private teardown() {
     this.up = false;
-    if (this.ping) clearInterval(this.ping);
-    this.ping = null;
+    this.stopPing?.();
+    this.stopPing = null;
     if (this.ws) { this.ws.onopen = this.ws.onmessage = this.ws.onerror = this.ws.onclose = null; try { this.ws.close(); } catch { /* closing */ } }
     this.ws = null;
   }

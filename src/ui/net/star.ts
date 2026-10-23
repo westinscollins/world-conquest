@@ -4,6 +4,7 @@
 import type { NetMessage, NetPeer, NetRoom } from './transport';
 import type { Link, Via, Wire } from './wire';
 import { TIMING } from './config';
+import { every } from './clock';
 
 export interface ListenerStatus { name: string; up: boolean; detail?: string }
 export interface HostListener {
@@ -23,9 +24,9 @@ abstract class StarBase {
   protected mine: Record<string, unknown> = {};
   protected snapshot: readonly NetPeer[] = [];
   protected others = new Map<string, Record<string, unknown>>();
-  protected timer: ReturnType<typeof setInterval>;
+  protected stopBeat: () => void;
   constructor(protected me: string, protected drop = 0) {
-    this.timer = setInterval(() => this.beat(), TIMING.PING_MS);
+    this.stopBeat = every(TIMING.PING_MS, () => this.beat());
     setTimeout(() => this.rebuild([], []), 0);
   }
   protected abstract beat(): void;
@@ -93,7 +94,7 @@ export class HostRoom extends StarBase implements NetRoom {
   }
   async leave() {
     this.up = false;
-    clearInterval(this.timer);
+    this.stopBeat();
     for (const e of this.guests.values()) for (const l of e.links.keys()) l.close();
     this.guests.clear();
     for (const l of this.listeners) l.stop();
@@ -201,7 +202,7 @@ export class GuestRoom extends StarBase implements NetRoom {
     if (this.connected()) this.link.send({ k: 'pres', presence: this.mine });
     this.rebuild([], []);
   }
-  async leave() { this.up = false; clearInterval(this.timer); this.link.close(); }
+  async leave() { this.up = false; this.stopBeat(); this.link.close(); }
   info(): NetInfo { return { role: 'guest', via: this.link.via, paths: [{ name: this.link.via, up: this.connected() }], guests: [] }; }
 
   private fromHost(w: Wire) {

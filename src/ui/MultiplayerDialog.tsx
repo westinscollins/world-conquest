@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { store, createSession, useStore } from './store';
 import { Modal, Btn } from './common';
 import { NationPicker } from './NationPicker';
-import { newRoomCode, netError, type Session } from './net/session';
+import { newRoomCode, netError, BUILD, type Session } from './net/session';
 import { NetCheck } from './NetCheck';
 import { transportKind, isHosted } from './net/transport';
 import { newGame } from '../engine/setup';
@@ -91,6 +91,7 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
       )}
       {session && <Lobby s={session} source={source} setSource={setSource} saves={saves} onLeave={leave} setErr={setErr} />}
       {kind === 'p2p' && <NetCheck />}
+      <p className="small muted" style={{ marginTop: 8 }}>Game version {BUILD}. Everyone should show the same version; if not, reload the page with Ctrl+Shift+R (Cmd+Shift+R on a Mac).</p>
     </Modal>
   );
 }
@@ -197,6 +198,9 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
           )}
           {s.loading && <div className="loadbar"><span>Receiving the game… {s.loading.got}/{s.loading.of}</span><div className="bar" style={{ height: 6 }}><div style={{ width: `${(s.loading.got / s.loading.of) * 100}%`, background: 'var(--gold)' }} /></div></div>}
           {s.status && <p className="warn small">{s.status}</p>}
+          {seats.some((x) => x.peer !== me && x.build !== BUILD) && (
+            <p className="bad small">⚠ Not everyone is running the same version of the game ({seats.filter((x) => x.build !== BUILD).map((x) => `${x.name}: ${x.build ?? 'older'}`).join(', ')}; yours: {BUILD}). Everyone should reload the page with Ctrl+Shift+R before starting.</p>
+          )}
           <p className="small muted">Connection: {s.kind === 'online' ? (isHosted() ? 'online (claude.ai room)' : connectionText(s)) : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
           {s.role === 'host' && s.info() && <HostPaths s={s} />}
           {s.role === 'guest' && !hostSeat && <p className="warn small">The host isn't visible in this room yet. Check the code matches exactly, and that the host's lobby also says “online”. If it still doesn't appear after a few seconds, leave and join again.</p>}

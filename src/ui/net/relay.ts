@@ -6,6 +6,7 @@ import { Batcher, open, type RoomKeys } from './crypt';
 import { BaseLink, isWire, type Wire } from './wire';
 import type { HostListener, ListenerStatus } from './star';
 import { TIMING, rand } from './config';
+import { after } from './clock';
 
 const hostTopic = (tid: string) => `wc1/${tid}/h`;
 const guestTopic = (tid: string, gid: string) => `wc1/${tid}/g/${gid}`;
@@ -28,7 +29,7 @@ interface Env { s?: string; w?: unknown[] }
 
 // ---------------------------------------------------------------- host side
 export class MqttHostListener implements HostListener {
-  private brokers: { url: string; client: MqttClient | null; up: boolean; error?: string; retry?: ReturnType<typeof setTimeout>; links: Map<string, MqttLink> }[];
+  private brokers: { url: string; client: MqttClient | null; up: boolean; error?: string; retry?: () => void; links: Map<string, MqttLink> }[];
   private stopped = false;
   private add: (l: MqttLink) => void = () => {};
   private changed: () => void = () => {};
@@ -68,7 +69,7 @@ export class MqttHostListener implements HostListener {
   private schedule(b: (typeof this.brokers)[number], attempt: number) {
     if (this.stopped || b.retry) return;
     const delay = Math.min(30000, 2000 * 2 ** Math.min(attempt, 4));
-    b.retry = setTimeout(() => { b.retry = undefined; this.connect(b, attempt).catch(() => {}); }, delay);
+    b.retry = after(delay, () => { b.retry = undefined; this.connect(b, attempt).catch(() => {}); });
   }
   private async onMessage(b: (typeof this.brokers)[number], payload: Uint8Array) {
     const env = (await open(this.keys.key, payload)) as Env | null;
@@ -91,7 +92,7 @@ export class MqttHostListener implements HostListener {
   }
   stop() {
     this.stopped = true;
-    for (const b of this.brokers) { if (b.retry) clearTimeout(b.retry); for (const l of b.links.values()) l.close(); b.client?.close(); b.up = false; }
+    for (const b of this.brokers) { b.retry?.(); b.retry = undefined; for (const l of b.links.values()) l.close(); b.client?.close(); b.up = false; }
   }
   status(): ListenerStatus[] { return this.brokers.map((b) => ({ name: `relay ${short(b.url)}`, up: b.up, detail: b.error })); }
 }
