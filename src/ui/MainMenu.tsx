@@ -15,7 +15,8 @@ const SUBREGIONS = [...new Set(WORLD.countries.map((c) => c.subregion))].sort();
 export function MainMenu() {
   const [camp, setCamp] = useState('tutorial');
   const [load, setLoad] = useState(false);
-  const [mp, setMp] = useState(false);
+  // an invite link (…#join=code) opens the multiplayer dialog straight away
+  const [mp, setMp] = useState(() => typeof location !== 'undefined' && /join=/.test(location.hash));
   const [custom, setCustom] = useState(false);
   const [hasAuto, setHasAuto] = useState(false);
   const [vol, setVol] = useState(audio.musicVolume);
@@ -71,7 +72,7 @@ export function MainMenu() {
         <div className="menu-foot">
           {hasAuto && <Btn kind="primary" onClick={cont}>Continue last game</Btn>}
           <Btn onClick={() => setLoad(true)}>Load game</Btn>
-          <Btn kind="primary" onClick={() => { audio.init(); setMp(true); }}>Online multiplayer</Btn>
+          <Btn kind="primary" onClick={() => { audio.init(); setMp(true); }}>{store.net && store.net.phase !== 'playing' ? `Return to room ${store.net.code}` : 'Online multiplayer'}</Btn>
           <div className="vol"><Icon name="music" /> <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { audio.init(); audio.setMusicVolume(+e.target.value); setVol(+e.target.value); }} /></div>
         </div>
       </div>

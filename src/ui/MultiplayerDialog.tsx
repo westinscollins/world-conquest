@@ -3,6 +3,7 @@ import { store, createSession, useStore } from './store';
 import { Modal, Btn } from './common';
 import { NationPicker } from './NationPicker';
 import { newRoomCode, netError, type Session } from './net/session';
+import { NetCheck } from './NetCheck';
 import { transportKind, isHosted } from './net/transport';
 import { newGame } from '../engine/setup';
 import { listSaves, loadGame } from './storage';
@@ -18,7 +19,8 @@ function rememberName(n: string) { try { localStorage.setItem(NAME_KEY, n); } ca
 export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   useStore();
   const [name, setName] = useState(savedName());
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(() => (typeof location !== 'undefined' ? decodeURIComponent(location.hash.match(/join=([^&]+)/)?.[1] ?? '') : ''));
+  const [opening, setOpening] = useState<Session | null>(null);
   const [kind, setKind] = useState<'online' | 'p2p' | 'local' | 'unavailable' | undefined>(undefined);
   const [session, setSession] = useState<Session | null>(store.net);
   const [err, setErr] = useState('');
@@ -33,31 +35,37 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
     setErr('');
     const nm = name.trim() || (role === 'host' ? 'Host' : 'Guest');
     rememberName(nm);
-    const c = role === 'host' ? newRoomCode() : code.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    // accept a pasted invite link or a sentence containing the code
+    const c = role === 'host' ? newRoomCode() : extractCode(code);
     if (role === 'guest' && c.length < 4) { setErr('Enter the room code your host gave you.'); return; }
+    if (busy) return;
     setBusy(true);
     try {
       audio.init();
       const s = createSession(role, c, nm);
+      setOpening(s);
       await s.open();
+      if (location.hash.includes('join=')) history.replaceState(null, '', location.pathname + location.search);
       store.net = s;
       if (role === 'host') await s.setNation('SRB');
       setSession(s);
     } catch (e) {
       setErr(netError(e, 'Could not open the room'));
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setOpening(null); }
   };
   const leave = async () => { await session?.close(); store.net = null; setSession(null); };
-  const closeAll = async () => { if (session && session.phase !== 'playing') await leave(); onClose(); };
+  // closing the window keeps the room open (return to it from the menu); only "Leave room" closes it
+  const closeAll = () => onClose();
 
   return (
-    <Modal title="Online multiplayer" onClose={closeAll} wide>
+    <Modal title="Online multiplayer" onClose={closeAll} wide backdropCloses={!session}>
       {kind === undefined && <p className="muted">Checking the connection…</p>}
       {kind === 'unavailable' && !isHosted() && <div className="error"><b>Online play isn't available in this browser.</b> It needs WebRTC, which this browser doesn't support or has turned off. Try an up-to-date Chrome, Edge, Firefox or Safari.</div>}
       {kind === 'p2p' && <p className="note small">Players connect directly to each other. Anyone with this page's link and your room code can join, with no sign-in or approval.</p>}
       {kind === 'unavailable' && isHosted() && <div className="error"><b>Online play isn't available to you on this page.</b> To connect, you must be signed in to claude.ai and the game must be shared with you with permission to edit or contribute (the owner sets this in the page's Share menu). Ask the person who shared it to check your access, then reload the page.</div>}
       {kind === 'local' && <p className="note small">Local test mode: this copy of the game is not on the hosted page, so players can only connect from other tabs of this same browser. On the hosted page, players on different computers connect through the room code.</p>}
       {err && <div className="error">{err}</div>}
+      {busy && opening && <p className="note small">{progressText(opening)}</p>}
       {!session && (kind === 'online' || kind === 'p2p' || kind === 'local') && (
         <div className="mp-start">
           <label className="mp-field">Your name<input id="mp-name" maxLength={24} value={name} placeholder="e.g. Alex" onChange={(e) => setName(e.target.value)} /></label>
@@ -71,7 +79,7 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
               <h4>Join a game</h4>
               <p className="small muted">Enter the code the host shared with you.</p>
               <div className="row gap">
-                <input id="mp-code" className="code-in" maxLength={8} value={code} placeholder="room code" onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && open('guest')} />
+                <input id="mp-code" className="code-in" maxLength={120} value={code} placeholder="room code" onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && open('guest')} />
                 <Btn kind="primary" disabled={busy} onClick={() => open('guest')}>Join</Btn>
               </div>
             </div>
@@ -82,7 +90,46 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
         </div>
       )}
       {session && <Lobby s={session} source={source} setSource={setSource} saves={saves} onLeave={leave} setErr={setErr} />}
+      {kind === 'p2p' && <NetCheck />}
     </Modal>
+  );
+}
+
+const CODE_CHARS = /[abcdefghjkmnpqrstuvwxyz23456789]{6}/;
+/** Pull the room code out of whatever was typed or pasted (an invite link, a sentence…). */
+export function extractCode(text: string): string {
+  const low = text.trim().toLowerCase();
+  const fromLink = low.match(/join=([a-z0-9]+)/)?.[1];
+  if (fromLink) return fromLink;
+  const words = low.split(/[^a-z0-9]+/).filter(Boolean);
+  const exact = words.find((w) => w.length === 6 && CODE_CHARS.test(w));
+  if (exact) return exact;
+  return low.match(CODE_CHARS)?.[0] ?? low.replace(/[^a-z0-9]/g, '');
+}
+function inviteLink(code: string) { return `${location.origin}${location.pathname}#join=${code}`; }
+const VIA: Record<string, string> = { direct: 'direct peer-to-peer', server: 'through the matchmaking server', mqtt: 'through a relay server' };
+function progressText(s: Session) {
+  const p = s.progress;
+  if (s.role === 'host') return 'Opening your room…';
+  if (!p || p.stage === 'searching') return `Looking for game ${s.code}…`;
+  if (p.stage === 'found') return `Found the game — connecting (${VIA[p.via ?? ''] ?? 'connecting'})…`;
+  return 'Connected.';
+}
+function connectionText(s: Session) {
+  const i = s.info();
+  if (!i) return 'online';
+  if (i.role === 'guest') return `online (${VIA[i.via ?? ''] ?? 'connected'}${i.via && i.via !== 'direct' ? ', a little slower' : ''})`;
+  return 'online — your room is open';
+}
+function HostPaths({ s }: { s: Session }) {
+  const i = s.info()!;
+  const up = i.paths.filter((p) => p.up).length;
+  return (
+    <p className="small muted">
+      Reachable via: {i.paths.map((p) => <span key={p.name} className={p.up ? 'good' : 'bad'} title={p.detail}>{p.up ? '✓' : '✗'} {p.name} </span>)}
+      {!up && <b className="bad"> — your room is offline, reconnecting… Players can't join until this clears.</b>}
+      {i.guests.length > 0 && <> · players connected {i.guests.map((g) => `${s.seats.find((x) => x.peer === g.peer)?.name ?? 'player'} (${g.via ?? '…'})`).join(', ')}</>}
+    </p>
   );
 }
 
@@ -100,6 +147,7 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
   const fromSave = source !== 'new' ? saves.find((m) => m.slot === source) : undefined;
   const ready = guests.length > 0 && guests.every((x) => x.nation) && !dupes.size && !!s.nation;
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const start = async () => {
     try {
@@ -123,6 +171,7 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
         <span className="small muted">Room code</span>
         <b className="code">{s.code}</b>
         <Btn small onClick={async () => { try { await navigator.clipboard.writeText(s.code); setCopied(true); } catch { setCopied(false); } }}>{copied ? 'Copied' : 'Copy'}</Btn>
+        {s.kind === 'online' && !isHosted() && <Btn small onClick={async () => { try { await navigator.clipboard.writeText(inviteLink(s.code)); setCopiedLink(true); } catch { setCopiedLink(false); } }}>{copiedLink ? 'Link copied' : 'Copy invite link'}</Btn>}
         <span className="small muted">{s.role === 'host' ? 'Give this code to the other players.' : hostSeat ? `Connected to ${hostSeat.name}'s room.` : 'Looking for the host…'}</span>
       </div>
       <div className="lobby-grid">
@@ -148,7 +197,8 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
           )}
           {s.loading && <div className="loadbar"><span>Receiving the game… {s.loading.got}/{s.loading.of}</span><div className="bar" style={{ height: 6 }}><div style={{ width: `${(s.loading.got / s.loading.of) * 100}%`, background: 'var(--gold)' }} /></div></div>}
           {s.status && <p className="warn small">{s.status}</p>}
-          <p className="small muted">Connection: {s.kind === 'online' ? (isHosted() ? 'online (claude.ai room)' : 'online (direct peer-to-peer)') : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
+          <p className="small muted">Connection: {s.kind === 'online' ? (isHosted() ? 'online (claude.ai room)' : connectionText(s)) : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
+          {s.role === 'host' && s.info() && <HostPaths s={s} />}
           {s.role === 'guest' && !hostSeat && <p className="warn small">The host isn't visible in this room yet. Check the code matches exactly, and that the host's lobby also says “online”. If it still doesn't appear after a few seconds, leave and join again.</p>}
           {s.role === 'host' && !guests.length && <p className="small muted">Waiting for players. Each player opens this same page, clicks Online multiplayer → Join and types the code. They appear here as soon as they join.</p>}
         </div>

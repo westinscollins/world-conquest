@@ -37,19 +37,28 @@ npm run balance -- serbia 5 15   # headless 15-year world simulation report
 Main menu → **Online multiplayer**. The host clicks **Create room** and shares the 6-letter code; others click **Join** and type it. Everyone picks a different nation, then the host starts. All players run the same deterministic simulation in lockstep: the host owns the clock and orders every event; guests' orders go to the host and come back in the shared stream; lost messages are re-sent and a checksum mismatch triggers a full resync. Players can rejoin with the same code.
 
 How players connect depends on where the game runs:
-- **Public website (GitHub Pages or any other host):** direct peer-to-peer connections (WebRTC via [PeerJS](https://peerjs.com/) and its free public signalling server). Anyone with the link and the room code can join — no sign-in or approval.
+- **Public website (GitHub Pages or any other host):** the host listens on three paths at once and each guest uses the best one that works on their network:
+  1. **Direct** WebRTC peer-to-peer (via [PeerJS](https://peerjs.com/), STUN and the free PeerJS TURN relays over UDP and TCP). Fastest.
+  2. **Matchmaking-server tunnel:** messages ride the PeerJS signalling connection itself (HTTPS, port 443), for school and office networks that block WebRTC.
+  3. **MQTT relay** over secure WebSockets to public brokers (port 443 first), if the matchmaking server is unreachable.
+
+  Relayed messages are end-to-end encrypted (AES-GCM) with a key derived from the room code. The host re-registers automatically after drops, sleep or network changes; closing the lobby window keeps the room open; **Copy invite link** shares a link that fills in the code; **Check my network** shows which paths the current network allows. Anyone with the link and the room code can join — no sign-in or approval.
 - **Inside claude.ai (Artifact):** the claude.ai live room. Players must be signed in and have the page shared with them with edit/contribute access; public-link visitors cannot join.
-- **Tests:** `?transport=local` connects tabs of one browser (BroadcastChannel). `node tests/e2e/peer-server.mjs` runs a local PeerJS server; append `?peerhost=127.0.0.1:9000` to test real WebRTC offline.
+- **Tests:** `?transport=local` connects tabs of one browser (BroadcastChannel). Offline stand-ins for the public services: `node tests/e2e/peer-server.mjs` (PeerJS) and `node tests/e2e/mqtt-broker.mjs` (MQTT); then add `?peerhost=127.0.0.1:9000&relay=ws://127.0.0.1:8090/mqtt`. `&net=direct|server|mqtt` forces one path and `&netsim=noice` makes WebRTC fail. The **Live multiplayer check** GitHub workflow runs real two-browser games against the real public services after every deploy.
 
 ```bash
-npm run dev &                     # then:
-node tests/e2e/multiplayer.mjs    # two-tab test over ?transport=local
-node tests/e2e/peer-server.mjs &  # local signalling server, then:
-node tests/e2e/multiplayer.mjs http://localhost:5173/ '?peerhost=127.0.0.1:9000'
+npm run dev &                                   # then:
+node tests/e2e/multiplayer.mjs                  # two-tab test over ?transport=local
+node tests/e2e/peer-server.mjs & node tests/e2e/mqtt-broker.mjs &
+Q='?peerhost=127.0.0.1:9000&relay=ws://127.0.0.1:8090/mqtt'
+EXPECT_VIA=direct node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q"
+EXPECT_VIA=server node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q&netsim=noice"
+EXPECT_VIA=mqtt   node tests/e2e/multiplayer.mjs http://localhost:5173/ "$Q&net=mqtt"
+node tests/e2e/mp-errors.mjs && node tests/e2e/mp-reconnect.mjs
 ```
 
 ## Controls
-Drag to pan, scroll to zoom. **Left-click** selects a province or army. **Right-click** orders the selected army to move or attack, or the selected fleet to sail. **Space** pauses, **1–3** set the speed, **Esc** closes panels.
+Drag to pan, scroll to zoom. **Left-click** selects a province or army. **Right-click** orders the selected army to move or attack, or the selected fleet to sail. **Space** pauses, **+ / −** change the speed, **Esc** closes panels.
 
 ## Storage note
 Saves live in this browser's IndexedDB (with a localStorage fallback). Clearing site data deletes them, so use **Menu → Export save file** to keep a portable copy.

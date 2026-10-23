@@ -1,7 +1,13 @@
 // Network transport. Inside claude.ai this is the viewer's live `room` capability; on any other
 // website (e.g. GitHub Pages) players connect peer-to-peer via PeerJS; `?transport=local` selects a
 // BroadcastChannel stand-in that connects tabs of one browser (automated tests).
-import { joinPeerRoom } from './peer';
+import { joinStar, type JoinProgress } from './join';
+import type { NetInfo } from './star';
+import { probeBroker } from './relay';
+import { DEFAULT_BROKERS } from './config';
+/** Test hook for the live network check (tests/e2e/live.mjs). */
+if (typeof window !== 'undefined') (window as unknown as { __wcNet: unknown }).__wcNet = { probeBroker, brokers: DEFAULT_BROKERS };
+export type { JoinProgress, NetInfo };
 
 export interface NetMessage { topic: string; data: unknown; peer: string; isMe: boolean; sameTab: boolean }
 export interface NetPeer { peer: string; isMe: boolean; sameTab: boolean; presence: Record<string, unknown> }
@@ -15,6 +21,8 @@ export interface NetRoom {
   onPeers(fn: (peers: readonly NetPeer[], joined: readonly NetPeer[], left: readonly NetPeer[]) => void): () => void;
   connected(): boolean;
   leave(): Promise<void>;
+  /** Connection details for the lobby (public-site rooms only). */
+  info?(): NetInfo;
 }
 
 /** Topics the game sends on (must match the artifact's room declaration). */
@@ -70,7 +78,7 @@ function wantsLocal() {
   return typeof location !== 'undefined' && new URLSearchParams(location.search).get('transport') === 'local';
 }
 
-export async function joinRoom(name: string, role: 'host' | 'guest'): Promise<NetRoom> {
+export async function joinRoom(name: string, role: 'host' | 'guest', opts: { onProgress?: (p: JoinProgress) => void; onChanged?: () => void } = {}): Promise<NetRoom> {
   const api = await onlineApi();
   if (api) {
     let r: Awaited<ReturnType<RoomApi['join']>>;
@@ -94,7 +102,7 @@ export async function joinRoom(name: string, role: 'host' | 'guest'): Promise<Ne
   }
   if (isHosted()) throw new Error('Online play is not available to you on this page (see the note above).');
   if (wantsLocal()) return new LocalRoom(name);
-  return joinPeerRoom(name, role);
+  return joinStar(name, role, opts.onProgress, opts.onChanged);
 }
 
 /** Fallback over the page's main room: every message and presence carries the room name and others are ignored. */

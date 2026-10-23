@@ -1,6 +1,6 @@
 // Two-player end-to-end test over the same-browser transport (two tabs, one browser context).
 import { chromium } from 'playwright';
-const out = '/tmp/claude-0/-home-user/8dcb43f4-76f0-504b-8b6a-1730a5403a56/scratchpad';
+const out = process.env.SHOTS || '/tmp/claude-0/-home-user/8dcb43f4-76f0-504b-8b6a-1730a5403a56/scratchpad';
 const url = (process.argv[2] || 'http://localhost:5173/') + (process.argv[3] || '?transport=local');
 const b = await chromium.launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 860 } });
@@ -24,7 +24,12 @@ await B.click('text=Online multiplayer');
 await B.fill('#mp-name', 'Bob');
 await B.fill('#mp-code', code);
 await B.click('button:has-text("Join")');
-await B.waitForSelector('text=Connected to Alice');
+await B.waitForSelector('text=Connected to Alice', { timeout: 40000 });
+{
+  const via = await B.evaluate(() => window.__wc.net?.info?.()?.via ?? 'n/a');
+  console.log('   guest connected via', via);
+  if (process.env.EXPECT_VIA) ok(`connected via ${process.env.EXPECT_VIA}`, via === process.env.EXPECT_VIA);
+}
 await B.fill('#nation-search', 'poland');
 ok('guest cannot pick the host\'s nation', await B.locator('.np-row:has-text("Poland")').isDisabled());
 await B.fill('#nation-search', 'germany'); await B.click('.np-row:has-text("Germany")');
@@ -54,7 +59,7 @@ ok(`identical state after play (${ha} vs ${hb})`, ha === hb && !ha.startsWith('0
 await A.evaluate(() => window.__wc.cmd('doTreaty', ['DEU', 'trade']));
 await B.waitForTimeout(1500);
 await B.click('.nav-btn:has-text("Diplomacy")'); await B.click('.tab:has-text("Proposals")');
-await B.click('.offer:has-text("trade") button:has-text("Accept")');
+await B.click('.offer:has-text("Poland"):has-text("trade") button:has-text("Accept")');
 for (let i = 0; i < 20 && !(await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade)); i++) await A.waitForTimeout(250);
 ok('trade treaty between the two players', await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade));
 await B.screenshot({ path: out + '/mp-guest.png' });
@@ -77,3 +82,4 @@ ok(`identical state after lossy play (${h2a} vs ${h2b})`, h2a === h2b);
 await A.screenshot({ path: out + '/mp-host.png' });
 console.log(fails ? `${fails} FAILED` : 'ALL PASSED', errs.length ? '\nERRORS:\n' + errs.join('\n') : '');
 await b.close();
+process.exit(fails ? 1 : 0);

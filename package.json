@@ -29,6 +29,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "aedes": "^0.51.3",
     "d3-delaunay": "^6.0.4",
     "d3-geo": "^3.1.1",
     "peer": "^1.0.2",

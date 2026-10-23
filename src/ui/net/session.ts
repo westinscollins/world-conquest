@@ -11,7 +11,7 @@
 import type { GameState } from '../../engine/types';
 import { runCommand, stateHash } from '../../engine/commands';
 import { tick } from '../../engine/sim';
-import { joinRoom, MAX_MSG, type NetRoom, type NetPeer, type NetMessage } from './transport';
+import { joinRoom, MAX_MSG, type NetRoom, type NetPeer, type NetMessage, type JoinProgress } from './transport';
 import { saveCode, fromSaveCode } from '../storage';
 
 export type Ev = ['t'] | ['c', string, string, string, unknown[], string?] | ['h', number, string] | ['sp', number];
@@ -33,6 +33,10 @@ export interface SessionHooks {
 export function netError(e: unknown, what: string): string {
   const code = (e as { code?: string })?.code ?? '';
   if (code === 'not_permitted') return `${what}: your access to this page is view-only. Ask the owner to share it with you with permission to edit or contribute, then reload.`;
+  if (code === 'not_found') return `No open game with that code. Check the code with your host, and make sure their game is still showing the lobby (not closed or asleep).`;
+  if (code === 'unreachable') return `Found the host's game, but your networks wouldn't let the two computers connect, and the relay servers didn't answer either. Run the network check below, try again in a minute, or join from another network (for example a phone hotspot).`;
+  if (code === 'network') return `${what}: couldn't reach the matchmaking server or any relay. Check your internet connection, or run the network check below to see what this network blocks.`;
+  if (code === 'id_taken') return `${what}: that room code is in use. Try again for a new code.`;
   if (code === 'not_granted' || code === 'revoked') return `${what}: you can't connect to this page's online rooms. You must be signed in to claude.ai and have access to the page (ask the owner to share it with you), then reload.`;
   return `${what}: ${(e as Error)?.message || 'connection problem'}.`;
 }
@@ -51,6 +55,8 @@ export class Session {
   status = '';
   loading: { got: number; of: number } | null = null;
   desyncs = 0;
+  /** Guest: how far joining has got (for the lobby). */
+  progress: JoinProgress | null = null;
   private hooks: SessionHooks;
   private unsub: (() => void)[] = [];
   // host state
@@ -59,6 +65,7 @@ export class Session {
   private history = new Map<number, Batch>();
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private seatOf = new Map<string, string>(); // peer -> nation (host's authority)
+  private away = new Set<string>();             // seated peers that disconnected
   private sending = 0;
   private resumeSpeed = 0;
   // guest state
@@ -78,10 +85,11 @@ export class Session {
   get kind() { return this.room?.kind ?? 'local'; }
   connected() { return this.room?.connected() ?? false; }
   get myPeer() { return this.room?.myPeer() ?? ''; }
+  info() { return this.room?.info?.() ?? null; }
 
   async open() {
     for (let attempt = 0; ; attempt++) {
-      try { this.room = await joinRoom(`wc-${this.code}`, this.role); break; }
+      try { this.room = await joinRoom(`wc-${this.code}`, this.role, { onProgress: (p) => { this.progress = p; this.hooks.onChange(); }, onChanged: () => this.hooks.onChange() }); break; }
       catch (e) {
         // public peer ids are global: if this code is taken, the host simply picks another
         if (this.role === 'host' && (e as { code?: string }).code === 'id_taken' && attempt < 3) { this.code = newRoomCode(); continue; }
@@ -125,11 +133,17 @@ export class Session {
       else if (joined.some((p) => p.peer === this.hostPeer) && this.status.startsWith('The host')) { this.status = ''; this.requestSnapshot(); }
     } else {
       const g = this.hooks.getGame();
+      for (const p of left) if (this.seatOf.has(p.peer)) this.away.add(p.peer);
       for (const p of left) { const n = this.seatOf.get(p.peer); if (n && prevOnline.has(p.peer)) this.hooks.toast(`${String(p.presence?.name ?? 'A player')} (${g?.nations[n]?.name ?? n}) disconnected. Their nation waits; you can hand it to the AI from the menu.`, 'bad'); }
       // a player re-joining a running game for a nation that is human-controlled gets the game
       if (g && this.phase === 'playing') {
         for (const s of this.seats) {
-          if (s.role !== 'guest' || !s.nation || this.seatOf.get(s.peer) === s.nation) continue;
+          if (s.role !== 'guest' || !s.nation) continue;
+          if (this.seatOf.get(s.peer) === s.nation) {
+            // the same player came back (same tab after a reload or a dropped connection): resend the game
+            if (this.away.delete(s.peer)) { this.hooks.toast(`${s.name} reconnected as ${g.nations[s.nation]?.name}.`, 'good'); void this.sendSnapshot(s.peer); }
+            continue;
+          }
           if (g.players.includes(s.nation) && ![...this.seatOf.entries()].some(([peer, n]) => n === s.nation && this.seats.some((x) => x.peer === peer))) {
             this.seatOf.set(s.peer, s.nation);
             this.hooks.toast(`${s.name} rejoined as ${g.nations[s.nation].name}.`, 'good');

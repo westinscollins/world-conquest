@@ -1,0 +1,40 @@
+name: Live multiplayer check
+
+# Two real browsers on a GitHub machine join each other on the deployed site, through the real
+# public matchmaking server, WebRTC and MQTT relays. Runs after every deploy, or on demand.
+on:
+  workflow_run:
+    workflows: [Deploy to GitHub Pages]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Site to test
+        default: https://westinscollins.github.io/world-conquest/
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Wait for the new deploy to be served
+        run: sleep 45
+      - name: Live check
+        run: node tests/e2e/live.mjs "${{ github.event.inputs.url || 'https://westinscollins.github.io/world-conquest/' }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-shots
+          path: live-shots
+          if-no-files-found: ignore

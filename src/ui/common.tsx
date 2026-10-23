@@ -49,9 +49,9 @@ export function Stat({ label, value, tip, tone }: { label: string; value: ReactN
   return tip ? <Tip tip={tip}>{inner}</Tip> : inner;
 }
 
-export function Modal({ title, onClose, children, wide, className }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean; className?: string }) {
+export function Modal({ title, onClose, children, wide, className, backdropCloses = true }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean; className?: string; backdropCloses?: boolean }) {
   return (
-    <div className="modal-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-back" onMouseDown={(e) => { if (backdropCloses && e.target === e.currentTarget) onClose(); }}>
       <div className={cls('modal', wide && 'wide', className)}>
         <div className="modal-h"><span>{title}</span><button className="iconbtn" onClick={onClose} aria-label="Close"><Icon name="close" /></button></div>
         <div className="modal-b">{children}</div>

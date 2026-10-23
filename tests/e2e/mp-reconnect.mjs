@@ -1,0 +1,31 @@
+// The host's room survives the matchmaking server going away and coming back.
+// Needs: node tests/e2e/peer-server.mjs running (this test restarts it via the PEER_CMD helpers below).
+import { chromium } from 'playwright';
+import { spawn, execSync } from 'node:child_process';
+const base = process.argv[2] || 'http://localhost:5173/';
+const q = '?peerhost=127.0.0.1:9000&relay=none&net=server';
+let fails = 0;
+const ok = (n, c, x = '') => { console.log(c ? 'ok  ' : 'FAIL', n, x); if (!c) fails++; };
+const killPeer = () => { try { execSync("pkill -f '^node tests/e2e/peer-server.mjs'"); } catch { /* not running */ } };
+const startPeer = () => { const p = spawn('node', ['tests/e2e/peer-server.mjs'], { detached: true, stdio: 'ignore' }); p.unref(); };
+const b = await chromium.launch();
+const A = await (await b.newContext()).newPage();
+await A.goto(base + q);
+await A.click('text=Online multiplayer'); await A.fill('#mp-name', 'Host'); await A.click('button:has-text("Create room")');
+await A.waitForSelector('.lobby-code .code');
+const code = await A.locator('.lobby-code .code').innerText();
+killPeer();
+await A.waitForTimeout(2500);
+const offline = await A.evaluate(() => window.__wc.net.info().paths.map((p) => `${p.name}:${p.up}:${p.detail}`).join(','));
+ok('host notices the matchmaking server is gone', /false/.test(offline), offline);
+startPeer();
+await A.waitForTimeout(9000);
+const back = await A.evaluate(() => window.__wc.net.info().paths.map((p) => `${p.name}:${p.up}:${p.detail}`).join(','));
+ok('host re-registers by itself', /true/.test(back), back);
+const B = await (await b.newContext()).newPage();
+await B.goto(base + q);
+await B.click('text=Online multiplayer'); await B.fill('#mp-name', 'Guest'); await B.fill('#mp-code', code); await B.click('button:has-text("Join")');
+await B.waitForSelector('text=Connected to Host', { timeout: 40000 }).then(() => ok('guest joins after the outage', true), () => ok('guest joins after the outage', false));
+await b.close();
+console.log(fails ? `${fails} FAILED` : 'ALL PASSED');
+process.exit(fails ? 1 : 0);

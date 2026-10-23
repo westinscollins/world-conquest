@@ -436,3 +436,4 @@ svg.map.moving { cursor: crosshair; }
 .roster tr.sel td { background: rgba(217,179,92,.12); }
 .roster td, .roster th { padding: 3px 5px; }
 .war-actions.calm { border-color: var(--line); background: rgba(255,255,255,.02); align-items: center; }
+.netcheck { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; } .netcheck table { margin-top: 6px; }

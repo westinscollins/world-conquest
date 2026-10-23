@@ -1,186 +1,275 @@
-// Peer-to-peer transport for the public website build: WebRTC data channels via PeerJS and its
-// free public signalling server. Star topology: the host registers a well-known id derived from
-// the room code; guests connect to it and the host relays every message and presence update.
-import type { NetMessage, NetPeer, NetRoom } from './transport';
+// PeerJS paths for the public website build. One PeerJS connection to the free public
+// matchmaking server (0.peerjs.com, over HTTPS port 443) gives two ways to reach the host:
+//  - direct: a WebRTC data channel (fastest; often blocked on school and office networks)
+//  - server: messages tunnelled through the matchmaking server itself (works anywhere the
+//    matchmaking server is reachable). Tunnelled messages are encrypted with the room key.
+// The host keeps its registration alive: it re-registers after drops, sleep and network changes.
+import { BaseLink, isWire, type Wire } from './wire';
+import type { HostListener, ListenerStatus } from './star';
+import { Batcher, fromB64, open, toB64, type RoomKeys } from './crypt';
+import { TIMING } from './config';
 
-const PREFIX = 'worldconquest-v1-';
-const HEARTBEAT_MS = 2000;
-const TIMEOUT_MS = 8000;
-
-type Wire =
-  | { k: 'ev'; topic: string; data: unknown; from?: string }
-  | { k: 'pres'; presence: Record<string, unknown> }
-  | { k: 'peers'; list: { peer: string; presence: Record<string, unknown> }[] }
-  | { k: 'ping' };
-
-interface Conn { peer: string; open: boolean; send(d: unknown): void; close(): void; on(ev: string, fn: (...a: never[]) => void): void }
-interface PeerLike { id: string; on(ev: string, fn: (...a: never[]) => void): void; connect(id: string, o: object): Conn; destroy(): void }
-
-/** The free public PeerJS server by default; `?peerhost=host:port` points at a self-hosted one (tests). */
-function serverOptions(): Record<string, unknown> {
-  const q = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('peerhost') : null;
-  if (!q) return { debug: 0 };
-  const [host, port] = q.split(':');
-  return { debug: 0, host, port: Number(port || 9000), path: '/', secure: false };
-}
+export const PREFIX = 'worldconquest-v1-';
 
 export class PeerError extends Error { constructor(message: string, public code: string) { super(message); } }
 
-async function makePeer(id?: string): Promise<PeerLike> {
+interface Conn {
+  peer: string; open: boolean; metadata?: { gid?: string }; peerConnection?: RTCPeerConnection;
+  send(d: unknown): void; close(): void; on(ev: string, fn: (...a: never[]) => void): void;
+}
+interface SocketLike { send(m: unknown): void; on(ev: string, fn: (m: never) => void): void; off?(ev: string, fn: (m: never) => void): void }
+interface PeerLike {
+  id: string; open: boolean; disconnected: boolean; destroyed: boolean; socket: SocketLike;
+  on(ev: string, fn: (...a: never[]) => void): void; off?(ev: string, fn?: (...a: never[]) => void): void;
+  connect(id: string, o: object): Conn; reconnect(): void; destroy(): void;
+}
+
+async function newPeer(opts: Record<string, unknown>, id?: string): Promise<PeerLike> {
   const { Peer } = await import('peerjs');
-  const p = (id ? new Peer(id, serverOptions()) : new Peer(serverOptions())) as unknown as PeerLike;
+  return (id ? new Peer(id, opts) : new Peer(opts)) as unknown as PeerLike;
+}
+/** Resolves when the peer is registered with the matchmaking server. */
+function whenOpen(p: PeerLike, ms = TIMING.SIGNAL_OPEN_MS): Promise<void> {
+  if (p.open) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new PeerError('Could not reach the matchmaking server. Check your internet connection and try again.', 'network')), TIMEOUT_MS);
-    p.on('open', () => { clearTimeout(t); resolve(p); });
+    const t = setTimeout(() => reject(new PeerError('Could not reach the matchmaking server.', 'network')), ms);
+    p.on('open', () => { clearTimeout(t); resolve(); });
     p.on('error', ((e: { type?: string }) => {
+      if (p.open) return;
       clearTimeout(t);
-      if (e?.type === 'unavailable-id') reject(new PeerError('That room code is already in use.', 'id_taken'));
-      else reject(new PeerError(`Connection error (${e?.type ?? 'unknown'}).`, e?.type ?? 'network'));
+      reject(new PeerError(e?.type === 'unavailable-id' ? 'That room code is already in use.' : `Matchmaking server error (${e?.type ?? 'unknown'}).`, e?.type === 'unavailable-id' ? 'id_taken' : 'network'));
     }) as never);
   });
 }
 
-export async function joinPeerRoom(name: string, role: 'host' | 'guest'): Promise<NetRoom> {
-  if (role === 'host') {
-    const peer = await makePeer(PREFIX + name);
-    return new PeerRoom(peer, null);
+/** A WebRTC data channel to the other side. */
+class DirectLink extends BaseLink {
+  constructor(peer: string, private conn: Conn) {
+    super(peer, 'direct');
+    conn.on('data', ((d: unknown) => { if (isWire(d)) this.receive(d); }) as never);
+    conn.on('close', () => this.lost());
+    conn.on('error', () => this.lost());
   }
-  const peer = await makePeer();
-  const conn = peer.connect(PREFIX + name, { reliable: true, serialization: 'json' });
-  await new Promise<void>((resolve, reject) => {
-    const fail = () => { peer.destroy(); reject(new PeerError('No game found with that code. Check the code and that the host has the lobby open.', 'not_found')); };
-    const t = setTimeout(fail, TIMEOUT_MS);
-    conn.on('open', () => { clearTimeout(t); resolve(); });
-    peer.on('error', ((e: { type?: string }) => { if (e?.type === 'peer-unavailable') { clearTimeout(t); fail(); } }) as never);
-  });
-  return new PeerRoom(peer, conn);
+  send(w: Wire) { if (!this.closed && this.conn.open) { try { this.conn.send(w); } catch { /* channel closing */ } } }
+  protected shutdown() { try { this.conn.close(); } catch { /* closing */ } }
 }
 
-class PeerRoom implements NetRoom {
-  readonly kind = 'online' as const;
-  private handlers = new Map<string, Set<(m: NetMessage) => void>>();
-  private peerFns = new Set<(p: readonly NetPeer[], j: readonly NetPeer[], l: readonly NetPeer[]) => void>();
-  private mine: Record<string, unknown> = {};
-  private snapshot: readonly NetPeer[] = [];
-  private others = new Map<string, Record<string, unknown>>();   // peer -> presence
-  private guests = new Map<string, { conn: Conn; seen: number }>(); // host only
-  private timer: ReturnType<typeof setInterval>;
-  private up = true;
+/** Messages tunnelled through the matchmaking server's WebSocket. */
+class ServerLink extends BaseLink {
+  private batch: Batcher;
+  constructor(gid: string, private dst: string, key: CryptoKey, getSocket: () => SocketLike | null) {
+    super(gid, 'server');
+    this.batch = new Batcher(key, (b) => getSocket()?.send({ type: 'CANDIDATE', dst: this.dst, payload: { wct: toB64(b) } }), {}, TIMING.BATCH_MS, 9000);
+  }
+  send(w: Wire) { if (!this.closed) this.batch.push(w); }
+  feed(w: Wire) { this.receive(w); }
+  dead() { this.lost(); }
+  protected shutdown() { this.batch.flush(); }
+}
+/** Is this a tunnelled message (and not real WebRTC signalling)? */
+const tunnelled = (m: { type?: string; payload?: { wct?: unknown; connectionId?: unknown } }) => m?.type === 'CANDIDATE' && typeof m.payload?.wct === 'string' && m.payload.connectionId == null;
 
-  constructor(private peer: PeerLike, private host: Conn | null) {
-    if (host) {
-      host.on('data', ((d: Wire) => this.fromHost(d)) as never);
-      host.on('close', () => this.hostGone());
-      host.on('error', () => this.hostGone());
-    } else {
-      peer.on('connection', ((c: Conn) => this.accept(c)) as never);
-    }
-    this.timer = setInterval(() => this.beat(), HEARTBEAT_MS);
-    setTimeout(() => this.rebuild([], []), 0);
-  }
+// ---------------------------------------------------------------- host
+export class PeerHostListener implements HostListener {
+  private peer: PeerLike | null = null;
+  private state: 'connecting' | 'up' | 'reconnecting' | 'down' = 'connecting';
+  private stopped = false;
+  private attempts = 0;
+  private retry: ReturnType<typeof setTimeout> | null = null;
+  private tunnels = new Map<string, ServerLink>(); // guest peer id -> link
+  private add: (l: BaseLink) => void = () => {};
+  private changed: () => void = () => {};
+  private wake = () => { if (this.peer?.disconnected && !this.peer.destroyed) this.reconnectNow(); };
 
-  myPeer() { return this.peer.id; }
-  connected() { return this.up; }
+  constructor(private id: string, private opts: Record<string, unknown>, private keys: RoomKeys, private accept: { direct: boolean; server: boolean }) {}
 
-  async emit(topic: string, data: unknown) {
-    if (JSON.stringify(data ?? null).length > 4096) throw Object.assign(new Error('data over 4 KiB'), { code: 'invalid_argument' });
-    const w: Wire = { k: 'ev', topic, data, from: this.peer.id };
-    if (this.host) { if (this.up) this.host.send(w); }
-    else for (const g of this.guests.values()) if (g.conn.open) g.conn.send(w);
-    setTimeout(() => this.deliver({ topic, data, peer: this.peer.id, isMe: true, sameTab: true }), 0);
-  }
-  on(topic: string, fn: (m: NetMessage) => void) {
-    const set = this.handlers.get(topic) ?? new Set();
-    set.add(fn); this.handlers.set(topic, set);
-    return () => set.delete(fn);
-  }
-  async presence(patch: Record<string, unknown>) {
-    for (const k in patch) { if (patch[k] === null) delete this.mine[k]; else this.mine[k] = patch[k]; }
-    if (this.host) { if (this.up) this.host.send({ k: 'pres', presence: this.mine } satisfies Wire); }
-    else this.broadcastPeers();
-    this.rebuild([], []);
-  }
-  peers() { return this.snapshot; }
-  onPeers(fn: (p: readonly NetPeer[], j: readonly NetPeer[], l: readonly NetPeer[]) => void) {
-    this.peerFns.add(fn);
-    setTimeout(() => fn(this.snapshot, this.snapshot, []), 0);
-    return () => this.peerFns.delete(fn);
-  }
-  async leave() {
-    clearInterval(this.timer);
-    this.up = false;
-    try { this.host?.close(); for (const g of this.guests.values()) g.conn.close(); } catch { /* closing */ }
-    this.peer.destroy();
-  }
-
-  // ---- host side
-  private accept(c: Conn) {
-    c.on('open', () => {
-      this.guests.set(c.peer, { conn: c, seen: Date.now() });
-      this.others.set(c.peer, {});
-      this.broadcastPeers();
-      this.rebuild([c.peer], []);
-    });
-    c.on('data', ((d: Wire) => this.fromGuest(c.peer, d)) as never);
-    c.on('close', () => this.dropGuest(c.peer));
-    c.on('error', () => this.dropGuest(c.peer));
-  }
-  private fromGuest(peer: string, d: Wire) {
-    const g = this.guests.get(peer);
-    if (!g) return;
-    g.seen = Date.now();
-    if (d.k === 'ping') return;
-    if (d.k === 'pres') { this.others.set(peer, d.presence ?? {}); this.broadcastPeers(); this.rebuild([], []); return; }
-    if (d.k === 'ev' && typeof d.topic === 'string') {
-      const w: Wire = { k: 'ev', topic: d.topic, data: d.data, from: peer };
-      for (const [p, o] of this.guests) if (p !== peer && o.conn.open) o.conn.send(w);
-      this.deliver({ topic: d.topic, data: d.data, peer, isMe: false, sameTab: false });
+  async start(add: (l: BaseLink) => void, changed: () => void) {
+    this.add = add; this.changed = changed;
+    await this.create();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this.wake);
+      window.addEventListener('focus', this.wake);
+      window.addEventListener('pageshow', this.wake);
+      document.addEventListener('visibilitychange', this.wake);
     }
   }
-  private dropGuest(peer: string) {
-    if (!this.guests.delete(peer)) return;
-    this.others.delete(peer);
-    this.broadcastPeers();
-    this.rebuild([], [peer]);
+  private async create() {
+    const p = await newPeer(this.opts, this.id);
+    this.peer = p;
+    p.on('connection', ((c: Conn) => this.onConnection(c)) as never);
+    p.on('disconnected', () => { if (this.stopped || p !== this.peer) return; this.state = 'reconnecting'; this.changed(); this.schedule(); });
+    p.on('open', () => { if (p !== this.peer) return; this.state = 'up'; this.attempts = 0; this.changed(); });
+    p.on('error', ((e: { type?: string }) => {
+      if (this.stopped || p !== this.peer || !p.open && this.state === 'connecting') return;
+      if (e?.type === 'peer-unavailable') return; // a tunnelled guest went away
+      if (e?.type === 'unavailable-id') { this.state = 'reconnecting'; this.changed(); this.schedule(true); return; }
+      if (p.disconnected) { this.state = 'reconnecting'; this.changed(); this.schedule(); }
+    }) as never);
+    p.socket.on('message', ((m: { type?: string; src?: string; payload?: { wct?: string } }) => { if (p === this.peer && tunnelled(m)) void this.onTunnel(m.src ?? '', m.payload!.wct!); }) as never);
+    try { await whenOpen(p); this.state = 'up'; this.changed(); }
+    catch (e) { if (this.peer === p) { this.peer = null; p.destroy(); } throw e; }
   }
-  private broadcastPeers() {
-    if (this.host) return;
-    const list = [{ peer: this.peer.id, presence: this.mine }, ...[...this.others].map(([peer, presence]) => ({ peer, presence }))];
-    for (const g of this.guests.values()) if (g.conn.open) g.conn.send({ k: 'peers', list } satisfies Wire);
+  private schedule(recreate = false) {
+    if (this.stopped || this.retry) return;
+    const delay = [500, 1000, 2000, 4000, 8000, 15000][Math.min(this.attempts, 5)];
+    this.attempts++;
+    this.retry = setTimeout(() => {
+      this.retry = null;
+      if (recreate || this.attempts > 4) void this.recreate();
+      else this.reconnectNow();
+    }, delay);
   }
-
-  // ---- guest side
-  private fromHost(d: Wire) {
-    if (d.k === 'ev' && typeof d.topic === 'string') this.deliver({ topic: d.topic, data: d.data, peer: d.from ?? '', isMe: false, sameTab: false });
-    else if (d.k === 'peers' && Array.isArray(d.list)) {
-      const before = new Set(this.others.keys());
-      this.others = new Map(d.list.filter((x) => x.peer !== this.peer.id).map((x) => [x.peer, x.presence ?? {}]));
-      const now = new Set(this.others.keys());
-      this.rebuild([...now].filter((p) => !before.has(p)), [...before].filter((p) => !now.has(p)));
+  private reconnectNow() {
+    const p = this.peer;
+    if (!p || p.destroyed || this.stopped) { void this.recreate(); return; }
+    if (!p.disconnected) return;
+    try { p.reconnect(); } catch { void this.recreate(); return; }
+    // the server re-attaches a known id without a new 'open'; treat a quiet few seconds as success
+    setTimeout(() => { if (this.peer === p && !p.disconnected && this.state !== 'up') { this.state = 'up'; this.attempts = 0; this.changed(); } }, 3000);
+  }
+  private async recreate() {
+    if (this.stopped) return;
+    const old = this.peer;
+    this.peer = null;
+    try { old?.destroy(); } catch { /* gone */ }
+    try { await this.create(); }
+    catch { this.state = 'reconnecting'; this.changed(); this.schedule(true); }
+  }
+  private onConnection(c: Conn) {
+    if (!this.accept.direct) { c.close(); return; }
+    let linked = false;
+    const t = setTimeout(() => { if (!linked) c.close(); }, TIMING.LINK_TIMEOUT_MS);
+    c.on('data', ((d: unknown) => {
+      if (linked || !isWire(d) || d.k !== 'hello' || typeof d.gid !== 'string') return;
+      linked = true; clearTimeout(t);
+      this.add(new DirectLink(d.gid.slice(0, 24), c));
+    }) as never);
+  }
+  private async onTunnel(src: string, data: string) {
+    if (!this.accept.server || !src) return;
+    let bytes: Uint8Array;
+    try { bytes = fromB64(data); } catch { return; }
+    const env = (await open(this.keys.key, bytes)) as { w?: unknown[] } | null;
+    if (!env || !Array.isArray(env.w)) return;
+    let link = this.tunnels.get(src);
+    for (const w of env.w) {
+      if (!isWire(w)) continue;
+      if (!link || link.closed) {
+        if (w.k !== 'hello' || typeof w.gid !== 'string') continue;
+        link = new ServerLink(w.gid.slice(0, 24), src, this.keys.key, () => this.peer?.socket ?? null);
+        this.tunnels.set(src, link);
+        const l = link;
+        link.onClose(() => { if (this.tunnels.get(src) === l) this.tunnels.delete(src); });
+        this.add(link);
+        continue;
+      }
+      link.feed(w);
     }
   }
-  private hostGone() {
-    if (!this.up) return;
-    this.up = false;
-    const gone = [...this.others.keys()];
-    this.others.clear();
-    this.rebuild([], gone);
+  stop() {
+    this.stopped = true;
+    if (this.retry) clearTimeout(this.retry);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.wake);
+      window.removeEventListener('focus', this.wake);
+      window.removeEventListener('pageshow', this.wake);
+      document.removeEventListener('visibilitychange', this.wake);
+    }
+    for (const l of this.tunnels.values()) l.close();
+    this.tunnels.clear();
+    try { this.peer?.destroy(); } catch { /* gone */ }
+    this.peer = null;
+    this.state = 'down';
   }
+  status(): ListenerStatus[] {
+    const up = this.state === 'up' && !!this.peer && !this.peer.disconnected;
+    return [{ name: 'matchmaking server', up, detail: this.state }];
+  }
+}
 
-  private beat() {
-    if (this.host) { if (this.up && this.host.open) this.host.send({ k: 'ping' } satisfies Wire); return; }
-    const now = Date.now();
-    for (const [p, g] of this.guests) if (now - g.seen > TIMEOUT_MS) { g.conn.close(); this.dropGuest(p); }
-  }
-  private rebuild(joined: string[], left: string[]) {
-    const prev = this.snapshot;
-    this.snapshot = Object.freeze([
-      { peer: this.peer.id, isMe: true, sameTab: true, presence: { ...this.mine } },
-      ...[...this.others].map(([peer, presence]) => ({ peer, isMe: false, sameTab: false, presence })),
-    ]);
-    const j = this.snapshot.filter((p) => joined.includes(p.peer));
-    const l = prev.filter((p) => left.includes(p.peer));
-    for (const fn of this.peerFns) fn(this.snapshot, j, l);
-  }
-  private deliver(m: NetMessage) { for (const fn of this.handlers.get(m.topic) ?? []) fn(m); }
+// ---------------------------------------------------------------- guest
+export interface PeerDial {
+  direct: Promise<DirectLink> | null;
+  server: Promise<ServerLink> | null;
+  /** Resolves 'notfound' if the server says nobody holds the host id, 'network' if it is unreachable. */
+  signal: Promise<'ok' | 'notfound' | 'network'>;
+  /** The direct path got an answer from the host (so it exists but the networks could not connect). */
+  answered(): boolean;
+  /** Stop everything except the chosen link. */
+  finish(keep: 'direct' | 'server' | null): void;
+}
+export function dialPeer(hostId: string, opts: Record<string, unknown>, keys: RoomKeys, gid: string, name: string, use: { direct: boolean; server: boolean }): PeerDial {
+  let peer: PeerLike | null = null;
+  let conn: Conn | null = null;
+  let answered = false, finished = false;
+  let helloTimer: ReturnType<typeof setInterval> | null = null;
+  let tunnel: ServerLink | null = null;
+  let signalResolve: (v: 'ok' | 'notfound' | 'network') => void = () => {};
+  const signal = new Promise<'ok' | 'notfound' | 'network'>((r) => { signalResolve = r; });
+  const ready = newPeer(opts).then(async (p) => { peer = p; await whenOpen(p); return p; });
+  ready.catch(() => signalResolve('network'));
+
+  const direct = use.direct ? new Promise<DirectLink>((resolve, reject) => {
+    ready.then((p) => {
+      if (finished) return;
+      const c = p.connect(hostId, { reliable: true, serialization: 'json', metadata: { gid } });
+      conn = c;
+      const t = setTimeout(() => reject(new PeerError(answered ? 'direct connection blocked' : 'no answer', answered ? 'unreachable' : 'not_found')), TIMING.JOIN_BUDGET_MS);
+      const watchAnswer = setInterval(() => { if (c.peerConnection?.remoteDescription) { answered = true; clearInterval(watchAnswer); } }, 250);
+      c.on('open', () => { c.send({ k: 'hello', gid, name } satisfies Wire); });
+      c.on('data', ((d: unknown) => {
+        if (isWire(d) && d.k === 'welcome') { clearTimeout(t); clearInterval(watchAnswer); resolve(new DirectLink(String(d.gid ?? 'host'), c)); }
+      }) as never);
+      c.on('error', () => { clearTimeout(t); clearInterval(watchAnswer); reject(new PeerError('direct connection failed', 'unreachable')); });
+      c.on('iceStateChanged', ((s: string) => { if (s === 'failed') { clearTimeout(t); clearInterval(watchAnswer); reject(new PeerError('direct connection blocked', 'unreachable')); } }) as never);
+      p.on('error', ((e: { type?: string }) => { if (e?.type === 'peer-unavailable' && !answered) { clearTimeout(t); clearInterval(watchAnswer); reject(new PeerError('no such room', 'not_found')); } }) as never);
+    }, (e) => reject(e));
+  }) : null;
+
+  const server = use.server ? new Promise<ServerLink>((resolve, reject) => {
+    ready.then((p) => {
+      if (finished) return;
+      const link = new ServerLink('host', hostId, keys.key, () => (peer && !peer.destroyed ? peer.socket : null));
+      tunnel = link;
+      let welcomed = false;
+      p.socket.on('message', (async (m: { type?: string; src?: string; payload?: { wct?: string } }) => {
+        if (!tunnelled(m) || m.src !== hostId) return;
+        let bytes: Uint8Array;
+        try { bytes = fromB64(m.payload!.wct!); } catch { return; }
+        const env = (await open(keys.key, bytes)) as { w?: unknown[] } | null;
+        if (!env || !Array.isArray(env.w)) return;
+        for (const w of env.w) {
+          if (!isWire(w)) continue;
+          if (!welcomed && w.k === 'welcome') { welcomed = true; link.peer = String(w.gid ?? 'host'); if (helloTimer) clearInterval(helloTimer); signalResolve('ok'); resolve(link); }
+          else if (welcomed) link.feed(w);
+        }
+      }) as never);
+      const say = () => link.send({ k: 'hello', gid, name });
+      say();
+      helloTimer = setInterval(say, TIMING.HELLO_EVERY_MS);
+      // the server answers EXPIRE (peer-unavailable) when nobody holds the host id
+      let unavailable = 0;
+      const giveUp = setTimeout(() => { if (!welcomed) { if (helloTimer) clearInterval(helloTimer); reject(new PeerError('no answer from the host', 'not_found')); } }, TIMING.JOIN_BUDGET_MS);
+      p.on('error', ((e: { type?: string }) => {
+        if (e?.type !== 'peer-unavailable' || welcomed || ++unavailable < 1) return;
+        // the server could not deliver our hello: nobody holds this room code right now
+        signalResolve('notfound');
+        clearTimeout(giveUp);
+        if (helloTimer) clearInterval(helloTimer);
+        reject(new PeerError('no such room', 'not_found'));
+      }) as never);
+    }, (e) => reject(e));
+  }) : null;
+
+  return {
+    direct, server, signal,
+    answered: () => answered,
+    finish(keep) {
+      finished = true;
+      if (helloTimer) clearInterval(helloTimer);
+      if (keep !== 'direct') { try { conn?.close(); } catch { /* closing */ } }
+      if (keep !== 'server') tunnel?.dead();
+      if (!keep) { void ready.then((p) => p.destroy(), () => {}); }
+    },
+  };
 }
