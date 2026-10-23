@@ -1,7 +1,7 @@
 // Two-player end-to-end test over the same-browser transport (two tabs, one browser context).
 import { chromium } from 'playwright';
 const out = '/tmp/claude-0/-home-user/8dcb43f4-76f0-504b-8b6a-1730a5403a56/scratchpad';
-const url = process.argv[2] || 'http://localhost:5173/';
+const url = (process.argv[2] || 'http://localhost:5173/') + (process.argv[3] || '?transport=local');
 const b = await chromium.launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 860 } });
 const A = await ctx.newPage(), B = await ctx.newPage();
@@ -59,7 +59,7 @@ await A.waitForTimeout(800);
 ok('trade treaty between the two players', await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade));
 await B.screenshot({ path: out + '/mp-guest.png' });
 // guest reconnects over a lossy link (20% of messages dropped)
-await B.goto(url + '?netdrop=0.2');
+await B.goto(url + '&netdrop=0.2');
 await A.waitForTimeout(3500);
 await B.click('text=Online multiplayer'); await B.fill('#mp-name', 'Bob'); await B.fill('#mp-code', code); await B.click('button:has-text("Join")');
 await B.waitForSelector('text=Connected to Alice');

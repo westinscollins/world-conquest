@@ -3,7 +3,7 @@ import { store, createSession, useStore } from './store';
 import { Modal, Btn } from './common';
 import { NationPicker } from './NationPicker';
 import { newRoomCode, netError, type Session } from './net/session';
-import { transportKind } from './net/transport';
+import { transportKind, isHosted } from './net/transport';
 import { newGame } from '../engine/setup';
 import { listSaves, loadGame } from './storage';
 import type { SaveMeta } from '../engine/save';
@@ -19,7 +19,7 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   useStore();
   const [name, setName] = useState(savedName());
   const [code, setCode] = useState('');
-  const [kind, setKind] = useState<'online' | 'local' | 'unavailable' | undefined>(undefined);
+  const [kind, setKind] = useState<'online' | 'p2p' | 'local' | 'unavailable' | undefined>(undefined);
   const [session, setSession] = useState<Session | null>(store.net);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -53,10 +53,12 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Online multiplayer" onClose={closeAll} wide>
       {kind === undefined && <p className="muted">Checking the connection…</p>}
-      {kind === 'unavailable' && <div className="error"><b>Online play isn't available to you on this page.</b> To connect, you must be signed in to claude.ai and the game must be shared with you with permission to edit or contribute (the owner sets this in the page's Share menu). Ask the person who shared it to check your access, then reload the page.</div>}
+      {kind === 'unavailable' && !isHosted() && <div className="error"><b>Online play isn't available in this browser.</b> It needs WebRTC, which this browser doesn't support or has turned off. Try an up-to-date Chrome, Edge, Firefox or Safari.</div>}
+      {kind === 'p2p' && <p className="note small">Players connect directly to each other. Anyone with this page's link and your room code can join, with no sign-in or approval.</p>}
+      {kind === 'unavailable' && isHosted() && <div className="error"><b>Online play isn't available to you on this page.</b> To connect, you must be signed in to claude.ai and the game must be shared with you with permission to edit or contribute (the owner sets this in the page's Share menu). Ask the person who shared it to check your access, then reload the page.</div>}
       {kind === 'local' && <p className="note small">Local test mode: this copy of the game is not on the hosted page, so players can only connect from other tabs of this same browser. On the hosted page, players on different computers connect through the room code.</p>}
       {err && <div className="error">{err}</div>}
-      {!session && (kind === 'online' || kind === 'local') && (
+      {!session && (kind === 'online' || kind === 'p2p' || kind === 'local') && (
         <div className="mp-start">
           <label className="mp-field">Your name<input id="mp-name" maxLength={24} value={name} placeholder="e.g. Alex" onChange={(e) => setName(e.target.value)} /></label>
           <div className="mp-choice">
@@ -74,7 +76,9 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           </div>
-          <p className="small muted">Everyone plays in real time on one shared clock. Anyone can pause; the host saves the game. To play from different computers, the other players need access to this page: share it from its Share menu with permission to edit or contribute.</p>
+          {kind === 'p2p'
+            ? <p className="small muted">Everyone plays in real time on one shared clock. Anyone can pause; the host saves the game. Send the other players this page's link and the room code.</p>
+            : <p className="small muted">Everyone plays in real time on one shared clock. Anyone can pause; the host saves the game. To play from different computers, the other players need access to this page: share it from its Share menu with permission to edit or contribute.</p>}
         </div>
       )}
       {session && <Lobby s={session} source={source} setSource={setSource} saves={saves} onLeave={leave} setErr={setErr} />}
@@ -144,7 +148,7 @@ function Lobby({ s, source, setSource, saves, onLeave, setErr }: { s: Session; s
           )}
           {s.loading && <div className="loadbar"><span>Receiving the game… {s.loading.got}/{s.loading.of}</span><div className="bar" style={{ height: 6 }}><div style={{ width: `${(s.loading.got / s.loading.of) * 100}%`, background: 'var(--gold)' }} /></div></div>}
           {s.status && <p className="warn small">{s.status}</p>}
-          <p className="small muted">Connection: {s.kind === 'online' ? 'online' : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
+          <p className="small muted">Connection: {s.kind === 'online' ? (isHosted() ? 'online (claude.ai room)' : 'online (direct peer-to-peer)') : 'local test mode (tabs of this browser only)'} · {seats.length} in this room{s.connected() ? '' : ' · reconnecting…'}</p>
           {s.role === 'guest' && !hostSeat && <p className="warn small">The host isn't visible in this room yet. Check the code matches exactly, and that the host's lobby also says “online”. If it still doesn't appear after a few seconds, leave and join again.</p>}
           {s.role === 'host' && !guests.length && <p className="small muted">Waiting for players. Each player opens this same page, clicks Online multiplayer → Join and types the code. They appear here as soon as they join.</p>}
         </div>

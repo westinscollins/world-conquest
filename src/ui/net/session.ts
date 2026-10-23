@@ -80,7 +80,14 @@ export class Session {
   get myPeer() { return this.room?.myPeer() ?? ''; }
 
   async open() {
-    this.room = await joinRoom(`wc-${this.code}`);
+    for (let attempt = 0; ; attempt++) {
+      try { this.room = await joinRoom(`wc-${this.code}`, this.role); break; }
+      catch (e) {
+        // public peer ids are global: if this code is taken, the host simply picks another
+        if (this.role === 'host' && (e as { code?: string }).code === 'id_taken' && attempt < 3) { this.code = newRoomCode(); continue; }
+        throw e;
+      }
+    }
     this.unsub.push(this.room.onPeers((peers, joined, left) => this.peersChanged(peers, joined, left)));
     this.unsub.push(this.room.on('step', (m) => this.onStep(m)));
     this.unsub.push(this.room.on('cmd', (m) => this.onCmd(m)));

@@ -4,6 +4,8 @@ A browser grand-strategy war game: start as a small nation in a fractured 2040 a
 through economics, logistics, diplomacy and war. React + TypeScript + Vite, with a deterministic
 simulation engine kept separate from the UI.
 
+**Play online:** https://westinscollins.github.io/world-conquest/ (deployed automatically from `main` by GitHub Actions).
+
 ```bash
 npm install
 npm run dev        # http://localhost:5173
@@ -26,6 +28,21 @@ npm run balance -- serbia 5 15   # headless 15-year world simulation report
 - **Campaigns.** A guided tutorial (Serbia), five standard starts (small, regional, industrial, large-army and isolated nations), a hard survival start, and custom setup: victory type (domination, economic, regional hegemony, survival, custom objective), alternate-history setting, treasury and seed. Also achievements, statistics, a history timeline and world rankings.
 - **Saves.** Autosave every 30 days, a quick-save slot, three manual slots and import/export to a JSON file. Saves are versioned with migrations, and the RNG state is saved too, so a reloaded game plays out identically.
 - **Audio.** Original music generated in code with the Web Audio API: separate menu, peace and war moods, crossfaded by game state. Sound effects are synthesized too. No audio files and nothing copyrighted.
+
+## Online multiplayer
+Main menu → **Online multiplayer**. The host clicks **Create room** and shares the 6-letter code; others click **Join** and type it. Everyone picks a different nation, then the host starts. All players run the same deterministic simulation in lockstep: the host owns the clock and orders every event; guests' orders go to the host and come back in the shared stream; lost messages are re-sent and a checksum mismatch triggers a full resync. Players can rejoin with the same code.
+
+How players connect depends on where the game runs:
+- **Public website (GitHub Pages or any other host):** direct peer-to-peer connections (WebRTC via [PeerJS](https://peerjs.com/) and its free public signalling server). Anyone with the link and the room code can join — no sign-in or approval.
+- **Inside claude.ai (Artifact):** the claude.ai live room. Players must be signed in and have the page shared with them with edit/contribute access; public-link visitors cannot join.
+- **Tests:** `?transport=local` connects tabs of one browser (BroadcastChannel). `node tests/e2e/peer-server.mjs` runs a local PeerJS server; append `?peerhost=127.0.0.1:9000` to test real WebRTC offline.
+
+```bash
+npm run dev &                     # then:
+node tests/e2e/multiplayer.mjs    # two-tab test over ?transport=local
+node tests/e2e/peer-server.mjs &  # local signalling server, then:
+node tests/e2e/multiplayer.mjs http://localhost:5173/ '?peerhost=127.0.0.1:9000'
+```
 
 ## Controls
 Drag to pan, scroll to zoom. **Left-click** selects a province or army. **Right-click** orders the selected army to move or attack, or the selected fleet to sail. **Space** pauses, **1–3** set the speed, **Esc** closes panels.

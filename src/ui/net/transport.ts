@@ -1,5 +1,7 @@
-// Network transport. On the hosted page this is the viewer's live `room` capability; anywhere
-// else (local dev, tests) a BroadcastChannel stand-in connects tabs of the same browser.
+// Network transport. Inside claude.ai this is the viewer's live `room` capability; on any other
+// website (e.g. GitHub Pages) players connect peer-to-peer via PeerJS; `?transport=local` selects a
+// BroadcastChannel stand-in that connects tabs of one browser (automated tests).
+import { joinPeerRoom } from './peer';
 
 export interface NetMessage { topic: string; data: unknown; peer: string; isMe: boolean; sameTab: boolean }
 export interface NetPeer { peer: string; isMe: boolean; sameTab: boolean; presence: Record<string, unknown> }
@@ -58,13 +60,17 @@ export function isHosted() {
  * viewer cannot connect to the room — never silently fall back to local there, or players end up
  * in separate private rooms and cannot see each other).
  */
-export async function transportKind(): Promise<'online' | 'local' | 'unavailable'> {
+export async function transportKind(): Promise<'online' | 'p2p' | 'local' | 'unavailable'> {
   if (await onlineApi()) return 'online';
   if (isHosted()) return 'unavailable';
-  return typeof BroadcastChannel !== 'undefined' ? 'local' : 'unavailable';
+  if (wantsLocal()) return typeof BroadcastChannel !== 'undefined' ? 'local' : 'unavailable';
+  return typeof RTCPeerConnection !== 'undefined' ? 'p2p' : 'unavailable';
+}
+function wantsLocal() {
+  return typeof location !== 'undefined' && new URLSearchParams(location.search).get('transport') === 'local';
 }
 
-export async function joinRoom(name: string): Promise<NetRoom> {
+export async function joinRoom(name: string, role: 'host' | 'guest'): Promise<NetRoom> {
   const api = await onlineApi();
   if (api) {
     let r: Awaited<ReturnType<RoomApi['join']>>;
@@ -87,7 +93,8 @@ export async function joinRoom(name: string): Promise<NetRoom> {
     };
   }
   if (isHosted()) throw new Error('Online play is not available to you on this page (see the note above).');
-  return new LocalRoom(name);
+  if (wantsLocal()) return new LocalRoom(name);
+  return joinPeerRoom(name, role);
 }
 
 /** Fallback over the page's main room: every message and presence carries the room name and others are ignored. */
