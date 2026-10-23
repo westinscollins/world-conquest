@@ -18,6 +18,7 @@ import { setController, resistanceMonthly } from './territory';
 import { relationsWeekly, updateWarScore, checkCapitulation } from './diplomacy';
 import { seaTransportDaily, fleetsDaily, shipyardDaily } from './naval';
 import { strategicDaily } from './strikes';
+import { eventsDaily } from './policy';
 import { aiWeekly, aiArmiesDaily, armyAutomation } from './ai';
 import { dateOf, addEvent } from './events';
 import { checkVictory, checkAchievements } from './victory';
@@ -44,6 +45,7 @@ export function tick(s: GameState) {
     trainingDaily(s, n);
     shipyardDaily(s, n);
     strategicDaily(s, n);
+    eventsDaily(s, n);
     constructionDaily(s, n);
     researchDaily(s, n);
   }

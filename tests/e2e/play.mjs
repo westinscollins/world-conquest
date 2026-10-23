@@ -13,6 +13,7 @@ const st = (fn) => page.evaluate(fn);
 await page.goto(url);
 await step('start tutorial', async () => { await page.click('text=Tutorial: The Belgrade Accord'); await page.click('text=Begin campaign'); await page.waitForSelector('.topbar'); });
 await step('economy panel', async () => { await page.click('.nav-btn:has-text("Economy")'); await page.waitForSelector('.ledger'); await page.screenshot({ path: out + '/p-economy.png' }); });
+await step('government tab', async () => { await page.click('.tab:has-text("Government")'); await page.click('.policy-opts button:has-text("Free market")'); const ok = await st(() => window.__wc.game.nations[window.__wc.game.player].gov.policies.economy === 'market'); if (!ok) throw new Error('policy not set'); await page.click('.tab:has-text("Budget")'); });
 await step('industry tab', async () => { await page.click('.tab:has-text("Industry")'); await page.waitForSelector('td:has-text("Armored Brigade")'); });
 await step('research', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tech.avail button:has-text("Research") >> nth=0'); await page.screenshot({ path: out + '/p-research.png' }); });
 await step('build road', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tab:has-text("Construction")'); await page.click('.build-item:has-text("Highway") button:has-text("Build")'); });

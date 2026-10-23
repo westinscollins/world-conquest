@@ -14,6 +14,7 @@ import { ResearchPanel, StatsPanel, HelpPanel } from './panels/OtherPanels';
 import { fmtDate } from '../engine/events';
 import { focusProvince } from './commands';
 import { TUTORIAL } from '../engine/tutorial';
+import { EVENTS } from '../engine/policy';
 import { cls } from './format';
 import { audio } from '../audio/music';
 
@@ -185,6 +186,32 @@ export function ConfirmDialog() {
         <Btn kind={c.danger ? 'danger' : 'primary'} onClick={() => { close(); c.onOk(); }}>Confirm</Btn>
       </div>
     </Modal>
+  );
+}
+
+/** A national event waiting for the player's decision (time keeps running). */
+export function DecisionCard() {
+  const { g } = useStore();
+  const [min, setMin] = useState(false);
+  const e = g?.nations[g.player]?.gov?.event;
+  if (!g || !e) return null;
+  const spec = EVENTS[e.kind];
+  if (!spec) return null;
+  const n = g.nations[g.player];
+  return (
+    <div className={cls('decision-card', min && 'min')} style={g.tutorial && !g.tutorial.done ? { top: 280 } : undefined}>
+      <div className="row"><h4>{spec.title}</h4><div style={{ flex: 1 }} /><span className="small muted">{Math.max(0, e.deadline - g.day)}d to decide</span><button className="iconbtn small" onClick={() => setMin(!min)}>{min ? '▴' : '▾'}</button></div>
+      {!min && (
+        <>
+          <p style={{ margin: '4px 0' }}>{spec.text(g, n, e)}</p>
+          {spec.options.map((o, i) => (
+            <button key={i} className="btn opt" onClick={() => { const r = store.cmd('doAnswerEvent', [i]); if (r && !r.ok) store.toast(r.message, 'bad'); }}>
+              {o.label}<small>{o.desc}{i === 0 ? ' (chosen automatically if you wait)' : ''}</small>
+            </button>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

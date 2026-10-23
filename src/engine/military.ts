@@ -4,6 +4,7 @@ import { PROV, distKm, isStrait, landLinks } from './geo';
 import { atWar, isFriendly, invalidateArmies, armiesIn } from './world';
 import { addEvent } from './events';
 import { provinceWeather } from './weather';
+import { govMods, focusOf } from './policy';
 
 // ---------------------------------------------------------------- unit economics (all derived from config)
 export function equipValue(type: UnitType): number {
@@ -206,7 +207,7 @@ export function trainDays(type: UnitType, n?: Nation) { return Math.round(UNITS[
 
 export interface RecruitCheck { ok: boolean; reason?: string; cost: number; manpower: number; days: number; upkeep: number; }
 export function checkRecruit(s: GameState, n: Nation, type: UnitType, province: number): RecruitCheck {
-  const cost = recruitCost(type, n);
+  const cost = recruitCost(type, n) * (n.gov ? govMods(s, n).recruit : 1) * (focusOf(s.provinces[province]) === 'military' ? 0.85 : 1);
   const sp = UNITS[type];
   const res: RecruitCheck = { ok: true, cost, manpower: sp.personnel, days: trainDays(type, n), upkeep: unitUpkeep(type, n) };
   const p = s.provinces[province];
@@ -259,7 +260,7 @@ export function reinforceDaily(s: GameState, a: Army, n: Nation) {
     const orgMax = (0.55 + 0.45 * n.mobilization) * Math.min(1, 0.4 + 0.6 * supplied) * n.techMods.organisation;
     u.org = Math.min(Math.min(1, orgMax), u.org + MIL.ORG_REGEN * (0.5 + 0.5 * supplied));
     if (u.org > orgMax) u.org = Math.max(orgMax, u.org - 0.02);
-    const moraleTarget = 0.35 + 0.35 * (n.stability / 100) + 0.2 * supplied + 0.1 * (n.warSupport / 100);
+    const moraleTarget = 0.35 + 0.35 * (n.stability / 100) + 0.2 * supplied + 0.1 * (n.warSupport / 100) + (n.gov ? govMods(s, n).morale : 0);
     u.morale += (moraleTarget - u.morale) * 0.03;
     if (supplied < 0.5) continue;
     // personnel

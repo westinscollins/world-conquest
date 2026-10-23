@@ -4,6 +4,7 @@ import { PROV, isCoastal } from './geo';
 import { ownedBy, peekRel, isAtWar, enemiesOf, alliesOf, diploVersionNow } from './world';
 import { unitUpkeep, shipUpkeep, unitOpsCostPerDay, GENERAL_SALARY, totalFactories, armySupplyDemand } from './military';
 import { addEvent, fmtDate } from './events';
+import { govMods, focusOf, sanctionLoss, govMonthly, aiGovernment } from './policy';
 
 export const RES_KINDS: ResourceKind[] = ['food', 'steel', 'oil', 'rare'];
 
@@ -12,13 +13,16 @@ export function provinceOutput(s: GameState, p: ProvinceState, n?: Nation): numb
   const b = p.buildings;
   let flat = 0;
   for (const k in BUILDINGS) flat += BUILDINGS[k as BuildingKind].output * b[k as BuildingKind];
+  const focus = focusOf(p);
+  if (focus === 'industry') flat += BUILDINGS.factory.output * b.factory * 0.3;
   const base = (p.pop / 1e6) * p.dev * (1 + 0.12 * b.power);
   const statusMult = ECON.STATUS_OUTPUT[p.status] ?? 1;
   const resist = 1 - p.resistance / 250;
   const ctrl = p.controller === p.owner ? 1 : 0.1; // enemy-held provinces produce almost nothing for the owner
   const stab = n ? 0.85 + 0.15 * (n.stability / 100) : 1;
   const mob = n ? 1 - (1 - ECON.MOBILIZED_OUTPUT) * n.mobilization : 1;
-  return (base + flat) * (1 - 0.75 * p.damage) * statusMult * resist * ctrl * stab * mob;
+  const gov = n ? govMods(s, n).output : 1;
+  return (base + flat) * (1 - 0.75 * p.damage) * statusMult * resist * ctrl * stab * mob * gov * (focus === 'commerce' ? 1.06 : 1);
 }
 
 export function infraOf(p: ProvinceState) {
@@ -30,7 +34,8 @@ export function resourceYield(p: ProvinceState, kind: ResourceKind): number {
   let lvl = g.resources[kind];
   if (kind === 'food') lvl += p.buildings.farm;
   if (lvl <= 0) return 0;
-  const mineBoost = kind === 'food' ? 1 : 1 + 0.5 * p.buildings.mine;
+  const f = focusOf(p);
+  const mineBoost = (kind === 'food' ? 1 : 1 + 0.5 * p.buildings.mine) * (f === 'agriculture' && kind === 'food' ? 1.5 : f === 'industry' && kind === 'steel' ? 1.3 : 1);
   const area = Math.sqrt(Math.max(0.05, g.areaKm / 100000));
   return lvl * RESOURCE[kind].perLevel * area * mineBoost * (1 - 0.6 * p.damage) * (p.controller === p.owner ? 1 : 0) * (ECON.STATUS_OUTPUT[p.status] ?? 1);
 }
@@ -107,7 +112,7 @@ export function aggregate(s: GameState, n: Nation, armiesByOwner: Map<string, nu
     const p = s.provinces[id];
     const out = provinceOutput(s, p, n);
     agg.output += out;
-    agg.taxBase += out * (ECON.STATUS_TAX[p.status] ?? 1);
+    agg.taxBase += out * (ECON.STATUS_TAX[p.status] ?? 1) * (focusOf(p) === 'commerce' ? 1.1 : 1);
     if (p.status !== 'core') { agg.nonCore++; agg.nonCoreOutput += out; }
     if (p.status === 'autonomous') agg.autonomousOutput += out;
     for (const k in BUILDINGS) agg.buildingUpkeep += BUILDINGS[k as BuildingKind].upkeep * p.buildings[k as BuildingKind];
@@ -133,7 +138,9 @@ export function aggregate(s: GameState, n: Nation, armiesByOwner: Map<string, nu
     for (const k in f.ships) agg.navalUpkeep += shipUpkeep(k as never, n) * f.ships[k as keyof typeof f.ships];
   }
   agg.navalUpkeep *= 1 + (ECON.MOBILIZED_UPKEEP - 1) * n.mobilization;
-  agg.upkeepUnits *= 1 + (ECON.MOBILIZED_UPKEEP - 1) * n.mobilization;
+  const gm = govMods(s, n);
+  agg.upkeepUnits *= (1 + (ECON.MOBILIZED_UPKEEP - 1) * n.mobilization) * gm.upkeep;
+  agg.opsDaily *= gm.ops;
   agg.generals = generalsOf(s, n.id);
   return agg;
 }
@@ -147,7 +154,8 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
   const income: LedgerLine[] = [];
   const expenses: LedgerLine[] = [];
   const pi = n.priceIndex;
-  const eff = collectionEfficiency(n);
+  const gm = govMods(s, n);
+  const eff = collectionEfficiency(n) * gm.taxEff;
   const tax = agg.taxBase * n.taxRate * eff;
   income.push({ key: 'tax', label: 'Tax revenue', amount: tax, detail: `${fmt(agg.taxBase)} taxable output × ${(n.taxRate * 100).toFixed(0)}% rate × ${(eff * 100).toFixed(0)}% collection efficiency` });
 
@@ -161,7 +169,10 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
     trade += Math.min(ECON.TRADE_SHARE * Math.min(agg.output, other.budget.output || agg.output), ECON.TRADE_MAX_PARTNER * agg.output);
   }
   if (atWarNow) trade *= ECON.WAR_TRADE_PENALTY;
-  if (trade > 0) income.push({ key: 'trade', label: 'Trade agreements', amount: trade, detail: atWarNow ? 'Halved by wartime disruption' : 'Bilateral trade with partners' });
+  const sanc = sanctionLoss(s, n.id);
+  trade *= gm.trade * (1 - sanc);
+  if (trade > 0) income.push({ key: 'trade', label: 'Trade agreements', amount: trade, detail: `${atWarNow ? 'Halved by wartime disruption' : 'Bilateral trade with partners'}${gm.trade !== 1 ? ` · trade policy ×${gm.trade}` : ''}${sanc ? ` · −${Math.round(sanc * 100)}% from sanctions` : ''}` });
+  if (gm.tariff > 0) income.push({ key: 'tariffs', label: 'Customs tariffs', amount: gm.tariff * agg.output, detail: 'Protectionist trade policy' });
 
   // resources
   const demand: Record<ResourceKind, number> = {
@@ -181,13 +192,14 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
       n.shortages[r] = 0;
       if (outlet) exports += net * price * 0.8;
     } else if (outlet && n.treasury > 0 && !n.bankrupt) {
-      imports += -net * price * 1.1 * pi;
+      imports += -net * price * 1.1 * pi * gm.imports;
       n.shortages[r] = 0;
     } else {
       n.shortages[r] = Math.min(1, -net / Math.max(1, demand[r]));
     }
   }
   if (embargo) expenses.push({ key: 'embargo', label: 'Global embargo (nuclear use)', amount: agg.output * 0.12 * pi, detail: `Lost commerce, frozen assets and capital flight until ${fmtDate(s, n.embargoUntil)}. No trade, imports or treaties.` });
+  exports *= 1 - sanc;
   if (exports > 0) income.push({ key: 'exports', label: 'Resource exports', amount: exports, detail: 'Surplus food, steel, oil and rare metals sold at 80% of world price' });
 
   // subjects / reparations
@@ -199,11 +211,11 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
   if (repIn > 0) income.push({ key: 'repIn', label: 'War reparations received', amount: repIn });
 
   // ---- expenses
-  const services = ECON.SERVICES_SHARE * agg.output * pi;
-  expenses.push({ key: 'services', label: 'Civilian services', amount: services, detail: `${(ECON.SERVICES_SHARE * 100).toFixed(0)}% of output: health, education, policing` });
+  const services = ECON.SERVICES_SHARE * agg.output * pi * gm.services;
+  expenses.push({ key: 'services', label: 'Civilian services', amount: services, detail: `${(ECON.SERVICES_SHARE * 100).toFixed(0)}% of output: health, education, policing · spending level ${Math.round(n.gov.services * 100)}%${Math.abs(gm.services / n.gov.services - 1) > 0.001 ? ` · policies ×${(gm.services / n.gov.services).toFixed(2)}` : ''}` });
   const nprov = Math.max(1, agg.owned.length);
   const sizeF = Math.pow(1 + nprov / 25, ECON.ADMIN_EXP);
-  const admin = ECON.ADMIN_SHARE * agg.output * sizeF * n.techMods.adminCost * pi;
+  const admin = ECON.ADMIN_SHARE * agg.output * sizeF * n.techMods.adminCost * pi * gm.admin;
   expenses.push({ key: 'admin', label: 'Administration', amount: admin, detail: `${(ECON.ADMIN_SHARE * 100).toFixed(1)}% of output × realm-size factor ${sizeF.toFixed(2)} (${nprov} provinces)` });
   if (agg.nonCore > 0) {
     const occ = (agg.nonCore * ECON.OCCUPATION_FLAT + (agg.nonCoreOutput - agg.autonomousOutput) * ECON.OCCUPATION_SHARE + agg.autonomousOutput * ECON.AUTONOMY_SHARE) * pi;
@@ -286,24 +298,26 @@ export function repay(s: GameState, n: Nation, amount: number): string | null {
 export function monthlyEconomy(s: GameState, n: Nation, agg: NationAgg) {
   const atWarNow = isAtWar(s, n.id);
   // productivity growth with ceiling (no infinite growth)
-  const growth = ECON.BASE_GROWTH + n.techMods.growth - ECON.TAX_GROWTH_PENALTY * (n.taxRate - ECON.BASE_TAX) + (n.stability - 55) / 3000 - (atWarNow ? 0.006 : 0) - (n.bankrupt ? 0.03 : 0);
+  const gm = govMods(s, n);
+  const growth = ECON.BASE_GROWTH + gm.growth + n.techMods.growth - ECON.TAX_GROWTH_PENALTY * (n.taxRate - ECON.BASE_TAX) + (n.stability - 55) / 3000 - (atWarNow ? 0.006 : 0) - (n.bankrupt ? 0.03 : 0);
   for (const id of agg.owned) {
     const p = s.provinces[id];
     const cap = p.dev0 * (ECON.DEV_CAP_BASE + ECON.DEV_CAP_PER_INFRA * p.infra);
     const g = growth - p.damage * 0.04 - (p.status === 'core' ? 0 : 0.01);
     p.dev = Math.max(p.dev0 * 0.5, Math.min(cap, p.dev * (1 + g / 12)));
-    p.pop *= 1 + (ECON.POP_GROWTH - (n.shortages.food > 0.2 ? 0.01 : 0)) / 12;
+    p.pop *= 1 + (ECON.POP_GROWTH + gm.popGrowth - (n.shortages.food > 0.2 ? 0.01 : 0)) / 12;
     // slow natural recovery of damage
     p.damage = Math.max(0, p.damage - 0.004);
   }
   // stability
   const foodBonus = n.resourceNet.food > 0 ? Math.min(4, n.resourceNet.food / 20) : -n.shortages.food * 25;
   const deficit = n.budget.net < 0 ? Math.min(15, (-n.budget.net / Math.max(1, n.budget.output)) * 150) : 0;
-  const target = 72 - (n.taxRate - ECON.BASE_TAX) * 130 - n.warExhaustion * 0.35 + foodBonus - deficit - n.infamy * 0.08 - (n.bankrupt ? 30 : 0) - (agg.nonCore / Math.max(1, agg.owned.length)) * 12 - Math.max(0, n.priceIndex - 1.1) * 40;
+  const farms = Math.min(5, agg.owned.filter((id) => focusOf(s.provinces[id]) === 'agriculture').length * 0.5);
+  const target = 72 + gm.stability + farms - (n.taxRate - ECON.BASE_TAX) * 130 - n.warExhaustion * 0.35 + foodBonus - deficit - n.infamy * 0.08 - (n.bankrupt ? 30 : 0) - (agg.nonCore / Math.max(1, agg.owned.length)) * 12 - Math.max(0, n.priceIndex - 1.1) * 40;
   n.stability += (Math.max(0, Math.min(100, target)) - n.stability) * 0.12;
   n.stability = Math.max(0, Math.min(100, n.stability));
   // war support
-  const wsTarget = atWarNow ? 70 - n.warExhaustion * 0.6 : 55;
+  const wsTarget = (atWarNow ? 70 - n.warExhaustion * 0.6 : 55) + gm.warSupport;
   n.warSupport += (wsTarget - n.warSupport) * 0.1;
   // war exhaustion decays in peace
   if (!atWarNow) n.warExhaustion = Math.max(0, n.warExhaustion - 2.5);
@@ -315,9 +329,11 @@ export function monthlyEconomy(s: GameState, n: Nation, agg: NationAgg) {
   if (defRatio > ECON.INFLATION_THRESHOLD || n.debt / out > 1.0) n.priceIndex += (ECON.INFLATION_RATE * Math.max(0, defRatio - ECON.INFLATION_THRESHOLD) + Math.max(0, n.debt / out - 1) * 0.02) / 12;
   else n.priceIndex = Math.max(1, n.priceIndex - (ECON.DEFLATION_RATE / 12) * (n.priceIndex - 1) - 0.0005);
   // manpower
-  const pop = agg.owned.reduce((t, id) => t + (s.provinces[id].status === 'core' ? s.provinces[id].pop : s.provinces[id].pop * 0.25), 0);
+  const pop = agg.owned.reduce((t, id) => { const q = s.provinces[id]; return t + (q.status === 'core' ? q.pop : q.pop * 0.25) * (focusOf(q) === 'military' ? 2 : 1); }, 0) * gm.manpower;
   const cap = pop * (ECON.MANPOWER_SHARE + (ECON.MOBILIZED_MANPOWER_SHARE - ECON.MANPOWER_SHARE) * n.mobilization);
   n.manpower = Math.min(cap, n.manpower + (pop * ECON.MANPOWER_REGEN) / 12);
+  govMonthly(s, n);
+  if (!n.isPlayer) aiGovernment(s, n);
   if (n.bankrupt) n.stability = Math.max(0, n.stability - 4);
   // stats & history
   n.stats.peakProvinces = Math.max(n.stats.peakProvinces, agg.owned.length);
@@ -358,7 +374,7 @@ export function buildCost(s: GameState, n: Nation, province: number, kind: Const
     return { ok: p.damage > 0.02, reason: p.damage > 0.02 ? undefined : 'No significant damage.', cost, days: Math.round(60 + p.damage * 200), upkeep: 0, effect: `Repair ${Math.round(p.damage * 100)}% war damage` };
   }
   if (kind === 'develop') {
-    const cost = (DEVELOP.cost + (p.pop / 1e6) * p.dev * 0.04) * pi;
+    const cost = (DEVELOP.cost + (p.pop / 1e6) * p.dev * 0.04) * pi * govMods(s, n).construction;
     const capped = p.dev >= p.dev0 * (ECON.DEV_CAP_BASE + ECON.DEV_CAP_PER_INFRA * p.infra) * 0.98;
     return { ok: !capped, reason: capped ? 'Productivity at ceiling for current infrastructure.' : undefined, cost, days: DEVELOP.days, upkeep: 0, effect: `+${DEVELOP.boost * 100}% productivity (+${fmt((p.pop / 1e6) * p.dev * DEVELOP.boost)}/yr output)` };
   }
@@ -376,7 +392,7 @@ export function buildCost(s: GameState, n: Nation, province: number, kind: Const
   if (spec.needsCoast && !isCoastal(province)) reason = 'Requires a coastline.';
   if (kind === 'mine' && PROV[province].resources.steel + PROV[province].resources.oil + PROV[province].resources.rare === 0) reason = 'No extractable resources here.';
   if (kind === 'factory' && lvl + queued >= Math.max(2, Math.round(p.pop / 1.5e6) + 1) && lvl + queued >= 2) reason = reason || `Population too small for more factories (needs ${(((lvl + queued) * 1.5)).toFixed(1)}M).`;
-  const cost = spec.cost * (1 + 0.15 * lvl) * pi;
+  const cost = spec.cost * (1 + 0.15 * lvl) * pi * govMods(s, n).construction;
   return { ok: !reason, reason, cost, days: spec.days, upkeep: spec.upkeep, effect: spec.desc };
 }
 

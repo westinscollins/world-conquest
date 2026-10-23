@@ -1,3 +1,4 @@
+import { govMods, registerTechCost } from './policy';
 import type { GameState, Nation, TechMods } from './types';
 import { ECON } from './config';
 import { addEvent } from './events';
@@ -82,7 +83,7 @@ export function researchDaily(s: GameState, n: Nation) {
   }
   const t = TECH_BY_ID[n.research.current];
   if (!t || !canResearch(n, t.id)) { n.research.current = null; return; }
-  n.research.progress += researchRate(s, n) / 365;
+  n.research.progress += (researchRate(s, n) * govMods(s, n).research) / 365;
   if (n.research.progress >= t.cost) {
     n.research.done.push(t.id);
     n.research.progress = 0;
@@ -91,3 +92,5 @@ export function researchDaily(s: GameState, n: Nation) {
     if (n.isPlayer) addEvent(s, 'research', `Research complete: ${t.name} (${t.effect}).`, [n.id], { important: true });
   }
 }
+
+registerTechCost((n) => (n.research.current ? TECH_BY_ID[n.research.current]?.cost ?? 20 : 20));

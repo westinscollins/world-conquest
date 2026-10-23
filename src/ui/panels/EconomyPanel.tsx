@@ -10,17 +10,18 @@ import { ownedBy } from '../../engine/world';
 import { PROV } from '../../engine/geo';
 import type { UnitType } from '../../engine/types';
 import { researchRate } from '../../engine/research';
+import { GovernmentTab } from './GovernmentTab';
 
 export function EconomyPanel() {
   const g = useGame();
-  const [tab, setTab] = useState<'budget' | 'production' | 'resources' | 'projects'>('budget');
+  const [tab, setTab] = useState<'budget' | 'gov' | 'production' | 'resources' | 'projects'>('budget');
   const n = g.nations[g.player];
   if (g.tutorial && !g.tutorial.flags.economy) setTimeout(() => store.act((s) => markTutorial(s, 'economy')), 0);
   const b = n.budget;
   const facs = totalFactories(g, n, ownedBy(g, g.player));
   return (
     <div className="panel-body">
-      <Tabs tabs={[['budget', 'Budget'], ['production', 'Industry'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['budget', 'Budget'], ['gov', 'Government'], ['production', 'Industry'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
       {tab === 'budget' && (
         <>
           <BudgetAdvisor />
@@ -69,6 +70,7 @@ export function EconomyPanel() {
           <Section title="History" icon="chart"><HistoryChart /></Section>
         </>
       )}
+      {tab === 'gov' && <GovernmentTab />}
       {tab === 'production' && (
         <>
           <div className="grid3">

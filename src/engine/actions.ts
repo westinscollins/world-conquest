@@ -2,6 +2,7 @@
  * Player command layer: validates and executes player orders, returning a result the UI can show.
  * UI components call these instead of mutating game state directly.
  */
+import type { PolicyArea, ProvinceFocus } from './types';
 import type { GameState, Posture, Stance, UnitType, BuildingKind, EquipKind, PeaceTerms, ShipType, Army } from './types';
 import { recruit, findPath, assignGeneral, createArmy, deleteArmy, pathDays, armyStrength } from './military';
 import { startConstruction, cancelConstruction, borrow, repay, fmt } from './economy';
@@ -10,8 +11,9 @@ import { setProvinceStatus, releaseSubject } from './territory';
 import { embark, moveFleet, orderShip } from './naval';
 import { PROV } from './geo';
 import { addEvent } from './events';
-import { ECON, UNITS, MIL, STRIKES, NUKE } from './config';
+import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS } from './config';
 import { canResearch } from './research';
+import { setServices, setPolicy, issueDecree, investFund, withdrawFund, setFocus, sendAid, toggleSanction, toggleGuarantee, buildSpyNetwork, spyOp, resolveEvent } from './policy';
 import { buyMunitions, launchStrike, startNuclearProgram, buildWarhead, type StrikeKind } from './strikes';
 import { invalidateArmies, warBetween } from './world';
 
@@ -334,6 +336,21 @@ export function splitHalf(s: GameState, armyId: number): Result {
   if (a.units.length < 2) return fail('Needs at least two formations.');
   return splitArmy(s, armyId, a.units.filter((_, i) => i % 2 === 1).map((u) => u.id));
 }
+
+// ---------------------------------------------------------------- government
+const r0 = (e: string | null, msg: string): Result => (e ? fail(e) : ok(msg));
+export function doSetServices(s: GameState, level: number): Result { return r0(setServices(s, P(s), level), `Public services set to ${Math.round(P(s).gov.services * 100)}%.`); }
+export function doSetPolicy(s: GameState, area: PolicyArea, option: string): Result { return r0(setPolicy(s, P(s), area, option), `${POLICY_AREAS[area]?.label}: ${POLICY_AREAS[area]?.options[option]?.label} adopted (−${POLICY_CHANGE_STABILITY} stability during the transition).`); }
+export function doDecree(s: GameState, id: string): Result { return r0(issueDecree(s, P(s), id), `${DECREES[id]?.label} decreed.`); }
+export function doInvestFund(s: GameState, amount: number): Result { return r0(investFund(s, P(s), amount), `Invested ${fmt(amount)} in the sovereign wealth fund.`); }
+export function doWithdrawFund(s: GameState, amount: number): Result { return r0(withdrawFund(s, P(s), amount), `Withdrew from the sovereign wealth fund (2% fee).`); }
+export function doSetFocus(s: GameState, p: number, focus: ProvinceFocus | null): Result { return r0(setFocus(s, P(s), p, focus), focus ? `${PROV[p].name} now focuses on ${FOCUS[focus].label.toLowerCase()}.` : `${PROV[p].name} has no special focus.`); }
+export function doSendAid(s: GameState, to: string, amount: number): Result { return r0(sendAid(s, P(s), to, amount), `Aid sent to ${s.nations[to]?.name}.`); }
+export function doSanction(s: GameState, to: string): Result { const on = !P(s).gov.sanctions.includes(to); return r0(toggleSanction(s, P(s), to), on ? `Sanctions imposed on ${s.nations[to]?.name}.` : `Sanctions on ${s.nations[to]?.name} lifted.`); }
+export function doGuarantee(s: GameState, to: string): Result { const on = !P(s).gov.guarantees.includes(to); return r0(toggleGuarantee(s, P(s), to), on ? `You now guarantee ${s.nations[to]?.name}'s independence.` : 'Guarantee withdrawn.'); }
+export function doSpyNetwork(s: GameState, to: string): Result { return r0(buildSpyNetwork(s, P(s), to), `Spy network in ${s.nations[to]?.name} expanded to ${Math.round((P(s).gov.spies[to] ?? 0) * 100)}%.`); }
+export function doSpyOp(s: GameState, to: string, op: string): Result { return spyOp(s, P(s), to, op); }
+export function doAnswerEvent(s: GameState, option: number): Result { return r0(resolveEvent(s, P(s), option), 'Decision taken.'); }
 
 export function peaceTermsFor(s: GameState, warId: number): { war: ReturnType<typeof warBetween> } { return { war: s.wars.find((w) => w.id === warId) }; }
 export type { Army };

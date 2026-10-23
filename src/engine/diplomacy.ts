@@ -98,6 +98,14 @@ export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck 
     }
     joinWar(s, war, j, 'defenders');
   }
+  // nations that guaranteed the target's independence
+  for (const g of Object.values(s.nations)) {
+    if (!g.alive || g.id === a.id || !g.gov?.guarantees.includes(targetId) || atWar(s, g.id, a.id)) continue;
+    if (g.isPlayer) {
+      s.proposals.push({ id: s.nextId++, from: targetId, to: g.id, kind: 'callToArms', day: s.day, warId: war.id });
+      addEvent(s, 'diplomacy', `${a.name} attacked ${t.name}, whose independence you guaranteed. Honour the guarantee?`, [g.id, targetId], { important: true });
+    } else joinWar(s, war, g.id, 'defenders');
+  }
   // attacker's allies may join if eager
   for (const j of alliesOf(s, a.id)) {
     const jn = s.nations[j];

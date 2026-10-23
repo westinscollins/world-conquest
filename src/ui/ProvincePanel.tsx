@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { store, useStore } from './store';
 import { PROV, COUNTRY_GEO } from '../engine/geo';
-import { BUILDINGS, TERRAIN, WEATHER, UNITS, ECON } from '../engine/config';
+import { BUILDINGS, TERRAIN, WEATHER, UNITS, ECON, FOCUS, FOCUS_CHANGE_COST } from '../engine/config';
 import { provinceOutput, buildCost, resourceYield, collectionEfficiency } from '../engine/economy';
 import type { GameState, Nation, ProvinceState } from '../engine/types';
 import { provinceWeather } from '../engine/weather';
@@ -9,7 +9,7 @@ import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf } from '../en
 import { supplyMap } from '../engine/supply';
 import { build, doProvinceStatus, doRecruit, doRelease } from '../engine/actions';
 import { checkRecruit, armyStrength, militaryStrength, industryBonus } from '../engine/military';
-import type { BuildingKind, UnitType } from '../engine/types';
+import type { BuildingKind, UnitType, ProvinceFocus } from '../engine/types';
 import { Section, Btn, Tip, Stat, Bar, Tabs } from './common';
 import { Icon } from './icons';
 import { money, moneyIC, num, pct } from './format';
@@ -33,6 +33,7 @@ export function ProvincePanel() {
   const player = g.nations[g.player];
   const rel = peekRel(g, st.owner, g.player);
   const showTabs = mine && st.controller === g.player;
+  const say = (r?: { ok: boolean; message: string }) => r && store.toast(r.message, r.ok ? 'info' : 'bad');
 
   return (
     <div className="side-panel right">
@@ -48,6 +49,15 @@ export function ProvincePanel() {
         {(tab === 'info' || !showTabs) && (
           <>
             {atWar(g, g.player, st.controller) && <WarActions p={p} />}
+            {mine && st.controller === g.player && st.status === 'core' && (
+              <Section title="Regional focus" icon="map" right={<span className="small muted">change costs {money(FOCUS_CHANGE_COST * player.priceIndex)}</span>}>
+                <div className="focus-row">
+                  <button className={`posture${!st.focus ? ' on' : ''}`} onClick={() => st.focus && say(store.cmd('doSetFocus', [p, null]))}>None</button>
+                  {(Object.keys(FOCUS) as ProvinceFocus[]).map((f) => <button key={f} title={FOCUS[f].desc} className={`posture${st.focus === f ? ' on' : ''}`} onClick={() => st.focus !== f && say(store.cmd('doSetFocus', [p, f]))}>{FOCUS[f].label}</button>)}
+                </div>
+                <p className="small muted">{st.focus ? FOCUS[st.focus].desc : 'Give this region a specialisation.'}</p>
+              </Section>
+            )}
             <div className="grid2">
               <Stat label="Terrain" value={<>{TERRAIN[geo.terrain].label}{geo.river ? ' · river' : ''}</>} tip={`Movement ×${TERRAIN[geo.terrain].move}, attacker ×${TERRAIN[geo.terrain].attack}, defender ×${TERRAIN[geo.terrain].defense}, combat width ${TERRAIN[geo.terrain].width}${geo.river ? '. Major river: −15% to attackers.' : ''}`} />
               <Stat label="Weather" value={WEATHER[w].label} tip={`Attack ×${WEATHER[w].attack}, movement ×${WEATHER[w].move}, air ×${WEATHER[w].air}, supply use ×${WEATHER[w].supply}`} />

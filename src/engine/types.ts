@@ -46,7 +46,9 @@ export interface ProvinceState {
   integration: number;    // 0..1 progress when integrating
   capturedDay?: number;
   capturedFrom?: string;
+  focus?: ProvinceFocus;   // regional development focus (core provinces)
 }
+export type ProvinceFocus = 'industry' | 'agriculture' | 'commerce' | 'military';
 
 export interface Unit {
   id: number;
@@ -158,11 +160,27 @@ export interface Nation {
   nukeProgram: number;       // -1 none, >0 days left, 0 = nuclear power
   warheads: number[];        // days left for each ICBM under construction
   embargoUntil: number;      // the world refuses all trade until this day (after using nuclear weapons)
+  gov: Government;
   subjectSince?: number;
   intel: number;             // 0..1 baseline intelligence quality
   lastWarDay: number;
   aiMemory: { targetId?: string; plan?: string; lastDecision?: number; warGoal?: number[] };
   stats: { battlesWon: number; battlesLost: number; casualtiesInflicted: number; casualtiesSuffered: number; provincesCaptured: number; peakProvinces: number; peakOutput: number; };
+}
+
+export type PolicyArea = 'economy' | 'trade' | 'labour' | 'conscription' | 'press';
+export interface Government {
+  services: number;                        // public-services spending level (0.5..1.5, 1 = normal)
+  policies: Record<PolicyArea, string>;
+  policyChanged: Partial<Record<PolicyArea, number>>; // day each area was last changed
+  decrees: Record<string, number>;         // active decree -> expiry day
+  cooldowns: Record<string, number>;       // decree -> day it can be used again
+  fund: number;                            // sovereign wealth fund (M IC)
+  spies: Record<string, number>;           // spy network strength in other nations (0..1)
+  sanctions: string[];                     // nations this one sanctions
+  guarantees: string[];                    // nations whose independence this one guarantees
+  event: null | { kind: string; day: number; deadline: number; province?: number; other?: string };
+  nextEvent: number;                       // day the next national event may happen
 }
 
 export interface TechMods {

@@ -20,6 +20,9 @@ export const COMMANDS = {
   setHumanControl: A.setHumanControl, setAllStances: A.setAllStances, retreatArmy: A.retreatArmy, moveArmies: A.moveArmies,
   doBuyMunitions: A.doBuyMunitions, doStrike: A.doStrike, doNuclearProgram: A.doNuclearProgram, doBuildWarhead: A.doBuildWarhead,
   attackWithAll: A.attackWithAll, queueMove: A.queueMove, splitHalf: A.splitHalf,
+  doSetServices: A.doSetServices, doSetPolicy: A.doSetPolicy, doDecree: A.doDecree, doInvestFund: A.doInvestFund, doWithdrawFund: A.doWithdrawFund,
+  doSetFocus: A.doSetFocus, doSendAid: A.doSendAid, doSanction: A.doSanction, doGuarantee: A.doGuarantee, doSpyNetwork: A.doSpyNetwork,
+  doSpyOp: A.doSpyOp, doAnswerEvent: A.doAnswerEvent,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export const isCommand = (n: string): n is CommandName => Object.prototype.hasOwnProperty.call(COMMANDS, n);

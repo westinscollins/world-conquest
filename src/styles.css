@@ -386,3 +386,26 @@ svg.map.moving { cursor: crosshair; }
 .nuke-box { border: 1px solid rgba(255, 200, 60, .5); background: rgba(80, 60, 0, .15); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
 .eta-label { font-weight: 700; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,.85); stroke-width: 3px; }
 .war-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; margin-bottom: 8px; border: 1px solid rgba(255,100,80,.4); border-radius: 6px; background: rgba(120,20,10,.12); }
+/* ---- government */
+.policy-row { margin-bottom: 8px; }
+.policy-h { margin-bottom: 4px; font-size: 12.5px; }
+.policy-opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.policy-opts .tipwrap { display: block; }
+.policy-opts .posture { height: 100%; font-size: 12px; }
+.policy-opts .posture:disabled { opacity: .45; cursor: not-allowed; }
+.decrees { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.decree { border: 1px solid var(--line2); border-radius: 6px; padding: 6px 8px; font-size: 12.5px; }
+.decree.on { border-color: var(--gold); background: rgba(217,179,92,.08); }
+.statecraft { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.decision-card { position: absolute; top: 66px; left: 76px; width: 380px; background: rgba(20, 24, 33, .97); border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px; z-index: 16; box-shadow: 0 6px 30px rgba(0,0,0,.55); font-size: 12.5px; animation: slidein .2s ease-out; }
+.decision-card h4 { margin: 0 0 4px; color: var(--gold2); font-family: var(--title); font-size: 15px; }
+.decision-card .opt { display: block; width: 100%; text-align: left; margin-top: 6px; }
+.decision-card .opt small { display: block; color: var(--muted); font-weight: 400; }
+.decision-card.min { width: auto; }
+.focus-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.focus-row .posture { font-size: 11.5px; padding: 5px 4px; text-align: center; }
+.diplo-detail { min-width: 0; overflow-x: hidden; }
+.diplo-detail .decrees { grid-template-columns: 1fr; }
+.diplo-detail .statecraft { grid-template-columns: 1fr; gap: 2px; }
+.diplo-detail .statecraft > span:nth-child(odd) { margin-top: 6px; font-weight: 600; }
+.diplo-detail .statecraft .row { flex-wrap: wrap; }

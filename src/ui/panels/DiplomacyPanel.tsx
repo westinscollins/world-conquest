@@ -10,7 +10,7 @@ import { doDeclareWar, doTreaty, doCancelTreaty, doMission, doUltimatum, propose
 import { describeTerms } from '../../engine/ai';
 import { fmtDate } from '../../engine/events';
 import type { PeaceTerms, War } from '../../engine/types';
-import { PERSONALITY } from '../../engine/config';
+import { PERSONALITY, AID_AMOUNTS, SPY } from '../../engine/config';
 import { audio } from '../../audio/music';
 
 export function DiplomacyPanel() {
@@ -126,6 +126,32 @@ function NationDetail({ id }: { id: string }) {
           <p className="small muted">Alliances commit both sides to defensive wars — you will be called to arms if your ally is attacked.</p>
         </Section>
       )}
+      <Section title="Statecraft" icon="globe">
+        <div className="statecraft">
+          <span>Foreign aid</span>
+          <span className="row gap wrap">{AID_AMOUNTS.map((v) => <Btn key={v} small disabled={me.treasury < v} onClick={() => res(store.cmd('doSendAid', [id, v]))}>Send {money(v)}</Btn>)}</span>
+          <span>Sanctions</span>
+          <span className="row gap"><Btn small kind={me.gov.sanctions.includes(id) ? 'danger' : undefined} onClick={() => res(store.cmd('doSanction', [id]))}>{me.gov.sanctions.includes(id) ? 'Lift sanctions' : 'Impose sanctions'}</Btn><span className="small muted">Cuts their trade and export income; ends your trade with them; relations −30.</span></span>
+          <span>Guarantee</span>
+          <span className="row gap"><Btn small kind={me.gov.guarantees.includes(id) ? 'primary' : undefined} disabled={war} onClick={() => res(store.cmd('doGuarantee', [id]))}>{me.gov.guarantees.includes(id) ? 'Withdraw guarantee' : 'Guarantee independence'}</Btn><span className="small muted">If anyone attacks them, you are called to defend them.</span></span>
+        </div>
+      </Section>
+      <Section title="Intelligence" icon="info" right={<span className="small">Network {Math.round((me.gov.spies[id] ?? 0) * 100)}%</span>}>
+        <div className="row gap"><Bar value={me.gov.spies[id] ?? 0} h={6} color="var(--gold)" /><Btn small disabled={(me.gov.spies[id] ?? 0) >= 1 || me.treasury < SPY.NETWORK_COST} onClick={() => res(store.cmd('doSpyNetwork', [id]))}>Expand network ({money(SPY.NETWORK_COST * me.priceIndex)})</Btn></div>
+        <div className="decrees" style={{ marginTop: 6 }}>
+          {Object.entries(SPY.OPS).map(([op, o]) => {
+            const net = me.gov.spies[id] ?? 0;
+            const chance = Math.min(0.9, 0.25 + net * 0.6 - (n.intel - 0.5) * 0.3);
+            return (
+              <div key={op} className="decree">
+                <div className="row gap"><b>{o.label}</b><div style={{ flex: 1 }} /><Btn small disabled={net < o.need} title={net < o.need ? `Needs ${Math.round(o.need * 100)}% network` : ''} onClick={() => res(store.cmd('doSpyOp', [id, op]))}>{net < o.need ? `needs ${Math.round(o.need * 100)}%` : `${money(o.cost * me.priceIndex)} · ${Math.round(chance * 100)}%`}</Btn></div>
+                <div className="small muted">{o.desc}</div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="small muted">Networks decay slowly. Failed operations are exposed: relations −20 and the network is badly damaged.</p>
+      </Section>
       {!war && border.length > 0 && (
         <Section title="Ultimatum" icon="alert">
           <p className="small muted">Demand border provinces. They yield only if they fear your coalition; refusal grants you a casus belli (justified war: smaller stability and infamy penalties).</p>

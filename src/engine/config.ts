@@ -7,7 +7,7 @@
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
@@ -269,3 +269,91 @@ export const NUKE = {
 };
 /** Strategic arsenals at the start (abstracted: each is a usable strategic strike). */
 export const START_NUKES: Record<string, number> = { USA: 40, RUS: 40, CHN: 15, FRA: 8, GBR: 8, IND: 5, PAK: 5, ISR: 3, PRK: 2 };
+
+// ---------------------------------------------------------------- government: policies, decrees, focus, espionage
+/** Effects a policy, decree or focus can have. Multipliers default to 1, additive values to 0. */
+export interface GovEffect {
+  growth?: number;        // + yearly productivity growth
+  stability?: number;     // + stability target
+  warSupport?: number;    // + war support target
+  output?: number;        // × national output
+  services?: number;      // × civilian services cost
+  admin?: number;         // × administration cost
+  taxEff?: number;        // × tax collection
+  trade?: number;         // × trade-agreement income
+  tariff?: number;        // + tariff income as share of output
+  imports?: number;       // × import prices
+  manpower?: number;      // × manpower pool and regrowth
+  morale?: number;        // + troop morale target
+  upkeep?: number;        // × military wages & maintenance
+  recruit?: number;       // × recruitment price
+  research?: number;      // × research speed
+  construction?: number;  // × construction cost
+  ops?: number;           // × field-operations cost
+  popGrowth?: number;     // + yearly population growth
+}
+export interface PolicyOption { label: string; desc: string; effect: GovEffect }
+export const POLICY_AREAS: Record<'economy' | 'trade' | 'labour' | 'conscription' | 'press', { label: string; default: string; options: Record<string, PolicyOption> }> = {
+  economy: { label: 'Economic model', default: 'mixed', options: {
+    market: { label: 'Free market', desc: 'Private enterprise leads. Faster growth and cheaper services, but inequality costs stability.', effect: { growth: 0.004, stability: -3, services: 0.92 } },
+    mixed: { label: 'Mixed economy', desc: 'The balanced default.', effect: {} },
+    planned: { label: 'State planning', desc: 'The state directs industry: cheaper construction and recruitment, slower growth, steadier society.', effect: { growth: -0.003, stability: 3, construction: 0.85, recruit: 0.9, output: 0.98 } },
+  } },
+  trade: { label: 'Trade policy', default: 'balanced', options: {
+    free: { label: 'Free trade', desc: 'No tariffs: trade agreements earn 30% more and imports are cheaper.', effect: { trade: 1.3, imports: 0.92, growth: 0.002 } },
+    balanced: { label: 'Balanced trade', desc: 'Moderate tariffs. The default.', effect: {} },
+    protectionist: { label: 'Protectionism', desc: 'High tariffs raise revenue (1.5% of output) but cut trade income and make imports dear.', effect: { trade: 0.65, tariff: 0.015, imports: 1.25, growth: -0.002 } },
+  } },
+  labour: { label: 'Labour law', default: 'standard', options: {
+    long: { label: 'Long hours', desc: '+5% output, but workers resent it.', effect: { output: 1.05, stability: -7 } },
+    standard: { label: 'Standard week', desc: 'The default.', effect: {} },
+    welfare: { label: 'Welfare state', desc: 'Generous benefits: services cost 25% more, but stability and population growth rise.', effect: { services: 1.25, stability: 8, popGrowth: 0.002 } },
+  } },
+  conscription: { label: 'Conscription', default: 'limited', options: {
+    volunteer: { label: 'Volunteer army', desc: 'Professionals only: 40% less manpower and 10% higher wages, but better morale.', effect: { manpower: 0.6, upkeep: 1.1, morale: 0.08, stability: 2 } },
+    limited: { label: 'Limited conscription', desc: 'The default.', effect: {} },
+    universal: { label: 'Universal service', desc: 'Everyone serves: 80% more manpower, −3% output and some resentment.', effect: { manpower: 1.8, output: 0.97, stability: -3, warSupport: 5 } },
+  } },
+  press: { label: 'Media', default: 'regulated', options: {
+    free: { label: 'Free press', desc: 'Open debate speeds research (+15%) but criticises wars.', effect: { research: 1.15, warSupport: -8, stability: -1 } },
+    regulated: { label: 'Regulated media', desc: 'The default.', effect: {} },
+    state: { label: 'State media', desc: 'Propaganda keeps people loyal and wars popular, but innovation suffers (−10% research).', effect: { research: 0.9, warSupport: 10, stability: 2 } },
+  } },
+};
+export const POLICY_COOLDOWN = 180;       // days before an area can be changed again
+export const POLICY_CHANGE_STABILITY = 3; // stability cost of any change
+export const SERVICES_RANGE = [0.5, 1.5] as const;
+
+export interface DecreeSpec { label: string; desc: string; days: number; cooldown: number; cost: number; warOnly?: boolean; effect?: GovEffect; instant?: { treasury?: number; stability?: number; prices?: number; debtAt?: number } }
+/** Costs are shares of yearly output. Instant effects apply once; `effect` lasts `days`. */
+export const DECREES: Record<string, DecreeSpec> = {
+  austerity: { label: 'Austerity drive', desc: 'Cut services and administration by 15% for a year. Unpopular.', days: 365, cooldown: 540, cost: 0, effect: { services: 0.85, admin: 0.85, stability: -8, growth: -0.002 } },
+  stimulus: { label: 'Stimulus package', desc: 'Pump money into the economy: +1% growth for a year.', days: 365, cooldown: 540, cost: 0.04, effect: { growth: 0.01, stability: 2 } },
+  printMoney: { label: 'Print money', desc: 'Create 5% of output out of thin air. Prices rise 6% at once.', days: 0, cooldown: 365, cost: 0, instant: { treasury: 0.05, prices: 0.06, stability: -2 } },
+  anticorruption: { label: 'Anti-corruption campaign', desc: '+6% tax collection for a year; the purges unsettle the elite.', days: 365, cooldown: 720, cost: 0.015, effect: { taxEff: 1.06, stability: -2 } },
+  propaganda: { label: 'Propaganda campaign', desc: '+15 war support and +3 stability for six months.', days: 180, cooldown: 365, cost: 0.008, effect: { warSupport: 15, stability: 3 } },
+  festival: { label: 'National celebration', desc: 'A national holiday: +6 stability at once.', days: 0, cooldown: 365, cost: 0.01, instant: { stability: 6 } },
+  warBonds: { label: 'War bonds', desc: 'Patriotic citizens lend 8% of output at just 2% interest.', days: 0, cooldown: 365, cost: 0, warOnly: true, instant: { debtAt: 0.08 } },
+  rationing: { label: 'Wartime rationing', desc: 'Field operations cost 25% less for a year; civilians suffer.', days: 365, cooldown: 365, cost: 0, warOnly: true, effect: { ops: 0.75, stability: -5, warSupport: 3 } },
+  buildingDrive: { label: 'Construction drive', desc: 'Construction costs 20% less for a year.', days: 365, cooldown: 540, cost: 0.02, effect: { construction: 0.8 } },
+};
+
+export const FOCUS: Record<'industry' | 'agriculture' | 'commerce' | 'military', { label: string; desc: string }> = {
+  industry: { label: 'Industry', desc: 'Factories here produce 30% more and steel output +30%.' },
+  agriculture: { label: 'Agriculture', desc: 'Food output +50%; well-fed regions are calmer (+0.5 stability each).' },
+  commerce: { label: 'Commerce', desc: 'Markets and services: +6% output and +10% taxes here.' },
+  military: { label: 'Military', desc: 'Garrison region: 2× manpower from here, +40% supply throughput, units recruited here 15% cheaper.' },
+};
+export const FOCUS_CHANGE_COST = 2;  // M IC
+
+export const SPY = {
+  NETWORK_COST: 3, NETWORK_GAIN: 0.2, DECAY_PER_MONTH: 0.01,
+  OPS: {
+    steal: { label: 'Steal technology', need: 0.4, cost: 4, desc: 'Copy their research: +25% progress on your current technology.' },
+    sabotage: { label: 'Sabotage industry', need: 0.4, cost: 5, desc: 'Destroy a factory, power plant or depot in one of their provinces.' },
+    unrest: { label: 'Incite unrest', need: 0.3, cost: 3, desc: 'Fund dissidents: −6 stability for them, +15 resistance in their occupied lands.' },
+    intel: { label: 'Map their military', need: 0.2, cost: 2, desc: 'Better intelligence on them (+15% intel quality for battle estimates).' },
+  } as Record<string, { label: string; need: number; cost: number; desc: string }>,
+};
+
+export const AID_AMOUNTS = [5, 20, 50];

@@ -7,6 +7,7 @@ import { infraOf, aggregate, computeBudget, provinceOutput } from './economy';
 import { createArmy, newUnit, makeGeneral, assignGeneral, unitUpkeep } from './military';
 import { invalidateTerritory, invalidateArmies, invalidateDiplo, rel } from './world';
 import { resetSupplyCache } from './supply';
+import { newGov } from './policy';
 
 export interface Campaign {
   id: string; title: string; nation: string; difficulty: 'tutorial' | 'standard' | 'hard'; role: string; blurb: string;
@@ -78,7 +79,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
       ledgerMonth: { income: 0, expense: 0 }, history: [], overlord: null, bankrupt: false, lastFactories: 0,
       shortages: { food: 0, steel: 0, oil: 0, rare: 0 }, resourceNet: { food: 0, steel: 0, oil: 0, rare: 0 }, reparations: [], claims: {},
       intel: c.income.startsWith('1') ? 0.7 : c.income.startsWith('2') ? 0.6 : 0.45,
-      lastWarDay: -9999, aiMemory: {}, arsenal: { drone: 0, missile: 0, nuke: START_NUKES[c.id] ?? 0 }, nukeProgram: START_NUKES[c.id] ? 0 : -1, warheads: [], embargoUntil: 0,
+      lastWarDay: -9999, aiMemory: {}, arsenal: { drone: 0, missile: 0, nuke: START_NUKES[c.id] ?? 0 }, nukeProgram: START_NUKES[c.id] ? 0 : -1, warheads: [], embargoUntil: 0, gov: newGov(),
       stats: { battlesWon: 0, battlesLost: 0, casualtiesInflicted: 0, casualtiesSuffered: 0, provincesCaptured: 0, peakProvinces: c.provinces.length, peakOutput: output },
     };
     // high-income nations start with some technology

@@ -470,3 +470,63 @@ describe('strikes and strategic weapons', () => {
   });
 });
 function distKmP(s: GameState, p: number) { return Math.min(...ownedBy(s, 'SRB').map((q) => Math.hypot(PROV[q].lat - PROV[p].lat, 0) * 111)); }
+
+describe('government', () => {
+  const line = (s: GameState, k: string) => budgetOf(s, 'SRB').expenses.find((l) => l.key === k)?.amount ?? 0;
+  it('the services slider and policies change the budget; changes have a cooldown', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const base = line(s, 'services');
+    expect(A.doSetServices(s, 0.7).ok).toBe(true);
+    expect(line(s, 'services')).toBeCloseTo(base * 0.7, 3);
+    expect(A.doSetPolicy(s, 'labour', 'welfare').ok).toBe(true);
+    expect(line(s, 'services') / (base * 0.7 * 1.25)).toBeGreaterThan(0.98); // stability dip lowers output slightly
+    expect(A.doSetPolicy(s, 'labour', 'long').ok).toBe(false); // cooldown
+    expect(A.doSetPolicy(s, 'trade', 'protectionist').ok).toBe(true);
+    expect(budgetOf(s, 'SRB').income.some((l) => l.key === 'tariffs')).toBe(true);
+  });
+  it('decrees apply once and then cool down', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const n = s.nations.SRB;
+    const t0 = n.treasury, p0 = n.priceIndex;
+    expect(A.doDecree(s, 'printMoney').ok).toBe(true);
+    expect(n.treasury).toBeGreaterThan(t0);
+    expect(n.priceIndex).toBeGreaterThan(p0);
+    expect(A.doDecree(s, 'printMoney').ok).toBe(false);
+    expect(A.doDecree(s, 'warBonds').ok).toBe(false); // peace
+    const adm = line(s, 'admin');
+    expect(A.doDecree(s, 'austerity').ok).toBe(true);
+    expect(line(s, 'admin')).toBeLessThan(adm);
+  });
+  it('wealth fund grows, province focus changes output, events resolve', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const n = s.nations.SRB;
+    expect(A.doInvestFund(s, 50).ok).toBe(true);
+    runDays(s, 400);
+    expect(n.gov.fund).toBeGreaterThan(50);
+    const p = n.capital;
+    const before = provinceOutput(s, s.provinces[p], n);
+    expect(A.doSetFocus(s, p, 'commerce').ok).toBe(true);
+    expect(provinceOutput(s, s.provinces[p], n)).toBeGreaterThan(before);
+    s.tutorial = null;
+    n.gov.nextEvent = s.day;
+    for (let i = 0; i < 5 && !n.gov.event; i++) tick(s);
+    expect(n.gov.event).not.toBeNull();
+    expect(A.doAnswerEvent(s, 1).ok).toBe(true);
+    expect(n.gov.event).toBeNull();
+  });
+  it('aid, sanctions and spies work through diplomacy', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const r0 = (peekRelT(s, 'SRB', 'HUN'));
+    expect(A.doSendAid(s, 'HUN', 5).ok).toBe(true);
+    expect(peekRelT(s, 'SRB', 'HUN')).toBeGreaterThan(r0);
+    expect(A.doSanction(s, 'HUN').ok).toBe(true);
+    expect(peekRelT(s, 'SRB', 'HUN')).toBeLessThan(r0);
+    expect(A.doSpyOp(s, 'HUN', 'unrest').ok).toBe(false); // no network
+    for (let i = 0; i < 3; i++) A.doSpyNetwork(s, 'HUN');
+    expect(s.nations.SRB.gov.spies.HUN).toBeCloseTo(0.6, 5);
+  });
+});
+import * as A from '../src/engine/actions';
+import { provinceOutput } from '../src/engine/economy';
+import { rel as relOf } from '../src/engine/world';
+function peekRelT(s: GameState, a: string, b: string) { return relOf(s, a, b).value; }
