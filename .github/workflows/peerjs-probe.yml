@@ -20,4 +20,5 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: node tests/e2e/peerjs-probe.mjs 0.peerjs.com
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/e2e/peerjs-matrix.mjs
