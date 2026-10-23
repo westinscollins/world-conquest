@@ -81,9 +81,10 @@ export class HostRoom extends StarBase implements NetRoom {
   changed = () => this.onChanged();
 
   connected() { return this.up && this.listeners.some((l) => l.status().some((s) => s.up)); }
-  async emit(topic: string, data: unknown) {
+  async emit(topic: string, data: unknown, to?: readonly string[]) {
     this.checkSize(data);
     const w: Wire = { k: 'ev', topic, data, from: this.me };
+    if (to) { for (const gid of to) this.sendTo(gid, w); return; } // just for them (e.g. a copy of the game)
     for (const [gid] of this.guests) this.sendTo(gid, w);
     setTimeout(() => this.deliver({ topic, data, peer: this.me, isMe: true, sameTab: true }), 0);
   }

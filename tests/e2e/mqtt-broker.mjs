@@ -16,6 +16,7 @@ export async function startBroker(port = 8090) {
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
   return {
     port,
+    aedes, // (tests drop single clients through it)
     close: () => new Promise((r) => { for (const c of wss.clients) c.terminate(); wss.close(); aedes.close(() => server.close(() => r())); }),
   };
 }

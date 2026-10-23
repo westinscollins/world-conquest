@@ -50,6 +50,17 @@ export function fromB64(s: string): Uint8Array {
   return out;
 }
 
+/** Decrypts incoming envelopes strictly in arrival order (decryptions may finish out of order). */
+export class Inbox {
+  private chain: Promise<void> = Promise.resolve();
+  open(key: CryptoKey, bytes: Uint8Array, fn: (env: unknown) => void) {
+    this.chain = this.chain.then(async () => {
+      const env = await open(key, bytes);
+      if (env) { try { fn(env); } catch (e) { console.error(e); } }
+    }, () => {});
+  }
+}
+
 /**
  * Queues wires and sends them as one encrypted envelope a few milliseconds later, keeping each
  * envelope under `maxBytes` of JSON. Envelopes are sent strictly in order.

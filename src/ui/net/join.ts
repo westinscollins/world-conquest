@@ -45,14 +45,14 @@ export async function joinStar(name: string, role: 'host' | 'guest', onProgress:
   const md = useMqtt ? dialMqtt(cfg.brokers, keys, gid, 'player') : null;
   type Got = { link: Link; kind: 'direct' | 'server' | 'mqtt' };
   const link = await new Promise<Got>((resolve, reject) => {
-    let chosen = false, preferTimer: ReturnType<typeof setTimeout> | null = null;
+    let chosen = false, preferTimer: ReturnType<typeof setInterval> | null = null;
     let relay: Got | null = null;
     const failures = new Map<string, string>();
     const pending = new Set<string>();
     const choose = (g: Got) => {
       if (chosen) return;
       chosen = true;
-      if (preferTimer) clearTimeout(preferTimer);
+      if (preferTimer) clearInterval(preferTimer);
       if (relay && relay !== g) relay.link.close();
       pd?.finish(g.kind === 'direct' || g.kind === 'server' ? g.kind : null);
       if (g.kind !== 'mqtt') md?.cancel();
@@ -81,12 +81,27 @@ export async function joinStar(name: string, role: 'host' | 'guest', onProgress:
         const g = { link: l, kind };
         if (!relay || (relay.kind === 'mqtt' && kind === 'server')) { if (relay) relay.link.close(); relay = g; }
         else l.close();
-        // give the direct link a moment to come up; it is faster than any relay
+        // give the direct link a moment to come up (it is faster than any relay), but only if the
+        // host answered on it: a moment for the answer, a few seconds for the connection itself
         if (!pd?.direct || failures.has('direct')) { choose(relay); return; }
-        if (!preferTimer) preferTimer = setTimeout(() => { if (relay) choose(relay); }, TIMING.PREFER_DIRECT_MS);
+        const since = Date.now();
+        preferTimer ??= setInterval(() => {
+          const waited = Date.now() - since;
+          if (relay && (waited > TIMING.PREFER_DIRECT_MS || (!pd.answered() && waited > 1500))) choose(relay);
+        }, 250);
       }, (e) => {
         pending.delete(kind);
-        failures.set(kind, (e as PeerError)?.code ?? 'network');
+        const code = (e as PeerError)?.code ?? 'network';
+        failures.set(kind, code);
+        // the relay reached its brokers and nobody answered, and the matchmaking server shows no
+        // sign of the host either: no such room (don't wait out the slower paths)
+        if (kind === 'mqtt' && code === 'not_found' && !relay && !chosen && !(pd?.answered() ?? false)) {
+          chosen = true;
+          if (preferTimer) clearInterval(preferTimer);
+          pd?.finish(null);
+          reject(new PeerError('not_found', 'not_found'));
+          return;
+        }
         settle();
       });
     };

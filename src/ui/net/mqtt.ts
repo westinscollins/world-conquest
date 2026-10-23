@@ -93,6 +93,7 @@ export class MqttClient {
   private ws: WebSocket | null = null;
   private reader = new PacketReader();
   private stopPing: (() => void) | null = null;
+  private lastRx = 0;
   private nextId = 1;
   private closedByUs = false;
   up = false;
@@ -126,6 +127,7 @@ export class MqttClient {
         if (was && !this.closedByUs) this.o.onClose?.('closed');
       };
       ws.onmessage = (ev) => {
+        this.lastRx = Date.now();
         const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : typeof ev.data === 'string' ? enc.encode(ev.data) : new Uint8Array(0);
         for (const p of this.reader.push(data)) {
           if (p.type === 2) { // CONNACK
@@ -133,7 +135,11 @@ export class MqttClient {
             if (p.body[1] !== 0) { fail(`refused (${p.body[1]})`); return; }
             this.up = true; settled = true;
             const ka = (this.o.keepalive ?? 60) * 500;
-            this.stopPing = every(ka, () => this.raw(pingPacket()));
+            this.stopPing = every(ka, () => {
+              // the broker answers every ping: silence for three rounds means a dead (half-open) socket
+              if (Date.now() - this.lastRx > ka * 3) { const was = this.up; this.teardown(); if (was && !this.closedByUs) this.o.onClose?.('silent'); return; }
+              this.raw(pingPacket());
+            });
             resolve();
           } else if (p.type === 3) {
             const m = parsePublish(p);

@@ -55,6 +55,25 @@ for (const [name, type, payload] of cases) {
   }, { type, payload, mark });
   say(`- ${r.hit ? '✅' : '❌'} ${name}${r.hit ? ` (${r.ms} ms${r.wct ? ', wct intact' : ''})` : ''} · sender ${r.aOpen ? 'still connected' : '**disconnected**'}${r.aDisc ? ' (disconnected event)' : ''} · next normal message ${r.after ? 'delivered' : 'lost'}${r.back ? ` · sender got ${r.back}` : ''}${r.errs ? ` · errors ${r.errs}` : ''}`);
 }
+// latency of the tunnel shape: a series of messages, each timed
+const lat = await page.evaluate(async () => {
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const P = window.Peer;
+  const mk = () => new Promise((res) => { const p = new P(`wcsl-${Math.random().toString(36).slice(2, 10)}`, { debug: 0 }); p.on('open', () => res(p)); });
+  const [A, B] = await Promise.all([mk(), mk()]);
+  const sent = new Map(), arr = [];
+  B.socket.on('message', (m) => { const k = m.payload?.wct; if (sent.has(k)) arr.push([k, Math.round(performance.now() - sent.get(k))]); });
+  for (let i = 0; i < 12; i++) {
+    const k = `L${i}-` + 'y'.repeat(i % 3 === 0 ? 7000 : 300);
+    sent.set(k, performance.now());
+    A.socket.send({ type: 'CANDIDATE', dst: B.id, payload: { candidate: { candidate: 'candidate:0 1 udp 1 0.0.0.0 9 typ host', sdpMLineIndex: 0, sdpMid: '0' }, type: 'data', connectionId: 'dc_wctunnel', wct: k } });
+    await sleep(300);
+  }
+  await sleep(6000);
+  A.destroy(); B.destroy();
+  return arr.map(([k, ms]) => `${k.split('-')[0]}:${ms}ms`);
+});
+say(`- tunnel-shaped series (12 messages, 300 ms apart, every third 7 KB): ${lat.length}/12 arrived — ${lat.join(' ')}`);
 await b.close();
 console.log(`::notice title=PeerJS shapes::${esc(lines.join('\n'))}`);
 process.exit(0);

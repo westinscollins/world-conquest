@@ -1,6 +1,8 @@
 name: PeerJS probe
 
-# What the public PeerJS matchmaking server relays between two peers (diagnostics; no deploy).
+# Diagnostics on this branch (nothing is deployed): what the public PeerJS server forwards, then
+# the full live multiplayer check against a build of this branch served on the runner, using the
+# real public services.
 on:
   push:
     branches: [probe-peerjs]
@@ -12,7 +14,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,3 +24,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium
       - run: node tests/e2e/peerjs-shapes.mjs
+      - run: npx vite build
+      - name: Serve this build
+        run: (npx vite preview --port 4173 --strictPort > preview.log 2>&1 &) && sleep 5 && curl -sf http://localhost:4173/ > /dev/null
+      - name: Live check of this build
+        run: node tests/e2e/live.mjs http://localhost:4173/
