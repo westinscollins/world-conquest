@@ -20,7 +20,7 @@ for (let i = 0; ; i++) {
   await page.goto(url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now());
   await page.waitForFunction(() => !!window.__wc, null, { timeout: 30000 });
   if (await page.evaluate(() => !!window.__wcNet)) break;
-  if (i >= 16) { say('❌ the deployed site is still the old build after 8 minutes'); process.exit(1); }
+  if (i >= 16) { say('❌ the deployed site is still the old build after 8 minutes'); console.log(`::error title=Live multiplayer report::old build still served`); process.exit(1); }
   await page.waitForTimeout(30000);
 }
 const probes = await page.evaluate(async (extra) => {
@@ -68,7 +68,13 @@ for (const [name, q, via] of scenarios) {
   const fails = out.split('\n').filter((l) => l.startsWith('FAIL'));
   const ok = r.status === 0;
   if (!ok) failed++;
-  say(`- ${ok ? '✅' : '❌'} ${name}${fails.length ? ` — ${fails.join('; ')}` : ''}${!ok && !fails.length ? ` — ${out.split('\n').filter(Boolean).slice(-3).join(' / ')}` : ''}`);
+  say(`- ${ok ? '✅' : '❌'} ${name}${fails.length ? ` — ${fails.join('; ')}` : ''}`);
+  const via = out.match(/guest connected via (\w+)/)?.[1];
+  if (via) say(`  - connected via ${via}`);
+  if (!ok) say(`  - log tail: ${out.split('\n').filter((l) => l.trim() && !l.startsWith('   rejoin')).slice(-6).join(' | ').slice(0, 900)}`);
 }
+// one annotation with the whole report (readable through the GitHub API)
+const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+console.log(`::notice title=Live multiplayer report::${esc(lines.join('\n'))}`);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
 process.exit(failed ? 1 : 0);
