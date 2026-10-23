@@ -1,0 +1,23 @@
+name: PeerJS probe
+
+# What the public PeerJS matchmaking server relays between two peers (diagnostics; no deploy).
+on:
+  push:
+    branches: [probe-peerjs]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: node tests/e2e/peerjs-probe.mjs 0.peerjs.com
