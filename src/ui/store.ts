@@ -10,7 +10,7 @@ import { invalidateArmies, invalidateTerritory, invalidateDiplo } from '../engin
 import { resetSupplyCache } from '../engine/supply';
 import { saveGame } from './storage';
 import { audio } from '../audio/music';
-import { runCommand } from '../engine/commands';
+import { runCommand, stateHash } from '../engine/commands';
 import { Session } from './net/session';
 import type { Result } from '../engine/actions';
 
@@ -266,3 +266,5 @@ export function useGame(): GameState {
 
 // exposed for automated browser tests and debugging
 if (typeof window !== 'undefined') (window as unknown as { __wc: Store }).__wc = store;
+/** Test hook: `${day}:${checksum}` of the running game (used by the live multiplayer test). */
+if (typeof window !== 'undefined') (window as unknown as { __wcHash: () => string }).__wcHash = () => (store.game ? `${store.game.day}:${stateHash(store.game)}` : '0:');

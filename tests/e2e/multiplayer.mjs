@@ -9,7 +9,7 @@ const errs = [];
 for (const [n, p] of [['A', A], ['B', B]]) { p.on('pageerror', (e) => errs.push(`${n}: ${e.message}`)); p.on('console', (m) => m.type() === 'error' && errs.push(`${n}: ${m.text()}`)); }
 let fails = 0;
 const ok = (name, c) => { console.log(c ? 'ok  ' : 'FAIL', name); if (!c) fails++; };
-const hash = (p) => p.evaluate(async () => { const { stateHash } = await import('/src/engine/commands.ts'); const g = window.__wc.game; return `${g.day}:${stateHash(g)}`; });
+const hash = (p) => p.evaluate(() => window.__wcHash());
 
 await A.goto(url); await B.goto(url);
 // host
