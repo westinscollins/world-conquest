@@ -10,6 +10,10 @@ const CANDIDATE_BROKERS = ['wss://public:public@public.cloud.shiftr.io:443', 'ws
 const lines = [];
 const say = (s) => { console.log(s); lines.push(s); };
 let failed = 0;
+const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+const crash = (e) => { console.log(`::error title=Live multiplayer report::${esc([...lines, `CRASH: ${e?.stack || e}`].join('\n'))}`); process.exit(1); };
+process.on('uncaughtException', crash);
+process.on('unhandledRejection', crash);
 
 say(`## Live multiplayer check: ${url}`);
 // 1. probes from inside a real browser on the deployed site
@@ -74,7 +78,6 @@ for (const [name, q, via] of scenarios) {
   if (!ok) say(`  - log tail: ${out.split('\n').filter((l) => l.trim() && !l.startsWith('   rejoin')).slice(-6).join(' | ').slice(0, 900)}`);
 }
 // one annotation with the whole report (readable through the GitHub API)
-const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
 console.log(`::notice title=Live multiplayer report::${esc(lines.join('\n'))}`);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
 process.exit(failed ? 1 : 0);
