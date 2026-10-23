@@ -1,4 +1,4 @@
-import type { GameSettings, GameState, Nation, Personality, ProvinceState, UnitType, Buildings, EquipKind } from './types';
+import type { GameSettings, GameState, Nation, Personality, ProvinceState, UnitType, Buildings } from './types';
 import { ECON, SAVE_VERSION, RESOURCE } from './config';
 import { WORLD, PROV, COUNTRY_GEO } from './geo';
 import { mulberry } from './rng';
@@ -171,19 +171,6 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
       if (armies[g]) assignGeneral(s, gen.id, armies[g].id);
     }
     if (n.isPlayer) for (let g = 0; g < 4; g++) makeGeneral(s, n.id, 0.3 + rnd() * 0.6, rnd, true);
-    // production lines: a modest default allocation
-    const facs = c.provinces.reduce((t, p) => t + s.provinces[p].buildings.factory, 0);
-    const kinds: EquipKind[] = rich ? ['smallArms', 'vehicles', 'armor', 'artillery'] : ['smallArms', 'artillery'];
-    n.production = kinds.map((kind) => ({ id: s.nextId++, kind, factories: 0 }));
-    if (!n.isPlayer) {
-      const busy = Math.round(facs * (pers === 'expansionist' ? 0.35 : 0.15));
-      n.production[0].factories = Math.ceil(busy * 0.6);
-      if (n.production[1]) n.production[1].factories = Math.floor(busy * 0.4);
-    }
-    // starting equipment stockpile (reserve stocks)
-    n.stockpile.smallArms = out * 0.02;
-    n.stockpile.artillery = out * 0.005;
-    if (rich) { n.stockpile.vehicles = out * 0.006; n.stockpile.armor = out * 0.004; }
     // research funding ~0.8% of output
     n.researchFunding = Math.round(out * 0.008 * 10) / 10;
     // navies for coastal nations

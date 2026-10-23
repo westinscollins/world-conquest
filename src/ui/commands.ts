@@ -29,6 +29,12 @@ export function onMapRightClick(p: number | null, sea: number | null) {
     store.toast(`${g.nations[ctrl]?.name} is neutral: your armies have no military access. Declare war or ally with them first.`, 'bad');
     return;
   }
+  const group = ui.group.filter((id) => g.armies[id]?.owner === g.player && id !== a.id);
+  if (group.length) {
+    const r = store.cmd('moveArmies', [[a.id, ...group], p]);
+    if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); }
+    return;
+  }
   const hostile = armiesIn(g, p).filter((x) => atWar(g, x.owner, g.player));
   const path = findPath(g, a, p);
   if (hostile.length && path) {

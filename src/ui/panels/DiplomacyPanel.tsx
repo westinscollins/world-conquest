@@ -4,7 +4,8 @@ import { Section, Btn, Tabs, Stat, Tip, Modal, Bar } from '../common';
 import { money, moneyIC, num, pct } from '../format';
 import { PROV, COUNTRY_GEO } from '../../engine/geo';
 import { ownedBy, peekRel, atWar, neighborsOf, alliesOf, livingNations } from '../../engine/world';
-import { perceivedPower, checkDeclareWar, termsCost, scoreFor, evaluatePeace, provinceValue } from '../../engine/diplomacy';
+import { checkDeclareWar, termsCost, scoreFor, evaluatePeace, provinceValue } from '../../engine/diplomacy';
+import { militaryStrength } from '../../engine/military';
 import { doDeclareWar, doTreaty, doCancelTreaty, doMission, doUltimatum, proposePeace, concedePeace, answerPeaceOffer, answerProposal, doAnnexSubject } from '../../engine/actions';
 import { describeTerms } from '../../engine/ai';
 import { fmtDate } from '../../engine/events';
@@ -87,8 +88,8 @@ function NationDetail({ id }: { id: string }) {
   const n = g.nations[id];
   const me = g.nations[g.player];
   const r = peekRel(g, id, g.player);
-  const theirP = perceivedPower(g, g.player, id);
-  const myP = perceivedPower(g, g.player, g.player);
+  const theirP = militaryStrength(g, id);
+  const myP = militaryStrength(g, g.player);
   const war = atWar(g, id, g.player);
   const chk = checkDeclareWar(g, me, id);
   const [ultProv, setUlt] = useState<number[]>([]);
@@ -100,7 +101,7 @@ function NationDetail({ id }: { id: string }) {
       <div className="small muted">{COUNTRY_GEO[id].subregion} · {PERSONALITY[n.personality].label}: {PERSONALITY[n.personality].desc}</div>
       <div className="grid2">
         <Stat label="Relations" value={(r?.value ?? 0).toFixed(0)} tone={(r?.value ?? 0) < -20 ? 'bad' : (r?.value ?? 0) > 20 ? 'good' : undefined} />
-        <Stat label="Est. military" value={`${theirP.toFixed(0)} (you ${myP.toFixed(0)})`} tone={theirP > myP ? 'bad' : 'good'} tip="Intelligence estimate — may be off by 15–45%." />
+        <Stat label="Military strength" value={`${theirP.toLocaleString()} (you ${myP.toLocaleString()})`} tone={theirP > myP ? 'bad' : 'good'} tip="Military strength: fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12, air 25…) and warship, including units still in training. It only changes when forces are raised, disbanded or destroyed." />
         <Stat label="Output" value={`${money(n.budget.output)} IC`} />
         <Stat label="Provinces" value={ownedBy(g, id).length} />
         <Stat label="Stability" value={pct(n.stability / 100)} />

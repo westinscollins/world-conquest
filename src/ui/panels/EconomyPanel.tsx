@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { store, useGame } from '../store';
 import { Section, Btn, Tip, Stat, Tabs, Bar } from '../common';
 import { money, moneyIC, pct, num } from '../format';
-import { ECON, RESOURCE, EQUIP_LABEL, BUILDINGS } from '../../engine/config';
+import { ECON, RESOURCE, BUILDINGS, MIL, UNITS } from '../../engine/config';
 import { setMobilization, setTax, setResearchFunding, takeLoan, repayLoan, setProduction, markTutorial, cancelBuild } from '../../engine/actions';
 import { maxDebt, interestFor, collectionEfficiency } from '../../engine/economy';
-import { factoryCapacity, totalFactories } from '../../engine/military';
+import { totalFactories, industryBonus, recruitCost, trainDays } from '../../engine/military';
 import { ownedBy } from '../../engine/world';
 import { PROV } from '../../engine/geo';
-import type { EquipKind } from '../../engine/types';
+import type { UnitType } from '../../engine/types';
 import { researchRate } from '../../engine/research';
 
 export function EconomyPanel() {
@@ -18,10 +18,9 @@ export function EconomyPanel() {
   if (g.tutorial && !g.tutorial.flags.economy) setTimeout(() => store.act((s) => markTutorial(s, 'economy')), 0);
   const b = n.budget;
   const facs = totalFactories(g, n, ownedBy(g, g.player));
-  const assigned = n.production.reduce((t, l) => t + l.factories, 0);
   return (
     <div className="panel-body">
-      <Tabs tabs={[['budget', 'Budget'], ['production', 'Production'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['budget', 'Budget'], ['production', 'Industry'], ['resources', 'Resources & trade'], ['projects', 'Projects']]} value={tab} onChange={setTab} />
       {tab === 'budget' && (
         <>
           <BudgetAdvisor />
@@ -73,34 +72,19 @@ export function EconomyPanel() {
       {tab === 'production' && (
         <>
           <div className="grid3">
-            <Stat label="Factories" value={facs.toFixed(1)} tip="Factory buildings in controlled provinces (damaged/occupied count less). Build more in Construction." />
-            <Stat label="Assigned" value={`${assigned} / ${Math.floor(facs)}`} tone={assigned > facs ? 'bad' : undefined} tip={assigned > facs ? 'Over-assigned: lines run proportionally slower.' : 'Idle factories still cost upkeep but produce nothing.'} />
-            <Stat label="Capacity / factory" value={`${factoryCapacity(n).toFixed(2)} M/yr`} tip={`Base ${ECON.FACTORY_CAPACITY} × industry tech ${n.techMods.industry.toFixed(2)}${n.shortages.steel ? ` × steel shortage ${pct(1 - 0.6 * n.shortages.steel)}` : ''}`} />
+            <Stat label="Factories" value={facs.toFixed(1)} tip="Factory buildings in controlled provinces (damaged/occupied count less). Build more in a province's Construction tab." />
+            <Stat label="Units cheaper by" value={pct(industryBonus(n).discount)} tip={`${pct(MIL.FACTORY_DISCOUNT, 1)} per factory, up to ${pct(MIL.FACTORY_DISCOUNT_MAX)}. Applies to recruiting, refitting and warships.`} />
+            <Stat label="Training faster by" value={pct(industryBonus(n).speed)} tip={`${pct(MIL.FACTORY_SPEED)} per factory, up to ${pct(MIL.FACTORY_SPEED_MAX)}.`} />
           </div>
+          <p className="small">Your armies get their weapons automatically: the price of a formation includes its equipment, and units in the field re-equip themselves as they rest (paid from the treasury). Factories add to your economy and make every new formation cheaper and quicker to raise.</p>
           <table className="tbl">
-            <thead><tr><th>Equipment</th><th>Stockpile</th><th>Factories</th><th>Output/yr</th><th>Cost/yr</th></tr></thead>
+            <thead><tr><th>Formation</th><th>Price</th><th>Training</th><th>Strength</th></tr></thead>
             <tbody>
-              {(Object.keys(EQUIP_LABEL) as EquipKind[]).map((k) => {
-                const line = n.production.find((l) => l.kind === k);
-                const f = line?.factories ?? 0;
-                const outY = f * factoryCapacity(n) * (assigned > facs ? facs / assigned : 1);
-                return (
-                  <tr key={k}>
-                    <td>{EQUIP_LABEL[k]}{n.techMods.quality[k] > 1 ? <span className="muted small"> q{n.techMods.quality[k].toFixed(2)}</span> : null}</td>
-                    <td>{money(n.stockpile[k])}</td>
-                    <td className="nowrap">
-                      <button className="iconbtn small" onClick={() => store.cmd('setProduction', [k, f - 1])} disabled={f <= 0}>−</button>
-                      <b style={{ display: 'inline-block', width: 24, textAlign: 'center' }}>{f}</b>
-                      <button className="iconbtn small" onClick={() => store.cmd('setProduction', [k, f + 1])}>+</button>
-                    </td>
-                    <td>{money(outY)}</td>
-                    <td className="bad">{money(outY * n.techMods.equipCost[k] * n.priceIndex)}</td>
-                  </tr>
-                );
-              })}
+              {(Object.keys(UNITS) as UnitType[]).map((k) => (
+                <tr key={k}><td>{UNITS[k].label}</td><td>{money(recruitCost(k, n), { digits: 2 })}</td><td>{trainDays(k, n)} days</td><td>+{UNITS[k].points}</td></tr>
+              ))}
             </tbody>
           </table>
-          <p className="small muted">Equipment is produced continuously and paid for as it is made (shown in the budget as Equipment production). New formations and replacements draw from the stockpile. Armor, aircraft and naval production need rare metals; all factories consume steel.</p>
         </>
       )}
       {tab === 'resources' && (
@@ -192,7 +176,6 @@ function BudgetAdvisor() {
   const top = b.expenses.slice().sort((x, y) => y.amount - x.amount).slice(0, 3);
   const fixes: { label: string; gain: string; run: () => void }[] = [];
   if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / ECON.MOBILIZED_UPKEEP))}/yr`, run: () => store.cmd('setMobilization', [false]) });
-  if (line('production') > 0.05) fixes.push({ label: 'Pause equipment production', gain: `+${money(line('production'))}/yr`, run: () => store.cmd('pauseProduction', []) });
   if (n.researchFunding > 0.5) fixes.push({ label: 'Halve research funding', gain: `+${money(n.researchFunding / 2)}/yr`, run: () => store.cmd('setResearchFunding', [n.researchFunding / 2]) });
   if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.cmd('setTax', [n.taxRate + 0.02]) });
   return (

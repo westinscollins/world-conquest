@@ -17,7 +17,7 @@ export const COMMANDS = {
   doCancelTreaty: A.doCancelTreaty, doMission: A.doMission, doUltimatum: A.doUltimatum, doAnnexSubject: A.doAnnexSubject,
   doRelease: A.doRelease, doProvinceStatus: A.doProvinceStatus, proposePeace: A.proposePeace, concedePeace: A.concedePeace,
   answerPeaceOffer: A.answerPeaceOffer, answerProposal: A.answerProposal, doMoveFleet: A.doMoveFleet, doOrderShip: A.doOrderShip,
-  setHumanControl: A.setHumanControl,
+  setHumanControl: A.setHumanControl, setAllStances: A.setAllStances, retreatArmy: A.retreatArmy, moveArmies: A.moveArmies,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export const isCommand = (n: string): n is CommandName => Object.prototype.hasOwnProperty.call(COMMANDS, n);

@@ -15,7 +15,7 @@ import { focusProvince } from './commands';
 const STANCES: [Stance, string, string][] = [
   ['hold', 'Hold', 'Stay in position and dig in. No automatic movement.'],
   ['defend', 'Defend', 'Automatically reinforce adjacent friendly provinces under attack.'],
-  ['advance', 'Advance', 'Automatically attack adjacent enemy provinces when the odds are favourable.'],
+  ['advance', 'Attack', 'Automatically march to the front and attack enemy provinces when the odds are favourable.'],
   ['withdraw', 'Withdraw', 'Fall back to the nearest supplied home province.'],
 ];
 
@@ -59,8 +59,15 @@ export function ArmyPanel() {
       <div className="army-actions">
         <Btn small kind={ui.moveMode === a.id ? 'primary' : undefined} disabled={a.battleId != null || !!a.embarked} onClick={() => store.setUI({ moveMode: ui.moveMode === a.id ? null : a.id })}>{ui.moveMode === a.id ? 'Click a province…' : 'Move / attack'}</Btn>
         {a.path.length > 0 && !a.battleId && <Btn small onClick={() => store.cmd('haltArmy', [a.id])}>Halt</Btn>}
+        {a.battleId != null && <Btn small kind="danger" onClick={() => { const r = store.cmd('retreatArmy', [a.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Retreat from battle</Btn>}
         <Btn small kind="ghost" onClick={() => store.setUI({ selectedArmy: null, selectedProvince: a.location, moveMode: null })}>Province &amp; construction</Btn>
       </div>
+      <div className="stance-bar">
+        <span className="small muted">Orders</span>
+        {STANCES.map(([st, label, tip]) => <button key={st} title={tip} className={`posture${a.stance === st ? ' on' : ''}`} onClick={() => store.cmd('setStance', [a.id, st])}>{label}</button>)}
+      </div>
+      {ui.group.length > 0 && <p className="small note" style={{ margin: '0 12px 6px' }}>+{ui.group.length} more {ui.group.length === 1 ? 'army' : 'armies'} selected (shift-click to add/remove). Right-click a province to move them all. <a onClick={() => store.setUI({ group: [] })}>Clear</a></p>}
+      {ui.group.length === 0 && others.length > 0 && <p className="small muted" style={{ margin: '0 12px 6px' }}>Tip: shift-click other armies to move several at once.</p>}
       <div className="grid4">
         <Stat label="Strength" value={`${num(str)}`} tip={`${num(str)} of ${num(max)} personnel (${pct(str / max)})`} tone={str / max < 0.6 ? 'bad' : undefined} />
         <Stat label="Organisation" value={pct(armyOrg(a))} tip="Combat cohesion. Falls in battle; recovers when resting and supplied. Peacetime armies are capped until mobilised." tone={armyOrg(a) < 0.4 ? 'bad' : undefined} />

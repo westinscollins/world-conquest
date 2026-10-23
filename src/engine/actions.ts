@@ -91,8 +91,60 @@ export function seaMove(s: GameState, armyId: number, to: number): Result {
   const r = embark(s, a, to);
   return r.ok ? ok(`Embarked for ${PROV[to].name}: ${r.days} days at sea, cost ${fmt(r.cost)}${r.risk > 0.3 ? ' — WARNING: enemy naval superiority on route' : ''}.`) : fail(r.reason ?? 'Cannot embark.');
 }
-export function setPosture(s: GameState, armyId: number, p: Posture): Result { const a = s.armies[armyId]; if (a) a.posture = p; return ok('Posture set.'); }
-export function setStance(s: GameState, armyId: number, st: Stance): Result { const a = s.armies[armyId]; if (a) a.stance = st; return ok('Stance set.'); }
+/** Set an army's posture; in battle it takes effect from the next day of fighting. */
+export function setPosture(s: GameState, armyId: number, p: Posture): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  a.posture = p;
+  const b = a.battleId != null ? s.battles[a.battleId] : undefined;
+  if (b && b.result == null) {
+    if (b.attacker.nation === a.owner && b.attacker.armyIds.includes(a.id)) b.attackerPosture = p;
+    else if (b.defender.armyIds.includes(a.id)) b.defenderPosture = p;
+    return ok(`Battle posture changed to ${p}: it applies from tomorrow's fighting.`);
+  }
+  return ok('Posture set.');
+}
+export function setStance(s: GameState, armyId: number, st: Stance): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  a.stance = st;
+  return ok('Orders set.');
+}
+/** Give the same standing orders to every army (optionally only those at war's front). */
+export function setAllStances(s: GameState, st: Stance): Result {
+  let k = 0;
+  for (const a of Object.values(s.armies)) if (a.owner === s.player) { a.stance = st; k++; }
+  return ok(`${k} armies ordered to ${STANCE_TEXT[st]}.`);
+}
+const STANCE_TEXT: Record<Stance, string> = { hold: 'hold position', defend: 'defend the border', advance: 'advance and attack', withdraw: 'withdraw to home territory' };
+/** Pull an army out of a battle: attackers break off, defenders fall back under rear-guard cover. */
+export function retreatArmy(s: GameState, armyId: number): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  const b = a.battleId != null ? s.battles[a.battleId] : undefined;
+  if (!b || b.result != null) return fail('This army is not in a battle.');
+  if (b.attacker.armyIds.includes(a.id) && b.attacker.nation === a.owner) {
+    a.battleId = null; a.path = []; a.moveProgress = 0; a.stance = 'hold';
+    for (const u of a.units) u.org *= 0.85;
+    invalidateArmies();
+    return ok(`${a.name} breaks off the attack on ${PROV[b.province].name}.`);
+  }
+  b.defenderPosture = 'withdrawal';
+  for (const id of b.defender.armyIds) { const d = s.armies[id]; if (d && d.owner === a.owner) d.posture = 'withdrawal'; }
+  return ok(`Defenders of ${PROV[b.province].name} will withdraw after tomorrow's rear-guard action.`);
+}
+/** Order several armies to the same province (each finds its own route). */
+export function moveArmies(s: GameState, armyIds: number[], to: number): Result {
+  const moved: string[] = [], failed: string[] = [];
+  for (const id of armyIds) {
+    const a = s.armies[id];
+    if (!a || a.owner !== s.player) continue;
+    const r = moveArmy(s, id, to);
+    (r.ok ? moved : failed).push(a.name);
+  }
+  if (!moved.length) return fail(failed.length ? `None of the selected armies can reach ${PROV[to].name} (in battle, at sea or no route).` : 'No armies selected.');
+  return ok(`${moved.length} ${moved.length === 1 ? 'army' : 'armies'} marching to ${PROV[to].name}${failed.length ? ` (${failed.length} could not move)` : ''}.`);
+}
 export function renameArmy(s: GameState, armyId: number, name: string): Result { const a = s.armies[armyId]; if (a && name.trim()) a.name = name.trim().slice(0, 40); return ok('Renamed.'); }
 export function splitArmy(s: GameState, armyId: number, unitIds: number[]): Result {
   const a = s.armies[armyId];

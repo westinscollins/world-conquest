@@ -3,11 +3,11 @@ import { store, useGame } from '../store';
 import { Section, Btn, Tabs, Stat, Bar, Tip } from '../common';
 import { money, moneyIC, num, pct } from '../format';
 import { UNITS, SHIPS, ECON, MIL } from '../../engine/config';
-import { armyStrength, armyOrg, unitUpkeep, recruitCost, TRAITS, unitUpkeepBreakdown, equipValue, armyMaxStrength } from '../../engine/military';
+import { armyStrength, armyOrg, unitUpkeep, recruitCost, TRAITS, unitUpkeepBreakdown, armyMaxStrength, militaryStrength, trainDays } from '../../engine/military';
 import { doRecruit, hireGeneral, doAssignGeneral, setMobilization, cancelTraining, doOrderShip } from '../../engine/actions';
 import { PROV, WORLD } from '../../engine/geo';
 import { ownedBy } from '../../engine/world';
-import { nationTransportCapacity } from '../../engine/naval';
+import { nationTransportCapacity, shipCost } from '../../engine/naval';
 import type { ShipType, UnitType } from '../../engine/types';
 import { focusProvince } from '../commands';
 import { audio } from '../../audio/music';
@@ -23,8 +23,8 @@ export function MilitaryPanel() {
   return (
     <div className="panel-body">
       <div className="grid3">
-        <Stat label="Personnel" value={num(armies.reduce((t, a) => t + armyStrength(a), 0))} />
-        <Stat label="Formations" value={armies.reduce((t, a) => t + a.units.length, 0)} />
+        <Stat label="Military strength" value={militaryStrength(g, g.player).toLocaleString()} tip="Fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12, air 25…) and warship, including units in training. Changes only when you raise, disband or lose units." />
+        <Stat label="Soldiers" value={num(armies.reduce((t, a) => t + armyStrength(a), 0))} tip={`${armies.reduce((t, a) => t + a.units.length, 0)} formations in ${armies.length} armies`} />
         <Stat label="Upkeep" value={`${money(upkeep)}/yr`} tip="Wages, equipment maintenance, garrison supply and standby fuel." />
       </div>
       <div className="mob">
@@ -37,7 +37,7 @@ export function MilitaryPanel() {
       <Tabs tabs={[['armies', `Armies (${armies.length})`], ['recruit', `Recruit${n.training.length ? ` (${n.training.length})` : ''}`], ['generals', 'Generals'], ['navy', 'Navy']]} value={tab} onChange={setTab} />
       {tab === 'armies' && (
         <table className="tbl clickable">
-          <thead><tr><th>Army</th><th>Location</th><th>Strength</th><th>Org</th><th>Supply</th><th>General</th></tr></thead>
+          <thead><tr><th>Army</th><th>Location</th><th>Soldiers</th><th>Org</th><th>Supply</th><th>Orders</th></tr></thead>
           <tbody>
             {armies.map((a) => (
               <tr key={a.id} onClick={() => { store.setUI({ selectedArmy: a.id, selectedProvince: a.location }); focusProvince(a.location); }}>
@@ -46,7 +46,11 @@ export function MilitaryPanel() {
                 <td>{num(armyStrength(a))}<span className="muted small">/{num(armyMaxStrength(a))}</span></td>
                 <td><Bar value={armyOrg(a)} h={5} /></td>
                 <td className={a.lastSupplyRatio < 0.6 ? 'bad' : ''}>{pct(a.lastSupplyRatio)}</td>
-                <td className="small">{a.generalId != null ? g.generals[a.generalId]?.name : <span className="muted">—</span>}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <select value={a.stance} onChange={(e) => store.cmd('setStance', [a.id, e.target.value])}>
+                    <option value="hold">Hold</option><option value="defend">Defend</option><option value="advance">Attack</option><option value="withdraw">Withdraw</option>
+                  </select>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -62,7 +66,7 @@ export function MilitaryPanel() {
             <span className="muted small">Manpower {num(n.manpower)}</span>
           </div>
           <table className="tbl">
-            <thead><tr><th>Type</th><th>Fee</th><th>Equipment</th><th>Upkeep/yr</th><th>Train</th><th /></tr></thead>
+            <thead><tr><th>Type</th><th>Price</th><th>Upkeep/yr</th><th>Train</th><th>Strength</th><th /></tr></thead>
             <tbody>
               {(Object.keys(UNITS) as UnitType[]).map((t) => {
                 const u = UNITS[t];
@@ -71,9 +75,9 @@ export function MilitaryPanel() {
                   <tr key={t}>
                     <td><Tip wide tip={<div><b>{u.label}</b><br />{u.desc}<br />{num(u.personnel)} personnel · speed {u.speed} km/day<br />Soft {u.soft} · Hard {u.hard} · Defence {u.defense} · Breakthrough {u.breakthrough} · Armour {pct(u.hardness)}<br />Supply {u.supply}/day · fuel {u.fuel}/day</div>}>{u.label}</Tip></td>
                     <td>{money(recruitCost(t, n), { digits: 2 })}</td>
-                    <td><Tip tip={`Drawn from stockpile: ${Object.entries(u.equip).map(([k, v]) => `${k} ${v} M (stock ${n.stockpile[k as keyof typeof n.stockpile].toFixed(1)})`).join(', ')}`}>{money(equipValue(t), { digits: 1 })}</Tip></td>
                     <td><Tip tip={`Wages ${br.wages.toFixed(2)} + maintenance ${br.maint.toFixed(2)} + garrison supply ${br.supply.toFixed(2)} + fuel ${br.fuel.toFixed(2)}`}>{money(unitUpkeep(t, n), { digits: 2 })}</Tip></td>
-                    <td>{u.trainDays}d</td>
+                    <td>{trainDays(t, n)}d</td>
+                    <td>+{u.points}</td>
                     <td><Btn small kind="primary" onClick={() => { const r = store.cmd('doRecruit', [t, where]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); r.ok && audio.sfx('coins'); } }}>Recruit</Btn></td>
                   </tr>
                 );
@@ -86,7 +90,7 @@ export function MilitaryPanel() {
                 <button className="iconbtn small" title="Cancel" onClick={() => store.setUI({ confirm: { title: 'Cancel training?', body: 'Recruits return to the manpower pool. The recruitment fee is not refunded.', danger: true, onOk: () => store.cmd('cancelTraining', [t.id]) } })}>✕</button></div>
             ))}
           </Section>}
-          <p className="small muted">Formations need weeks to train and draw equipment from the stockpile on completion. Upkeep starts at half rate during training. Max {MIL.MAX_ARMY_UNITS} formations per army.</p>
+          <p className="small muted">The price includes full equipment. Formations train for a few weeks, then appear fully equipped in the province you chose. Factories make them cheaper and faster. Max {MIL.MAX_ARMY_UNITS} formations per army.</p>
         </>
       )}
       {tab === 'generals' && (
@@ -130,7 +134,7 @@ function NavyTab() {
       <div className="grid3">
         <Stat label="Fleets" value={fleets.length} />
         <Stat label="Transport capacity" value={`${tc.cap - tc.used}/${tc.cap}`} tip="Brigades that can be at sea at once (4 from chartered merchant shipping + 4 per Transport Flotilla)." />
-        <Stat label="Naval materiel" value={`${money(n.stockpile.ships)} IC`} tip="Produced by factories on the Naval line; consumed when laying down ships." />
+        <Stat label="Warships" value={fleets.reduce((t, f) => t + Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup), 0)} />
       </div>
       {fleets.map((f) => (
         <div key={f.id} className="army-row" onClick={() => store.setUI({ selectedFleet: f.id, selectedArmy: null })}>
@@ -142,11 +146,11 @@ function NavyTab() {
         <Section title="Shipyards" icon="anchor">
           <div className="row gap"><span>Build at</span><select value={port} onChange={(e) => setPort(+e.target.value)}>{ports.map((p) => <option key={p} value={p}>{PROV[p].name}</option>)}</select></div>
           <table className="tbl">
-            <thead><tr><th>Ship</th><th>Materiel</th><th>Build</th><th>Upkeep/yr</th><th /></tr></thead>
+            <thead><tr><th>Ship</th><th>Price</th><th>Build</th><th>Upkeep/yr</th><th /></tr></thead>
             <tbody>
               {(Object.keys(SHIPS) as ShipType[]).map((k) => (
-                <tr key={k}><td>{SHIPS[k].label}</td><td>{money(SHIPS[k].cost)}</td><td>{SHIPS[k].days}d</td><td>{money(SHIPS[k].personnel * MIL.SOLDIER_WAGE + SHIPS[k].cost * 0.06, { digits: 2 })}</td>
-                  <td><Btn small kind="primary" disabled={port == null || n.stockpile.ships < SHIPS[k].cost} title={n.stockpile.ships < SHIPS[k].cost ? 'Assign factories to Naval production first' : ''} onClick={() => { const r = store.cmd('doOrderShip', [k, port!]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Lay down</Btn></td></tr>
+                <tr key={k}><td>{SHIPS[k].label}</td><td>{money(shipCost(k, n), { digits: 1 })}</td><td>{SHIPS[k].days}d</td><td>{money(SHIPS[k].personnel * MIL.SOLDIER_WAGE + SHIPS[k].cost * 0.06, { digits: 2 })}</td>
+                  <td><Btn small kind="primary" disabled={port == null || n.treasury < shipCost(k, n)} onClick={() => { const r = store.cmd('doOrderShip', [k, port!]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Lay down</Btn></td></tr>
               ))}
             </tbody>
           </table>

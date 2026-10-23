@@ -15,3 +15,5 @@ export function num(v: number) {
 }
 export const pct = (v: number, d = 0) => `${(v * 100).toFixed(d)}%`;
 export const cls = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
+/** A loss shown as a negative number ("−1,234"), or 0. */
+export const neg = (v: number) => (v >= 1 ? `−${num(v)}` : '0');

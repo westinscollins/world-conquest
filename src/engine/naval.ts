@@ -3,7 +3,7 @@ import { MIL, SHIPS } from './config';
 import { PROV, WORLD, seaRoute, isCoastal } from './geo';
 import { atWar, isFriendly, armiesIn, invalidateArmies } from './world';
 import { addEvent } from './events';
-import { fleetPower, armyStrength, setArmyLocation, deleteArmy } from './military';
+import { fleetPower, armyStrength, setArmyLocation, deleteArmy, industryBonus } from './military';
 import { setController } from './territory';
 import { startBattle } from './battle';
 import { fmt } from './economy';
@@ -156,16 +156,20 @@ function navalEngagement(s: GameState, A: Fleet, B: Fleet, zone: number) {
   }
 }
 
+/** Price of a ship (hull and crew), with tech and factory discounts. */
+export function shipCost(type: ShipType, n: Nation) {
+  const spec = SHIPS[type];
+  return spec.cost * n.techMods.equipCost.ships * (1 - industryBonus(n).discount) * n.priceIndex + spec.personnel * MIL.RECRUIT_PER_SOLDIER * n.priceIndex;
+}
 export function orderShip(s: GameState, n: Nation, type: ShipType, port: number): string | null {
   const st = s.provinces[port];
   if (st.owner !== n.id || st.controller !== n.id || st.buildings.port <= 0) return 'Ships are built in your own ports.';
   const spec = SHIPS[type];
-  if (n.stockpile.ships < spec.cost) return `Requires ${spec.cost} M IC of naval materiel in the stockpile (assign factories to Naval production). Have ${n.stockpile.ships.toFixed(1)}.`;
-  const crew = spec.personnel * MIL.RECRUIT_PER_SOLDIER * n.priceIndex;
-  if (n.treasury < crew) return 'Insufficient funds for crew training.';
+  const cost = shipCost(type, n);
+  if (n.treasury < cost) return `Insufficient funds: this costs ${cost.toFixed(1)} M IC.`;
   if (n.manpower < spec.personnel) return 'Insufficient manpower.';
-  n.stockpile.ships -= spec.cost;
-  n.treasury -= crew;
+  n.treasury -= cost;
+  n.ledgerMonth.expense += cost;
   n.manpower -= spec.personnel;
   n.shipyard.push({ id: s.nextId++, type, port, daysLeft: spec.days, totalDays: spec.days });
   return null;

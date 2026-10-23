@@ -9,9 +9,20 @@ import { provinceWeather } from './weather';
 export function equipValue(type: UnitType): number {
   return Object.values(UNITS[type].equip).reduce((a, b) => a + (b || 0), 0);
 }
-/** One-time induction & training cost (M IC), excluding equipment, which is produced by industry. */
+/** Military-industry bonus from factories: cheaper equipment and faster training (0..1 shares). */
+export function industryBonus(n?: Nation) {
+  const f = n?.lastFactories ?? 0;
+  return { discount: Math.min(MIL.FACTORY_DISCOUNT_MAX, f * MIL.FACTORY_DISCOUNT), speed: Math.min(MIL.FACTORY_SPEED_MAX, f * MIL.FACTORY_SPEED) };
+}
+/** Price of a unit's full equipment set (M IC), after tech and factory discounts. */
+export function unitEquipCost(type: UnitType, n?: Nation): number {
+  let c = 0;
+  for (const k in UNITS[type].equip) c += UNITS[type].equip[k as EquipKind]! * (n?.techMods.equipCost[k as EquipKind] ?? 1);
+  return c * (1 - industryBonus(n).discount) * (n?.priceIndex ?? 1);
+}
+/** One-time cost to raise a formation (M IC): induction, training and its full equipment. */
 export function recruitCost(type: UnitType, n?: Nation): number {
-  return UNITS[type].personnel * MIL.RECRUIT_PER_SOLDIER * (n?.priceIndex ?? 1);
+  return UNITS[type].personnel * MIL.RECRUIT_PER_SOLDIER * (n?.priceIndex ?? 1) + unitEquipCost(type, n);
 }
 /** Annual peacetime upkeep: wages + equipment maintenance + garrison supply + standby fuel. */
 export function unitUpkeepBreakdown(type: UnitType, n?: Nation) {
@@ -103,6 +114,18 @@ export function armyPower(s: GameState, a: Army): number {
   }
   return p * (0.6 + 0.4 * Math.min(1, a.lastSupplyRatio));
 }
+/**
+ * Military strength rating: a fixed number of points per formation and warship (plus units in
+ * training). It only changes when forces are raised, disbanded or destroyed — never day to day.
+ */
+export function militaryStrength(s: GameState, id: string): number {
+  let p = 0;
+  for (const a of Object.values(s.armies)) if (a.owner === id) for (const u of a.units) p += UNITS[u.type].points;
+  for (const f of Object.values(s.fleets)) if (f.owner === id) for (const k in f.ships) p += SHIPS[k as ShipType].points * f.ships[k as ShipType];
+  const n = s.nations[id];
+  if (n) { for (const t of n.training) p += UNITS[t.type].points; for (const o of n.shipyard) p += SHIPS[o.type].points; }
+  return p;
+}
 export function qualityOf(n: Nation, type: UnitType) {
   const eq = UNITS[type].equip;
   let tot = 0, w = 0;
@@ -179,13 +202,13 @@ export function pathDays(s: GameState, a: Army, path: number[]): number {
 }
 
 // ---------------------------------------------------------------- recruitment & training
-export function trainDays(type: UnitType) { return UNITS[type].trainDays; }
+export function trainDays(type: UnitType, n?: Nation) { return Math.round(UNITS[type].trainDays * (1 - industryBonus(n).speed)); }
 
-export interface RecruitCheck { ok: boolean; reason?: string; cost: number; manpower: number; equipNeeded: Partial<Record<EquipKind, number>>; days: number; upkeep: number; }
+export interface RecruitCheck { ok: boolean; reason?: string; cost: number; manpower: number; days: number; upkeep: number; }
 export function checkRecruit(s: GameState, n: Nation, type: UnitType, province: number): RecruitCheck {
   const cost = recruitCost(type, n);
   const sp = UNITS[type];
-  const res: RecruitCheck = { ok: true, cost, manpower: sp.personnel, equipNeeded: sp.equip, days: sp.trainDays, upkeep: unitUpkeep(type, n) };
+  const res: RecruitCheck = { ok: true, cost, manpower: sp.personnel, days: trainDays(type, n), upkeep: unitUpkeep(type, n) };
   const p = s.provinces[province];
   if (p.owner !== n.id || p.controller !== n.id) return { ...res, ok: false, reason: 'You must own and control the province.' };
   if (p.status === 'occupied') return { ...res, ok: false, reason: 'Cannot recruit in occupied territory.' };
@@ -204,7 +227,7 @@ export function recruit(s: GameState, n: Nation, type: UnitType, province: numbe
   return c;
 }
 
-/** Daily: progress training orders, deploy finished units drawing equipment from the stockpile. */
+/** Daily: progress training orders and deploy finished, fully equipped units. */
 export function trainingDaily(s: GameState, n: Nation) {
   if (!n.training.length) return;
   const done: typeof n.training = [];
@@ -215,22 +238,14 @@ export function trainingDaily(s: GameState, n: Nation) {
   if (!done.length) return;
   n.training = n.training.filter((t) => t.daysLeft > 0);
   for (const t of done) {
-    const need = UNITS[t.type].equip;
-    let frac = 1;
-    for (const k in need) {
-      const kind = k as EquipKind;
-      const want = need[kind]!;
-      frac = Math.min(frac, Math.min(1, n.stockpile[kind] / want));
-    }
-    for (const k in need) n.stockpile[k as EquipKind] = Math.max(0, n.stockpile[k as EquipKind] - need[k as EquipKind]! * frac);
-    const u = newUnit(s, t.type, Math.max(0.05, frac), 0.1);
+    const u = newUnit(s, t.type, 1, 0.1);
     u.org = 0.5; u.morale = 0.65;
     let army = t.armyId != null ? s.armies[t.armyId] : undefined;
     if (army && (army.owner !== n.id || army.location !== t.province || army.units.length >= MIL.MAX_ARMY_UNITS)) army = undefined;
     if (!army) army = armiesIn(s, t.province).find((a) => a.owner === n.id && !a.battleId && a.units.length < MIL.MAX_ARMY_UNITS && !a.path.length);
     if (!army) army = createArmy(s, n.id, t.province, []);
     army.units.push(u);
-    if (n.isPlayer) addEvent(s, 'military', `${UNITS[t.type].label} completed training in ${PROV[t.province].name}${frac < 0.99 ? ` — only ${Math.round(frac * 100)}% equipped (stockpile short)` : ''}.`, [n.id], { province: t.province });
+    if (n.isPlayer) addEvent(s, 'military', `${UNITS[t.type].label} completed training in ${PROV[t.province].name}.`, [n.id], { province: t.province });
   }
 }
 
@@ -253,14 +268,13 @@ export function reinforceDaily(s: GameState, a: Army, n: Nation) {
       u.strength += add; n.manpower -= add;
       u.experience = Math.max(0.05, u.experience - (add / sp.personnel) * 0.3);
     }
-    // equipment from stockpile
-    if (u.equipment < 1) {
-      let frac = Math.min(1 - u.equipment, MIL.REINFORCE_RATE * 1.5);
-      for (const k in sp.equip) frac = Math.min(frac, n.stockpile[k as EquipKind] / sp.equip[k as EquipKind]!);
-      if (frac > 0) {
-        for (const k in sp.equip) n.stockpile[k as EquipKind] -= sp.equip[k as EquipKind]! * frac;
-        u.equipment += frac;
-      }
+    // equipment: replaced losses are bought as they are refitted
+    if (u.equipment < 1 && n.treasury > 0 && !n.bankrupt) {
+      const frac = Math.min(1 - u.equipment, MIL.REINFORCE_RATE * 1.5);
+      const cost = frac * unitEquipCost(u.type, n);
+      u.equipment += frac;
+      n.treasury -= cost;
+      n.ledgerMonth.expense += cost;
     }
   }
 }
@@ -270,29 +284,6 @@ export function totalFactories(s: GameState, n: Nation, owned: number[]) {
   let f = 0;
   for (const p of owned) { const st = s.provinces[p]; if (st.controller === n.id) f += st.buildings.factory * (1 - st.damage) * (st.status === 'core' ? 1 : 0.5); }
   return f;
-}
-/** Equipment capacity (M IC of equipment per year) per assigned factory. */
-export function factoryCapacity(n: Nation) {
-  const steelPenalty = 1 - 0.6 * n.shortages.steel;
-  return ECON.FACTORY_CAPACITY * n.techMods.industry * steelPenalty;
-}
-/** Daily production; returns M IC spent. */
-export function productionDaily(s: GameState, n: Nation, factories: number): number {
-  if (n.bankrupt) return 0;
-  let assigned = n.production.reduce((t, l) => t + l.factories, 0);
-  const scale = assigned > factories && assigned > 0 ? factories / assigned : 1;
-  let spent = 0;
-  for (const l of n.production) {
-    if (l.factories <= 0) continue;
-    let cap = (l.factories * scale * factoryCapacity(n)) / 365;
-    if (l.kind === 'armor' || l.kind === 'aircraft' || l.kind === 'ships') cap *= 1 - 0.5 * n.shortages.rare;
-    const cost = equipmentCost(l.kind, cap, n);
-    if (n.treasury < cost && n.treasury < 0) continue;
-    n.stockpile[l.kind] += cap;
-    spent += cost;
-  }
-  assigned = 0;
-  return spent;
 }
 
 // ---------------------------------------------------------------- generals

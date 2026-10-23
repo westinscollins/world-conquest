@@ -9,7 +9,7 @@ import type { Army, GameState, Nation } from './types';
 import { MIL, TERRAIN, UNITS, ECON } from './config';
 import { PROV, distKm, isStrait } from './geo';
 import { aggregate, applyDailyBudget, computeBudget, buildDayIndex, constructionDaily, monthlyEconomy, updateMarket } from './economy';
-import { trainingDaily, productionDaily, reinforceDaily, armySpeedKm, canEnter, setArmyLocation } from './military';
+import { trainingDaily, reinforceDaily, armySpeedKm, canEnter, setArmyLocation } from './military';
 import { researchDaily } from './research';
 import { supplyDaily } from './supply';
 import { battleDaily, startBattle, joinBattle } from './battle';
@@ -71,11 +71,7 @@ export function tick(s: GameState) {
       const agg = aggregate(s, n, armiesBy, fleetsBy);
       n.budget = computeBudget(s, n, agg, idx);
       if (newMonth) monthlyEconomy(s, n, agg);
-      // production adds equipment (its cost is part of the budget)
-      productionDaily(s, n, agg.factories);
       n.lastFactories = agg.factories;
-    } else {
-      productionDaily(s, n, n.lastFactories);
     }
     applyDailyBudget(s, n);
   }

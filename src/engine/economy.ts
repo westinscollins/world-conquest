@@ -166,9 +166,9 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
   // resources
   const demand: Record<ResourceKind, number> = {
     food: (agg.owned.reduce((t, id) => t + s.provinces[id].pop, 0) / 1e6) * RESOURCE_DEMAND.foodPerMillionPop,
-    steel: agg.factories * RESOURCE_DEMAND.steelPerFactory + n.production.reduce((t, l) => t + l.factories, 0) * ECON.FACTORY_CAPACITY * RESOURCE_DEMAND.steelPerEquipM,
+    steel: agg.factories * RESOURCE_DEMAND.steelPerFactory,
     oil: agg.fuelDemand * RESOURCE_DEMAND.oilPerFuel + agg.output * RESOURCE_DEMAND.oilPerOutput,
-    rare: n.production.filter((l) => l.kind === 'armor' || l.kind === 'aircraft' || l.kind === 'ships').reduce((t, l) => t + l.factories, 0) * ECON.FACTORY_CAPACITY * RESOURCE_DEMAND.rarePerAdvancedEquipM,
+    rare: 0, // rare metals are an export commodity
   };
   const outlet = hasTradeOutlet(s, n, agg.owned, enemies);
   let exports = 0, imports = 0;
@@ -212,13 +212,6 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
   if (agg.navalUpkeep > 0) expenses.push({ key: 'naval', label: 'Naval upkeep', amount: agg.navalUpkeep });
   if (agg.opsDaily > 0) expenses.push({ key: 'ops', label: 'Field operations (fuel, ammunition)', amount: agg.opsDaily * 365, detail: 'Armies on campaign, moving or in battle' });
   if (agg.generals > 0) expenses.push({ key: 'generals', label: 'General staff', amount: agg.generals * GENERAL_SALARY * pi });
-  const prodRate = n.bankrupt ? 0 : n.production.reduce((t, l) => t + l.factories, 0);
-  if (prodRate > 0) {
-    const scale = Math.min(1, agg.factories / Math.max(1e-9, prodRate));
-    let cost = 0;
-    for (const l of n.production) cost += l.factories * scale * ECON.FACTORY_CAPACITY * n.techMods.industry * (1 - 0.6 * n.shortages.steel) * n.techMods.equipCost[l.kind] * pi;
-    expenses.push({ key: 'production', label: 'Equipment production', amount: cost, detail: `${Math.min(prodRate, agg.factories).toFixed(1)} factories producing` });
-  }
   if (n.researchFunding > 0) expenses.push({ key: 'research', label: 'Research funding', amount: n.researchFunding });
   if (n.debt > 0) expenses.push({ key: 'interest', label: 'Debt interest', amount: n.debt * n.interestRate, detail: `${fmt(n.debt)} at ${(n.interestRate * 100).toFixed(1)}%` });
   if (imports > 0) expenses.push({ key: 'imports', label: 'Resource imports', amount: imports, detail: 'Shortfalls bought on the world market at 110% of price' });

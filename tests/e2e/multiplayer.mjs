@@ -55,7 +55,7 @@ await A.evaluate(() => window.__wc.cmd('doTreaty', ['DEU', 'trade']));
 await B.waitForTimeout(1500);
 await B.click('.nav-btn:has-text("Diplomacy")'); await B.click('.tab:has-text("Proposals")');
 await B.click('.offer button:has-text("Accept")');
-await A.waitForTimeout(800);
+for (let i = 0; i < 20 && !(await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade)); i++) await A.waitForTimeout(250);
 ok('trade treaty between the two players', await A.evaluate(() => !!window.__wc.game.relations['DEU|POL']?.trade));
 await B.screenshot({ path: out + '/mp-guest.png' });
 // guest reconnects over a lossy link (20% of messages dropped)

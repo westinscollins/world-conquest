@@ -1,3 +1,4 @@
+import { live } from './live';
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { GameState, Army } from '../engine/types';
 import { PROV, WORLD } from '../engine/geo';
@@ -264,14 +265,24 @@ export function MapView() {
     audio.sfx('click');
     if (battleEl) { store.setUI({ battleReport: +battleEl.getAttribute('data-battle')! }); return; }
     if (armyEl && ui.moveMode != null) { onMapRightClick(+armyEl.getAttribute('data-loc')!, null); store.setUI({ moveMode: null }); return; }
-    if (armyEl) { const id = +armyEl.getAttribute('data-army')!; const a = store.game!.armies[id]; store.setUI({ selectedArmy: id, selectedFleet: null, selectedProvince: a?.location ?? null }); return; }
+    if (armyEl) {
+      const id = +armyEl.getAttribute('data-army')!;
+      const a = store.game!.armies[id];
+      // shift-click adds your own armies to a group that moves together
+      if (e.shiftKey && a?.owner === store.game!.player && ui.selectedArmy != null && ui.selectedArmy !== id && store.game!.armies[ui.selectedArmy]?.owner === store.game!.player) {
+        store.setUI({ group: ui.group.includes(id) ? ui.group.filter((x) => x !== id) : [...ui.group, id] });
+        return;
+      }
+      store.setUI({ selectedArmy: id, selectedFleet: null, selectedProvince: a?.location ?? null, group: [] });
+      return;
+    }
     if (fleetEl) { store.setUI({ selectedFleet: +fleetEl.getAttribute('data-fleet')!, selectedArmy: null }); return; }
     const seaEl = t.closest?.('[data-sea]');
     if (seaEl) return;
     const p = t.getAttribute?.('data-p');
     if (p != null && ui.moveMode != null && store.game!.armies[ui.moveMode]) { onMapRightClick(+p, null); store.setUI({ moveMode: null }); return; }
-    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null, moveMode: null });
-    else store.setUI({ selectedProvince: null, selectedArmy: null, selectedFleet: null });
+    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null, moveMode: null, group: [] });
+    else store.setUI({ selectedProvince: null, selectedArmy: null, selectedFleet: null, group: [] });
   };
   const onContext = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -325,6 +336,7 @@ export function MapView() {
         <FillLayer fills={fills} blend={ui.mapMode === 'political'} />
         {ui.mapMode === 'political' && <TintLayer fills={fills} />}
         <OccupationLayer occ={occKey} />
+        <FlashLayer />
         {decor && <path className="lakes" d={decor.lakes.join('')} />}
         {decor && k > 1.6 && <g className="rivers">{decor.rivers.map((r, i) => { const [d, rank] = r.split('|'); return <path key={i} d={d} strokeWidth={Math.max(0.15, 0.9 - +rank * 0.12)} />; })}</g>}
         <ProvinceBorders />
@@ -337,7 +349,8 @@ export function MapView() {
         <Paths g={g} px={px} selArmy={selArmy} />
         <Labels labels={labels} k={k} px={px} g={g} />
         <Battles g={g} px={px} />
-        <Armies g={g} px={px} k={k} selected={ui.selectedArmy} />
+        <Armies g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} />
+        <LiveLayer px={px} />
         <rect x={VX - 400} y={VY - 300} width={VW + 800} height={VH + 600} fill="url(#vignette)" pointerEvents="none" opacity={0.35} />
       </svg>
       {hover && <MapTooltip g={g} p={hover.p} x={hover.x} y={hover.y} mode={ui.mapMode} />}
@@ -479,6 +492,40 @@ function Battles({ g, px }: { g: GameState; px: number }) {
             <circle r={r} className="pulse" />
             <circle r={r * 0.85} className="core" />
             <path transform={`scale(${r / 12}) translate(-12,-12)`} d="M6.2 2.6L4.8 4l4.4 4.4-1.4 1.4-2.1-2.1-1.4 1.4 2.1 2.1L2 15.6V20h4.4l4.4-4.4 2.1 2.1 1.4-1.4-2.1-2.1 1.4-1.4 4.4 4.4 1.4-1.4L6.2 2.6zM20 2l-6.3 6.3 2 2L22 4V2h-2z" fill="#fff" />
+            {mine && (() => {
+              const ours = b.attacker.nation === g.player ? b.attacker : b.defender;
+              const theirs = ours === b.attacker ? b.defender : b.attacker;
+              const lost = (x: typeof ours) => x.losses.killed + x.losses.wounded;
+              return (
+                <g transform={`scale(${px})`} className="battle-tally">
+                  <rect x={-38} y={14} width={76} height={15} rx={3} />
+                  <text x={-3} y={25} textAnchor="end" className="t-mine">−{short(lost(ours))}</text>
+                  <text x={3} y={25} className="t-enemy">−{short(lost(theirs))}</text>
+                </g>
+              );
+            })()}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+const short = (v: number) => (v >= 10000 ? `${(v / 1000).toFixed(0)}k` : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v).toString());
+
+/** Provinces that just changed hands pulse green (gained) or red (lost). */
+function FlashLayer() {
+  return <g className="flashes" pointerEvents="none">{live.flashes.map((f) => <path key={f.id} d={PROV[f.province].path} className={`flash ${f.gained ? 'gained' : 'lost'}`} />)}</g>;
+}
+/** Casualty numbers rising from battles: yours in red, the enemy's in white. */
+function LiveLayer({ px }: { px: number }) {
+  return (
+    <g className="live-floats" pointerEvents="none">
+      {live.floats.map((f) => {
+        const p = PROV[f.province];
+        return (
+          <g key={f.id} transform={`translate(${p.lx},${p.ly - 26 * px}) scale(${px})`}>
+            <text className={`float ${f.mine ? 'mine' : 'enemy'}`} x={f.mine ? -6 : 6} textAnchor={f.mine ? 'end' : 'start'}>{f.text}</text>
           </g>
         );
       })}
@@ -504,7 +551,7 @@ function natoSymbol(type: string, w: number, h: number) {
 export function armyDotRadius(strength: number) {
   return Math.min(16, 2.5 + 2 * Math.sqrt(Math.max(0, strength) / 1000)); // screen pixels
 }
-function Armies({ g, px, k, selected }: { g: GameState; px: number; k: number; selected: number | null }) {
+function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: number; selected: number | null; group: number[] }) {
   const byLoc = new Map<number, Army[]>();
   for (const a of Object.values(g.armies)) {
     if (a.embarked) continue;
@@ -525,7 +572,7 @@ function Armies({ g, px, k, selected }: { g: GameState; px: number; k: number; s
       const r = radii[i];
       const ang = (i / vis.length) * Math.PI * 2 - Math.PI / 2;
       const cx = p.lx + Math.cos(ang) * spread, cy = p.ly + Math.sin(ang) * spread;
-      const sel = a.id === selected;
+      const sel = a.id === selected || group.includes(a.id);
       const mine = a.owner === g.player;
       const hostile = atWar(g, a.owner, g.player);
       const label = `${mine ? a.name : `${n?.name ?? a.owner} army`} — ${mine ? Math.round(str).toLocaleString() : `~${(Math.round(str / 2000) * 2).toFixed(0)}k`} soldiers${mine ? ` · org ${Math.round(armyOrg(a) * 100)}% · supply ${Math.round(a.lastSupplyRatio * 100)}%` : ''}`;

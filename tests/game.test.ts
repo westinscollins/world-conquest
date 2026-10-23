@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { newGame, refreshAllBudgets } from '../src/engine/setup';
 import { tick, runDays } from '../src/engine/sim';
 import { PROV, NPROV, isAdjacent } from '../src/engine/geo';
-import { recruit, recruitCost, unitUpkeep, findPath, createArmy, newUnit, armyStrength, checkRecruit } from '../src/engine/military';
+import { recruit, recruitCost, unitUpkeep, findPath, createArmy, newUnit, armyStrength, checkRecruit, trainDays, militaryStrength } from '../src/engine/military';
 import { computeBudget, aggregate, startConstruction, borrow, buildCost } from '../src/engine/economy';
 import { battleDaily, startBattle } from '../src/engine/battle';
 import { declareWar, makePeace, evaluatePeace, scoreFor } from '../src/engine/diplomacy';
@@ -10,7 +10,7 @@ import { setController, transferProvince } from '../src/engine/territory';
 import { serialize, deserialize } from '../src/engine/save';
 import { supplyDaily, supplyReport } from '../src/engine/supply';
 import { ownedBy, armiesIn, atWar, invalidateArmies, neighborsOf } from '../src/engine/world';
-import { moveArmy, doDeclareWar, proposePeace, build, hireGeneral, doAssignGeneral } from '../src/engine/actions';
+import { moveArmy, doDeclareWar, proposePeace, build, hireGeneral, doAssignGeneral, setPosture, retreatArmy, setAllStances, moveArmies } from '../src/engine/actions';
 import { UNITS, MIL } from '../src/engine/config';
 import type { GameState, Army, UnitType } from '../src/engine/types';
 
@@ -110,25 +110,45 @@ describe('military', () => {
   it('recruitment costs money and manpower and takes training time', () => {
     const s = newGame('serbia', { seed: 3 });
     const n = s.nations.SRB;
-    n.stockpile.smallArms = 10;
     const t0 = n.treasury, m0 = n.manpower;
     const before = Object.values(s.armies).filter((a) => a.owner === 'SRB').reduce((t, a) => t + a.units.length, 0);
     const r = recruit(s, n, 'infantry', n.capital);
     expect(r.ok).toBe(true);
     expect(t0 - n.treasury).toBeCloseTo(recruitCost('infantry', n), 6);
     expect(m0 - n.manpower).toBe(UNITS.infantry.personnel);
-    runDays(s, UNITS.infantry.trainDays - 2);
+    runDays(s, trainDays('infantry', n) - 2);
     expect(Object.values(s.armies).filter((a) => a.owner === 'SRB').reduce((t, a) => t + a.units.length, 0)).toBe(before);
     runDays(s, 3);
     expect(Object.values(s.armies).filter((a) => a.owner === 'SRB').reduce((t, a) => t + a.units.length, 0)).toBe(before + 1);
   });
-  it('units deploy under-equipped when the stockpile is empty', () => {
+  it('units deploy fully equipped, and the price includes their equipment', () => {
     const s = newGame('serbia', { seed: 3 });
-    const n = s.nations.SRB; n.stockpile.smallArms = 0; n.production = [];
+    const n = s.nations.SRB;
+    expect(recruitCost('armored', n)).toBeGreaterThan(recruitCost('infantry', n) * 2);
     recruit(s, n, 'infantry', n.capital);
-    runDays(s, UNITS.infantry.trainDays + 1);
+    runDays(s, trainDays('infantry', n) + 1);
     const newest = Object.values(s.armies).filter((a) => a.owner === 'SRB').flatMap((a) => a.units).sort((a, b) => b.id - a.id)[0];
-    expect(newest.equipment).toBeLessThan(0.2);
+    expect(newest.type).toBe('infantry');
+    expect(newest.equipment).toBe(1);
+  });
+  it('factories make units cheaper and faster to train', () => {
+    const s = newGame('serbia', { seed: 3 });
+    const n = s.nations.SRB;
+    n.lastFactories = 0;
+    const c0 = recruitCost('armored', n), d0 = trainDays('armored', n);
+    n.lastFactories = 10;
+    expect(recruitCost('armored', n)).toBeLessThan(c0 * 0.85);
+    expect(trainDays('armored', n)).toBeLessThan(d0);
+  });
+  it('military strength is a stable number that only changes with actions', () => {
+    const s = newGame('serbia', { seed: 5 });
+    const n = s.nations.SRB;
+    const p0 = militaryStrength(s, 'SRB');
+    expect(p0).toBeGreaterThan(0);
+    runDays(s, 20);
+    expect(militaryStrength(s, 'SRB')).toBe(p0);
+    recruit(s, n, 'armored', n.capital);
+    expect(militaryStrength(s, 'SRB')).toBe(p0 + UNITS.armored.points);
   });
   it('upkeep is derived consistently from the central config', () => {
     for (const t of Object.keys(UNITS) as UnitType[]) {
@@ -339,7 +359,6 @@ describe('player campaign loop (acceptance)', () => {
     const me = s.nations.SRB;
     // build + recruit
     expect(build(s, me.capital, 'road').ok).toBe(true);
-    me.stockpile.smallArms = 20;
     expect(recruit(s, me, 'infantry', me.capital).ok).toBe(true);
     const gen = Object.values(s.generals).find((g) => g.owner === 'SRB' && g.available)!;
     expect(hireGeneral(s, gen.id).ok).toBe(true);
@@ -371,3 +390,35 @@ describe('player campaign loop (acceptance)', () => {
 
 export {};
 void armyStrength; void refreshAllBudgets; void isAdjacent; void ({} as Army);
+
+describe('war controls', () => {
+  it('posture changes apply to an ongoing battle and attackers can call off an attack', () => {
+    const s = newGame('serbia', { seed: 7 });
+    s.armies = {}; invalidateArmies();
+    const prov = s.nations.SRB.capital;
+    const from = PROV[prov].neighbors.find((p) => s.provinces[p].owner !== 'SRB') ?? PROV[prov].neighbors[0];
+    const enemy = s.provinces[from].owner === 'SRB' ? 'HUN' : s.provinces[from].owner;
+    s.provinces[prov].controller = enemy; s.provinces[from].controller = 'SRB';
+    declareWar(s, s.nations.SRB, enemy);
+    const A = createArmy(s, 'SRB', from, ['infantry', 'infantry'].map((t) => newUnit(s, t as UnitType, 1, 0.2)));
+    createArmy(s, enemy, prov, ['infantry', 'infantry', 'infantry'].map((t) => newUnit(s, t as UnitType, 1, 0.2)));
+    const b = startBattle(s, [A], prov, from)!;
+    battleDaily(s, b);
+    expect(setPosture(s, A.id, 'aggressive').ok).toBe(true);
+    expect(b.attackerPosture).toBe('aggressive');
+    expect(retreatArmy(s, A.id).ok).toBe(true);
+    expect(A.battleId).toBeNull();
+    battleDaily(s, b);
+    expect(b.result).toBe('defender');
+  });
+  it('orders for all armies and group moves', () => {
+    const s = newGame('serbia', { seed: 7 });
+    expect(setAllStances(s, 'defend').ok).toBe(true);
+    for (const a of Object.values(s.armies)) if (a.owner === 'SRB') expect(a.stance).toBe('defend');
+    const mine = Object.values(s.armies).filter((a) => a.owner === 'SRB');
+    const dest = ownedBy(s, 'SRB').find((p) => p !== mine[0].location)!;
+    const r = moveArmies(s, mine.map((a) => a.id), dest);
+    expect(r.ok).toBe(true);
+    for (const a of mine) expect(a.path[a.path.length - 1] === dest || a.location === dest).toBe(true);
+  });
+});

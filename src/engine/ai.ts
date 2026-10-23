@@ -41,7 +41,6 @@ function aiEconomy(s: GameState, n: Nation) {
   // fiscal emergency: austerity before anything else
   if (n.bankrupt || n.debt > out * 0.8 || (n.treasury < 0 && n.budget.net < 0)) {
     n.taxRate = Math.min(ECON.MAX_TAX - 0.08, n.taxRate + 0.02);
-    for (const l of n.production) l.factories = Math.floor(l.factories / 2);
     if (!war) {
       const armies = Object.values(s.armies).filter((a) => a.owner === n.id && !a.battleId);
       let cut = Math.ceil(armies.reduce((t, a) => t + a.units.length, 0) * 0.08);
@@ -93,17 +92,6 @@ function aiEconomy(s: GameState, n: Nation) {
     const r = startConstruction(s, n, c.p, c.kind);
     if (r.ok) { budget -= r.cost; started++; }
   }
-  // production: keep stockpiles stocked for reinforcements
-  const facs = n.lastFactories || 0;
-  if (!n.production.length) n.production = [{ id: s.nextId++, kind: 'smallArms', factories: 0 }];
-  const want = Math.round(facs * (war ? 0.7 : n.personality === 'expansionist' ? 0.4 : 0.2));
-  const sa = n.production.find((l) => l.kind === 'smallArms')!;
-  const others = n.production.filter((l) => l !== sa);
-  const affordable = n.budget.net > -out * 0.05 || war;
-  const totalWant = affordable ? want : Math.floor(want / 2);
-  sa.factories = Math.ceil(totalWant * (others.length ? 0.55 : 1));
-  const rest = totalWant - sa.factories;
-  others.forEach((l, i) => { l.factories = Math.floor(rest / others.length) + (i < rest % others.length ? 1 : 0); });
 }
 
 // ---------------------------------------------------------------- recruitment
@@ -141,8 +129,6 @@ function aiMilitaryBuild(s: GameState, n: Nation) {
       budget -= up + r.cost * 0.2;
       k++;
     }
-    // equipment lines for what is being trained
-    for (const t of n.training) for (const e in UNITS[t.type].equip) if (!n.production.some((l) => l.kind === e)) n.production.push({ id: s.nextId++, kind: e as never, factories: 0 });
   } else if (!war && mil > target * 1.4 && n.budget.net < 0) {
     // demobilise the weakest formation to save money
     const armies = Object.values(s.armies).filter((a) => a.owner === n.id && !a.battleId && !a.path.length);
@@ -264,7 +250,7 @@ export function armyAutomation(s: GameState, a: Army, full = false) {
     if (full) for (const o of armiesIn(s, a.location)) if (o.owner === n.id && o.id !== a.id && !o.battleId && !o.path.length && armyOrg(o) > 0.5 && o.lastSupplyRatio > 0.5) o.path = [best.p];
     return;
   }
-  if (!full) return;
+  if (!full && stance !== 'advance') return;
   // otherwise move toward the most valuable reachable front within a few hops
   const front = frontTarget(s, a, n);
   if (front != null) {

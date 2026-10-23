@@ -3,6 +3,9 @@ import { store, useStore, type MapMode, type Panel } from './store';
 import { Icon } from './icons';
 import { Modal, Btn } from './common';
 import { EconomyPanel } from './panels/EconomyPanel';
+import { WarPanel } from './panels/WarPanel';
+import { live } from './live';
+import { num, neg } from './format';
 import { MilitaryPanel } from './panels/MilitaryPanel';
 import { DiplomacyPanel } from './panels/DiplomacyPanel';
 import { ResearchPanel, StatsPanel, HelpPanel } from './panels/OtherPanels';
@@ -13,14 +16,15 @@ import { cls } from './format';
 import { audio } from '../audio/music';
 
 const NAV: [Exclude<Panel, null>, string, string][] = [
-  ['economy', 'Economy', 'coin'], ['military', 'Military', 'sword'], ['diplomacy', 'Diplomacy', 'handshake'],
+  ['war', 'War Room', 'battle'], ['economy', 'Economy', 'coin'], ['military', 'Military', 'manpower'], ['diplomacy', 'Diplomacy', 'handshake'],
   ['research', 'Research', 'flask'], ['stats', 'Objectives', 'crown'], ['help', 'Help', 'book'],
 ];
-const TITLES: Record<string, string> = { economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
+const TITLES: Record<string, string> = { war: 'War Room', economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
 
 export function LeftNav() {
   const { g, ui } = useStore();
   if (!g) return null;
+  const fights = g.activeBattles.filter((id) => { const b = g.battles[id]; return b && (b.attacker.nation === g.player || b.defender.nation === g.player); }).length;
   const offers = g.peaceOffers.filter((o) => o.to === g.player).length + g.proposals.filter((p) => p.to === g.player).length;
   return (
     <>
@@ -30,12 +34,14 @@ export function LeftNav() {
             <Icon name={i} size={20} />
             <span>{l}</span>
             {k === 'diplomacy' && offers > 0 && <span className="badge">{offers}</span>}
+            {k === 'war' && fights > 0 && <span className="badge">{fights}</span>}
           </button>
         ))}
       </nav>
       {ui.panel && (
         <div className="drawer">
           <div className="drawer-h"><span>{TITLES[ui.panel]}</span><button className="iconbtn" onClick={() => store.setUI({ panel: null })}><Icon name="close" /></button></div>
+          {ui.panel === 'war' && <WarPanel />}
           {ui.panel === 'economy' && <EconomyPanel />}
           {ui.panel === 'military' && <MilitaryPanel />}
           {ui.panel === 'diplomacy' && <DiplomacyPanel />}
@@ -79,6 +85,27 @@ export function EventLog() {
               <span>{e.text}</span>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Live war ticker: provinces changing hands and the running casualty count. */
+export function LiveTicker() {
+  const { g } = useStore();
+  if (!g) return null;
+  const atWarNow = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
+  const [mine, theirs] = live.recent(g, 7);
+  if (!atWarNow && !live.ticker.length) return null;
+  return (
+    <div className="live-ticker">
+      {live.ticker.map((t) => (
+        <div key={t.id} className={cls('lt', t.kind)} onClick={() => { focusProvince(t.province); store.setUI({ selectedProvince: t.province }); }}>{t.kind === 'good' ? '⚑ ' : '✖ '}{t.text}</div>
+      ))}
+      {atWarNow && (
+        <div className="lt-sum" onClick={() => store.setUI({ panel: 'war' })} title="Open the War Room">
+          ⚔ Last 7 days: <b className="bad">{neg(mine)}</b> yours · <b>{neg(theirs)}</b> enemy
         </div>
       )}
     </div>

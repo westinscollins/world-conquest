@@ -19,7 +19,7 @@ export function TopBar() {
   const n = g.nations[g.player];
   const b = n.budget;
   const civ = b.expenses.filter((l) => ['services', 'admin', 'occupation', 'buildings'].includes(l.key)).reduce((t, l) => t + l.amount, 0);
-  const mil = b.expenses.filter((l) => ['military', 'naval', 'ops', 'generals', 'production'].includes(l.key)).reduce((t, l) => t + l.amount, 0);
+  const mil = b.expenses.filter((l) => ['military', 'naval', 'ops', 'generals'].includes(l.key)).reduce((t, l) => t + l.amount, 0);
   const war = isAtWar(g, g.player);
   const quickSave = async () => {
     try { await saveGame('quick', g); store.act((s) => markTutorial(s, 'saved')); store.toast('Game saved (quick slot).', 'good'); } catch (e) { store.toast(`Save failed: ${(e as Error).message}`, 'bad'); }

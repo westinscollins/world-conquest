@@ -6,10 +6,9 @@ import { provinceOutput, buildCost, resourceYield, collectionEfficiency } from '
 import type { GameState, Nation, ProvinceState } from '../engine/types';
 import { provinceWeather } from '../engine/weather';
 import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf } from '../engine/world';
-import { perceivedPower } from '../engine/diplomacy';
 import { supplyMap } from '../engine/supply';
 import { build, doProvinceStatus, doRecruit, doRelease } from '../engine/actions';
-import { checkRecruit, armyStrength } from '../engine/military';
+import { checkRecruit, armyStrength, militaryStrength, industryBonus } from '../engine/military';
 import type { BuildingKind, UnitType } from '../engine/types';
 import { Section, Btn, Tip, Stat, Bar, Tabs } from './common';
 import { Icon } from './icons';
@@ -113,8 +112,8 @@ function NationSummary({ id }: { id: string }) {
   const g = store.game!;
   const n = g.nations[id];
   const isMe = id === g.player;
-  const pp = perceivedPower(g, g.player, id);
-  const my = perceivedPower(g, g.player, g.player);
+  const pp = militaryStrength(g, id);
+  const my = militaryStrength(g, g.player);
   return (
     <Section title={<>{n.name}{n.overlord ? <span className="muted small"> (subject of {g.nations[n.overlord]?.name})</span> : null}</>} icon="flag">
       <div className="grid2">
@@ -123,7 +122,7 @@ function NationSummary({ id }: { id: string }) {
         <Stat label="Output" value={`${money(n.budget.output)} IC`} />
         <Stat label="Treasury" value={isMe ? `${money(n.treasury)} IC` : `~${money(Math.round(n.treasury / 25) * 25)} IC`} tip={isMe ? undefined : 'Estimated by your intelligence services.'} />
         <Stat label="Stability" value={`${n.stability.toFixed(0)}%`} />
-        <Stat label="Military" value={isMe ? pp.toFixed(0) : `~${pp.toFixed(0)}`} tip={isMe ? 'Your combat power index.' : `Estimated combat power (your intel is imperfect). Yours: ${my.toFixed(0)}.`} tone={!isMe && pp > my * 1.3 ? 'bad' : undefined} />
+        <Stat label="Military strength" value={pp.toLocaleString()} tip={`Military strength: fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12, air 25…) and warship, including units still in training. It only changes when forces are raised, disbanded or destroyed.${isMe ? '' : ` Yours: ${my.toLocaleString()}.`}`} tone={!isMe && pp > my * 1.3 ? 'bad' : undefined} />
         <Stat label="Personality" value={isMe ? '—' : n.personality} />
         <Stat label="Allies" value={alliesOf(g, id).length} />
       </div>
@@ -181,7 +180,7 @@ function RecruitTab({ p }: { p: number }) {
   const training = n.training.filter((t) => t.province === p);
   return (
     <>
-      <p className="small muted">Recruitment fees are paid now. Equipment is drawn from your stockpile when training ends — keep factories producing it (Economy → Production), or the unit deploys under-equipped.</p>
+      <p className="small muted">One price covers training and full equipment. The unit appears here, ready to fight, when training ends. {industryBonus(n).discount > 0 ? `Your ${Math.round(n.lastFactories)} factories make units ${Math.round(industryBonus(n).discount * 100)}% cheaper and ${Math.round(industryBonus(n).speed * 100)}% faster to train.` : 'Build factories to make units cheaper and faster to train.'}</p>
       {training.length > 0 && (
         <Section title="Training here" icon="manpower">
           {training.map((t) => <div key={t.id} className="queue-row"><span>{UNITS[t.type].label}</span><Bar value={1 - t.daysLeft / t.totalDays} /><span className="muted">{t.daysLeft}d</span></div>)}
@@ -191,8 +190,6 @@ function RecruitTab({ p }: { p: number }) {
         {types.map((t) => {
           const c = checkRecruit(g, n, t, p);
           const sp = UNITS[t];
-          const eq = Object.entries(sp.equip).map(([k, v]) => `${k} ${v}`).join(', ');
-          const stockOk = Object.entries(sp.equip).every(([k, v]) => n.stockpile[k as keyof typeof n.stockpile] >= (v ?? 0));
           return (
             <div key={t} className={`build-item${!c.ok ? ' dis' : ''}`}>
               <div className="bi-top">
@@ -202,11 +199,12 @@ function RecruitTab({ p }: { p: number }) {
               <div className="bi-cost">
                 <span><Icon name="coin" size={12} color="#e8c36a" /> {moneyIC(c.cost, { digits: 2 })}</span>
                 <span><Icon name="manpower" size={12} /> {num(sp.personnel)}</span>
-                <span>⏱ {sp.trainDays}d</span>
+                <span>⏱ {c.days}d</span>
+                <span title="Military strength points this unit adds">+{sp.points} strength</span>
                 <span>upkeep {money(c.upkeep, { digits: 2 })}/yr</span>
                 <span className={n.budget.net - c.upkeep < 0 ? 'bad' : 'muted'}>net after: {money(n.budget.net - c.upkeep, { sign: true })}/yr</span>
               </div>
-              <div className="bi-desc">{sp.desc} <span className={stockOk ? 'good' : 'warn'}>Needs equipment: {eq} M IC{stockOk ? ' (in stock)' : ' (not yet in stock)'}</span>{c.reason && <><br /><span className="warn">{c.reason}</span></>}</div>
+              <div className="bi-desc">{sp.desc}{c.reason && <><br /><span className="warn">{c.reason}</span></>}</div>
             </div>
           );
         })}

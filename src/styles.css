@@ -333,3 +333,31 @@ svg.map.moving { cursor: crosshair; }
 .net-banner { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); z-index: 40; background: rgba(60, 45, 12, .96); border: 1px solid var(--warn); color: var(--gold2); padding: 8px 16px; border-radius: 6px; font-size: 12.5px; }
 @media (max-width: 1100px) { .online-pill, .online-pop { right: 312px; } }
 @media (max-width: 600px) { .mp-choice, .lobby-grid { grid-template-columns: 1fr; } .online-pill { right: 8px; top: 100px; } .online-pop { right: 8px; top: 128px; } }
+
+/* ---- live war feedback */
+.battle-tally rect { fill: rgba(10, 12, 18, .85); stroke: rgba(255, 120, 100, .5); stroke-width: .8; }
+.battle-tally text { font: 700 10px var(--ui, sans-serif); }
+.battle-tally .t-mine { fill: #ff8a78; } .battle-tally .t-enemy { fill: #f2efe6; }
+.live-floats .float { font: 800 13px var(--ui, sans-serif); paint-order: stroke; stroke: rgba(0,0,0,.85); stroke-width: 3px; animation: floatup 2.6s ease-out forwards; }
+.live-floats .float.mine { fill: #ff6a55; } .live-floats .float.enemy { fill: #ffffff; }
+@keyframes floatup { 0% { transform: translateY(0); opacity: 0; } 10% { opacity: 1; } 75% { opacity: 1; } 100% { transform: translateY(-26px); opacity: 0; } }
+.flashes .flash { stroke-width: 2; vector-effect: non-scaling-stroke; animation: provflash 1.4s ease-in-out 3; opacity: 0; }
+.flashes .flash.gained { fill: rgba(120, 230, 120, .55); stroke: #9cf09c; }
+.flashes .flash.lost { fill: rgba(255, 70, 50, .6); stroke: #ff8a78; }
+@keyframes provflash { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+.live-ticker { position: absolute; right: 372px; bottom: 182px; width: 300px; z-index: 12; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+.live-ticker .lt { background: rgba(14, 18, 27, .92); border: 1px solid var(--line); border-left: 3px solid var(--good); border-radius: 5px; padding: 4px 8px; font-size: 12px; animation: slideinr .2s ease-out; pointer-events: auto; cursor: pointer; }
+.live-ticker .lt.bad { border-left-color: var(--bad); }
+.live-ticker .lt-sum { background: rgba(60, 14, 10, .9); border: 1px solid rgba(255,100,80,.5); border-radius: 5px; padding: 5px 8px; font-size: 12px; pointer-events: auto; cursor: pointer; }
+.war-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,.02); }
+.war-card h4 { margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
+.vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.vs .r { text-align: right; } .vs .c { color: var(--muted); font-size: 11px; text-align: center; }
+.big-num { font-size: 18px; font-weight: 700; }
+.battle-row { border-top: 1px solid var(--line); padding: 8px 0; }
+.battle-row .row { align-items: center; }
+.orders { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 10px; }
+.orders button { padding: 8px 4px; font-size: 12px; line-height: 1.25; }
+.orders button small { display: block; color: var(--muted); font-size: 10.5px; }
+.link { color: var(--gold2); cursor: pointer; } .link:hover { text-decoration: underline; }
+.stance-bar { display: flex; gap: 4px; align-items: center; padding: 0 12px 8px; flex-wrap: wrap; } .stance-bar .posture { flex: 1; padding: 5px 4px; }

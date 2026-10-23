@@ -134,7 +134,9 @@ export function HelpPanel() {
           <li><b>Map:</b> drag to pan, wheel to zoom. Left-click selects provinces and armies; <b>right-click</b> orders the selected army to move or attack. Map modes (bottom-left) show terrain, resources, infrastructure, supply, military and diplomacy.</li>
           <li><b>Time:</b> Space pauses; keys 1–3 set speed. Orders can be given while paused.</li>
           <li><b>Economy:</b> taxes fund everything. Each formation, building and project has explicit costs and upkeep — check the budget before expanding. Deficits drain the treasury, then debt, then default.</li>
-          <li><b>Army:</b> recruit in your provinces (fee now, training time, equipment from factories). Mobilise before major wars for full organisation.</li>
+          <li><b>Army:</b> recruit in your provinces: one price covers training and full equipment, and the unit appears ready to fight when training ends. Factories make units cheaper and faster. Mobilise before major wars for full organisation.</li>
+          <li><b>War Room</b> (top of the left bar): every war's losses and territory, every battle in progress — change posture, retreat or send reinforcements — and one-click orders for all armies (Attack, Defend, Hold, Withdraw). Shift-click armies to move several together.</li>
+          <li><b>Military strength</b> is a fixed rating: points per formation and warship, so it only changes when you raise, disband or lose units.</li>
           <li><b>Supply:</b> armies draw supply from your capital, depots and ports through roads and railways. Long, poor routes starve armies. Use the Supply map mode and army Supply tab.</li>
           <li><b>Battles</b> last several days. Terrain, weather, entrenchment, supply, generals, recon, air, equipment and posture all matter — read the battle report's “Why this result?”.</li>
           <li><b>Peace:</b> occupy territory to raise war score, then negotiate. Conquered land must be integrated (money, time) or made autonomous; resistance grows without garrisons.</li>

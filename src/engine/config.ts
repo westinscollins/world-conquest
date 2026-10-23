@@ -80,10 +80,8 @@ export const RESOURCE: Record<ResourceKind, { label: string; basePrice: number; 
 export const RESOURCE_DEMAND = {
   foodPerMillionPop: 0.32,
   steelPerFactory: 0.25,
-  steelPerEquipM: 0.04,   // per M IC of equipment produced per year
   oilPerFuel: 0.22,       // per unit fuel rating of deployed formations (doubled on campaign)
   oilPerOutput: 0.0012,   // civilian demand per M IC output
-  rarePerAdvancedEquipM: 0.025,
 };
 
 // ---------------------------------------------------------------- buildings
@@ -93,7 +91,7 @@ export interface BuildingSpec {
   desc: string; needsCoast?: boolean; steel?: number;
 }
 export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
-  factory: { label: 'Factory', cost: 14, days: 240, upkeep: 0.35, max: 12, output: 3, steel: 2, desc: `+${3.2} M IC/yr equipment capacity, +3 M IC output. Consumes steel.` },
+  factory: { label: 'Factory', cost: 14, days: 240, upkeep: 0.35, max: 12, output: 3, steel: 2, desc: '+3 M IC output. Each factory also makes new formations 2.5% cheaper and 3% faster to train (up to 35% / 40%). Consumes steel.' },
   farm: { label: 'Agricultural Estate', cost: 5, days: 120, upkeep: 0.1, max: 6, output: 1.6, desc: '+1 food level, +1.6 M IC output. Food surplus raises stability.' },
   mine: { label: 'Extraction Site', cost: 9, days: 200, upkeep: 0.25, max: 4, output: 1.2, desc: '+50% of province steel/oil/rare yield per level (needs a resource).' },
   port: { label: 'Port', cost: 10, days: 210, upkeep: 0.3, max: 5, output: 1.5, needsCoast: true, desc: 'Sea supply hub, naval base, +trade. Required for naval transport.' },
@@ -122,6 +120,8 @@ export const MIL = {
   ARMY_SUPPLY_DAYS: 25,    // carried supply stock in days of demand
   MAX_ARMY_UNITS: 24,
   ATTRITION_NO_SUPPLY: 0.004, // strength lost per day at zero supply
+  /** Factories make the military cheaper and faster to raise: per factory, capped. */
+  FACTORY_DISCOUNT: 0.025, FACTORY_DISCOUNT_MAX: 0.35, FACTORY_SPEED: 0.03, FACTORY_SPEED_MAX: 0.4,
   REINFORCE_RATE: 0.02,    // share of max strength refilled per day when supplied
   ORG_REGEN: 0.06,         // per day out of combat
   ENTRENCH_RATE: 0.04,
@@ -129,26 +129,26 @@ export const MIL = {
 };
 
 export interface UnitSpec {
-  label: string; short: string; personnel: number; equip: Partial<Record<EquipKind, number>>; trainDays: number;
+  label: string; short: string; points: number; personnel: number; equip: Partial<Record<EquipKind, number>>; trainDays: number;
   speed: number; soft: number; hard: number; defense: number; breakthrough: number; hardness: number; piercing: number;
   recon: number; air: number; supply: number; fuel: number; width: number; support: boolean; desc: string;
 }
 export const UNITS: Record<UnitType, UnitSpec> = {
-  infantry: { label: 'Infantry Brigade', short: 'INF', personnel: 3000, equip: { smallArms: 1.2 }, trainDays: 60, speed: 26, soft: 6, hard: 1, defense: 9, breakthrough: 2, hardness: 0.05, piercing: 1, recon: 1, air: 0, supply: 1.0, fuel: 0, width: 2, support: false, desc: 'Backbone of any army. Cheap, sturdy on defence, slow.' },
-  mechanized: { label: 'Mechanized Brigade', short: 'MECH', personnel: 2500, equip: { smallArms: 0.8, vehicles: 3.2 }, trainDays: 90, speed: 44, soft: 8, hard: 3, defense: 11, breakthrough: 7, hardness: 0.45, piercing: 3, recon: 2, air: 0, supply: 1.4, fuel: 1.0, width: 2, support: false, desc: 'Infantry in armoured carriers. Fast, resilient, fuel-hungry.' },
-  armored: { label: 'Armored Brigade', short: 'ARM', personnel: 1800, equip: { armor: 7.0, vehicles: 1.0 }, trainDays: 120, speed: 40, soft: 10, hard: 12, defense: 5, breakthrough: 17, hardness: 0.85, piercing: 8, recon: 2, air: 0, supply: 1.9, fuel: 2.6, width: 2, support: false, desc: 'Main battle tanks. Breaks fronts, weak in jungle and mountains.' },
-  artillery: { label: 'Artillery Regiment', short: 'ART', personnel: 1500, equip: { artillery: 3.0, smallArms: 0.3 }, trainDays: 80, speed: 22, soft: 15, hard: 3, defense: 2, breakthrough: 1, hardness: 0.1, piercing: 2, recon: 0, air: 0, supply: 1.7, fuel: 0.3, width: 1, support: true, desc: 'Fire support from the second line. Consumes heavy ammunition.' },
-  engineers: { label: 'Engineer Battalion', short: 'ENG', personnel: 1200, equip: { vehicles: 0.8, smallArms: 0.4 }, trainDays: 70, speed: 26, soft: 1, hard: 1, defense: 3, breakthrough: 1, hardness: 0.2, piercing: 1, recon: 0, air: 0, supply: 0.6, fuel: 0.3, width: 0, support: true, desc: 'Bridging, fortification and obstacle clearing. Halves river/fort penalties, faster dig-in.' },
-  recon: { label: 'Reconnaissance Battalion', short: 'REC', personnel: 900, equip: { vehicles: 1.1, smallArms: 0.2 }, trainDays: 60, speed: 50, soft: 2, hard: 1, defense: 2, breakthrough: 2, hardness: 0.3, piercing: 1, recon: 6, air: 0, supply: 0.5, fuel: 0.5, width: 0, support: true, desc: 'Scouts and drones. Better intelligence, mobile-manoeuvre bonus.' },
-  air: { label: 'Air Wing', short: 'AIR', personnel: 450, equip: { aircraft: 11.0 }, trainDays: 150, speed: 200, soft: 7, hard: 5, defense: 0, breakthrough: 0, hardness: 0, piercing: 6, recon: 3, air: 10, supply: 1.2, fuel: 2.2, width: 0, support: true, desc: 'Fighters and strike aircraft. Air superiority and close support; grounded by storms.' },
+  infantry: { points: 10, label: 'Infantry Brigade', short: 'INF', personnel: 3000, equip: { smallArms: 1.2 }, trainDays: 60, speed: 26, soft: 6, hard: 1, defense: 9, breakthrough: 2, hardness: 0.05, piercing: 1, recon: 1, air: 0, supply: 1.0, fuel: 0, width: 2, support: false, desc: 'Backbone of any army. Cheap, sturdy on defence, slow.' },
+  mechanized: { points: 18, label: 'Mechanized Brigade', short: 'MECH', personnel: 2500, equip: { smallArms: 0.8, vehicles: 3.2 }, trainDays: 90, speed: 44, soft: 8, hard: 3, defense: 11, breakthrough: 7, hardness: 0.45, piercing: 3, recon: 2, air: 0, supply: 1.4, fuel: 1.0, width: 2, support: false, desc: 'Infantry in armoured carriers. Fast, resilient, fuel-hungry.' },
+  armored: { points: 30, label: 'Armored Brigade', short: 'ARM', personnel: 1800, equip: { armor: 7.0, vehicles: 1.0 }, trainDays: 120, speed: 40, soft: 10, hard: 12, defense: 5, breakthrough: 17, hardness: 0.85, piercing: 8, recon: 2, air: 0, supply: 1.9, fuel: 2.6, width: 2, support: false, desc: 'Main battle tanks. Breaks fronts, weak in jungle and mountains.' },
+  artillery: { points: 12, label: 'Artillery Regiment', short: 'ART', personnel: 1500, equip: { artillery: 3.0, smallArms: 0.3 }, trainDays: 80, speed: 22, soft: 15, hard: 3, defense: 2, breakthrough: 1, hardness: 0.1, piercing: 2, recon: 0, air: 0, supply: 1.7, fuel: 0.3, width: 1, support: true, desc: 'Fire support from the second line. Consumes heavy ammunition.' },
+  engineers: { points: 5, label: 'Engineer Battalion', short: 'ENG', personnel: 1200, equip: { vehicles: 0.8, smallArms: 0.4 }, trainDays: 70, speed: 26, soft: 1, hard: 1, defense: 3, breakthrough: 1, hardness: 0.2, piercing: 1, recon: 0, air: 0, supply: 0.6, fuel: 0.3, width: 0, support: true, desc: 'Bridging, fortification and obstacle clearing. Halves river/fort penalties, faster dig-in.' },
+  recon: { points: 6, label: 'Reconnaissance Battalion', short: 'REC', personnel: 900, equip: { vehicles: 1.1, smallArms: 0.2 }, trainDays: 60, speed: 50, soft: 2, hard: 1, defense: 2, breakthrough: 2, hardness: 0.3, piercing: 1, recon: 6, air: 0, supply: 0.5, fuel: 0.5, width: 0, support: true, desc: 'Scouts and drones. Better intelligence, mobile-manoeuvre bonus.' },
+  air: { points: 25, label: 'Air Wing', short: 'AIR', personnel: 450, equip: { aircraft: 11.0 }, trainDays: 150, speed: 200, soft: 7, hard: 5, defense: 0, breakthrough: 0, hardness: 0, piercing: 6, recon: 3, air: 10, supply: 1.2, fuel: 2.2, width: 0, support: true, desc: 'Fighters and strike aircraft. Air superiority and close support; grounded by storms.' },
 };
 
-export interface ShipSpec { label: string; personnel: number; cost: number; days: number; attack: number; defense: number; speed: number; capacity: number; }
+export interface ShipSpec { label: string; points: number; personnel: number; cost: number; days: number; attack: number; defense: number; speed: number; capacity: number; }
 export const SHIPS: Record<ShipType, ShipSpec> = {
-  destroyer: { label: 'Destroyer Flotilla', personnel: 1200, cost: 14, days: 180, attack: 4, defense: 4, speed: 1.4, capacity: 0 },
-  cruiser: { label: 'Cruiser Squadron', personnel: 2600, cost: 36, days: 300, attack: 10, defense: 9, speed: 1.1, capacity: 0 },
-  battlegroup: { label: 'Carrier Battle Group', personnel: 6000, cost: 110, days: 540, attack: 28, defense: 22, speed: 1.0, capacity: 0 },
-  transport: { label: 'Transport Flotilla', personnel: 700, cost: 7, days: 120, attack: 0, defense: 1, speed: 1.2, capacity: 4 },
+  destroyer: { points: 8, label: 'Destroyer Flotilla', personnel: 1200, cost: 14, days: 180, attack: 4, defense: 4, speed: 1.4, capacity: 0 },
+  cruiser: { points: 18, label: 'Cruiser Squadron', personnel: 2600, cost: 36, days: 300, attack: 10, defense: 9, speed: 1.1, capacity: 0 },
+  battlegroup: { points: 60, label: 'Carrier Battle Group', personnel: 6000, cost: 110, days: 540, attack: 28, defense: 22, speed: 1.0, capacity: 0 },
+  transport: { points: 1, label: 'Transport Flotilla', personnel: 700, cost: 7, days: 120, attack: 0, defense: 1, speed: 1.2, capacity: 4 },
 };
 export const SHIP_UPKEEP_SHARE = 0.06;
 

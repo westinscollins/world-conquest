@@ -1,5 +1,6 @@
 // UI store: owns the live GameState, the clock, selection and transient UI state.
 // The simulation mutates state in place; components subscribe to a version counter.
+import { live } from './live';
 import { useSyncExternalStore } from 'react';
 import type { GameState } from '../engine/types';
 import { tick } from '../engine/sim';
@@ -14,7 +15,7 @@ import { Session } from './net/session';
 import type { Result } from '../engine/actions';
 
 export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy';
-export type Panel = null | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
+export type Panel = null | 'war' | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
 
 export interface UIState {
   screen: 'menu' | 'game';
@@ -28,6 +29,8 @@ export interface UIState {
   battleReport: number | null;
   intel: null | { armyId: number; province: number };
   moveMode: number | null; // army id awaiting a left-click destination
+  /** Extra armies selected with shift-click; they move together with the selected army. */
+  group: number[];
   toasts: { id: number; text: string; kind: 'info' | 'good' | 'bad' | 'war' }[];
   confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void };
   peaceWar: number | null;
@@ -41,7 +44,7 @@ class Store {
   net: Session | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
-    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
+    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;
   private listeners = new Set<() => void>();
@@ -61,6 +64,7 @@ class Store {
     else if (this.net) { void this.net.close(); this.net = null; }
     const resync = this.net && this.game && this.ui.screen === 'game';
     this.game = g;
+    live.reset(g);
     invalidateTerritory(); invalidateArmies(); invalidateDiplo(); resetSupplyCache();
     // guests take the host's state verbatim (recomputing here could make the two copies differ)
     if (this.net?.role !== 'guest') refreshAllBudgets(g);
@@ -167,6 +171,7 @@ class Store {
     if (t - this.lastEmit > 100) { this.lastEmit = t; this.emit(); }
   }
   private afterTick(g: GameState) {
+    live.update(g);
     const online = !!this.net;
     // notifications → toasts (+ pause on war declarations against the player)
     if (g.notifications.length) {

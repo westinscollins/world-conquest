@@ -8,12 +8,12 @@ const errors = [];
 page.on('pageerror', (e) => errors.push('PAGEERROR ' + e.message));
 page.on('response', (r) => { if (r.status() >= 400) errors.push('HTTP ' + r.status() + ' ' + r.url()); });
 page.on('console', (m) => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text()); });
-const step = async (name, fn) => { try { await fn(); console.log('ok  ', name); } catch (e) { console.log('FAIL', name, e.message.split('\n')[0]); errors.push(name); } };
+const step = async (name, fn) => { try { await fn(); console.log('ok  ', name); } catch (e) { console.log('FAIL', name, e.message.split('\n')[0]); errors.push(name); await page.screenshot({ path: out + '/fail-' + name.replace(/\W+/g, '_') + '.png' }).catch(() => {}); } };
 const st = (fn) => page.evaluate(fn);
 await page.goto(url);
 await step('start tutorial', async () => { await page.click('text=Tutorial: The Belgrade Accord'); await page.click('text=Begin campaign'); await page.waitForSelector('.topbar'); });
 await step('economy panel', async () => { await page.click('.nav-btn:has-text("Economy")'); await page.waitForSelector('.ledger'); await page.screenshot({ path: out + '/p-economy.png' }); });
-await step('production tab', async () => { await page.click('.tab:has-text("Production")'); await page.click('tr:has-text("Small arms") button:has-text("+")'); });
+await step('industry tab', async () => { await page.click('.tab:has-text("Industry")'); await page.waitForSelector('td:has-text("Armored Brigade")'); });
 await step('research', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tech.avail button:has-text("Research") >> nth=0'); await page.screenshot({ path: out + '/p-research.png' }); });
 await step('build road', async () => { await page.click('.nav-btn:has-text("Research")'); await page.click('.tab:has-text("Construction")'); await page.click('.build-item:has-text("Highway") button:has-text("Build")'); });
 await step('recruit', async () => { await page.click('.side-panel .tab:has-text("Recruit")'); await page.click('.build-item:has-text("Infantry Brigade") button:has-text("Recruit")'); });
@@ -50,6 +50,16 @@ await step('attack with intel report', async () => {
   else console.log('     (no defenders: plain move)');
 });
 await step('run time very fast', async () => { await page.click('.speeds button >> nth=3'); await page.waitForTimeout(9000); await page.click('.speeds button >> nth=0'); await page.screenshot({ path: out + '/p-war.png' }); });
+await step('war room', async () => {
+  await page.click('.nav-btn:has-text("War Room")');
+  try {
+    await page.waitForSelector('.orders');
+    await page.screenshot({ path: out + '/p-warroom.png' });
+    await page.click('.orders button:has-text("Defend")');
+    const ok = await st(() => Object.values(window.__wc.game.armies).filter(a => a.owner === window.__wc.game.player).every(a => a.stance === 'defend'));
+    if (!ok) throw new Error('orders not applied');
+  } finally { await page.click('.drawer-h .iconbtn'); }
+});
 await step('battle report', async () => {
   const id = await st(() => { const g = window.__wc.game; const b = Object.values(g.battles).find(b => b.attacker.nation === g.player || b.defender.nation === g.player) || Object.values(g.battles)[0]; return b?.id; });
   if (!id) throw new Error('no battle yet');
