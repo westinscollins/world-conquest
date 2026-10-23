@@ -244,7 +244,9 @@ export interface GameState {
   rng: number;               // rolling RNG state
   day: number;               // days since start
   startYear: number;
-  player: string;
+  player: string;            // the nation THIS client controls (local view)
+  players: string[];         // every human-controlled nation (multiplayer)
+  eventSeq: number;          // id counter for log events (kept apart from nextId so logs never affect the simulation)
   nations: Record<string, Nation>;
   provinces: ProvinceState[];
   armies: Record<number, Army>;

@@ -46,7 +46,7 @@ export function ArmyPanel() {
       <div className="sp-head" style={{ borderColor: n.color }}>
         <div>
           {renaming ? (
-            <input id="army-rename" className="rename" autoFocus defaultValue={a.name} onBlur={(e) => { store.act((s) => renameArmy(s, a.id, e.target.value)); setRenaming(false); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }} />
+            <input id="army-rename" className="rename" autoFocus defaultValue={a.name} onBlur={(e) => { store.cmd('renameArmy', [a.id, e.target.value]); setRenaming(false); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }} />
           ) : <div className="sp-title editable" title="Click to rename" onClick={() => setRenaming(true)}>{a.name}</div>}
           <div className="sp-sub">
             {a.embarked ? <>At sea → {PROV[a.embarked.dest].name}</> : <>in <a onClick={() => focusProvince(a.location)}>{PROV[a.location].name}</a></>}
@@ -58,7 +58,7 @@ export function ArmyPanel() {
       </div>
       <div className="army-actions">
         <Btn small kind={ui.moveMode === a.id ? 'primary' : undefined} disabled={a.battleId != null || !!a.embarked} onClick={() => store.setUI({ moveMode: ui.moveMode === a.id ? null : a.id })}>{ui.moveMode === a.id ? 'Click a province…' : 'Move / attack'}</Btn>
-        {a.path.length > 0 && !a.battleId && <Btn small onClick={() => store.act((s) => { s.armies[a.id].path = []; s.armies[a.id].moveProgress = 0; })}>Halt</Btn>}
+        {a.path.length > 0 && !a.battleId && <Btn small onClick={() => store.cmd('haltArmy', [a.id])}>Halt</Btn>}
         <Btn small kind="ghost" onClick={() => store.setUI({ selectedArmy: null, selectedProvince: a.location, moveMode: null })}>Province &amp; construction</Btn>
       </div>
       <div className="grid4">
@@ -87,9 +87,9 @@ export function ArmyPanel() {
               </tbody>
             </table>
             <div className="row gap wrap">
-              <Btn small disabled={!sel.length || sel.length === a.units.length} onClick={() => { const r = store.act((s) => splitArmy(s, a.id, sel)); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); }}>Split selected</Btn>
-              {others.map((o) => <Btn small key={o.id} onClick={() => { const r = store.act((s) => mergeArmies(s, a.id, o.id)); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Merge {o.name}</Btn>)}
-              <Btn small kind="danger" disabled={sel.length !== 1} onClick={() => store.setUI({ confirm: { title: 'Disband formation?', body: 'Personnel return to the manpower pool; equipment is scrapped. This cannot be undone.', danger: true, onOk: () => { const r = store.act((s) => disbandUnit(s, a.id, sel[0])); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); } } })}>Disband</Btn>
+              <Btn small disabled={!sel.length || sel.length === a.units.length} onClick={() => { const r = store.cmd('splitArmy', [a.id, sel]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); }}>Split selected</Btn>
+              {others.map((o) => <Btn small key={o.id} onClick={() => { const r = store.cmd('mergeArmies', [a.id, o.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Merge {o.name}</Btn>)}
+              <Btn small kind="danger" disabled={sel.length !== 1} onClick={() => store.setUI({ confirm: { title: 'Disband formation?', body: 'Personnel return to the manpower pool; equipment is scrapped. This cannot be undone.', danger: true, onOk: () => { const r = store.cmd('disbandUnit', [a.id, sel[0]]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); } } })}>Disband</Btn>
             </div>
             <p className="small muted">Equipment average {pct(armyEquip(a))}. Right-click a province on the map to move; right-click an enemy province to see an intelligence report before attacking.</p>
           </>
@@ -117,14 +117,14 @@ export function ArmyPanel() {
               <div className="posture-grid">
                 {(Object.keys(POSTURES) as Posture[]).map((p) => (
                   <Tip key={p} wide tip={<div><b>{POSTURES[p].label}</b><br />{POSTURES[p].desc}<br />Attack ×{POSTURES[p].attack} · Defence ×{POSTURES[p].defense} · Casualties ×{POSTURES[p].casualties} · breaks off at {pct(POSTURES[p].retreatAt)} org</div>}>
-                    <button className={`posture${a.posture === p ? ' on' : ''}`} onClick={() => store.act((s) => setPosture(s, a.id, p))}>{POSTURES[p].label}</button>
+                    <button className={`posture${a.posture === p ? ' on' : ''}`} onClick={() => store.cmd('setPosture', [a.id, p])}>{POSTURES[p].label}</button>
                   </Tip>
                 ))}
               </div>
             </Section>
             <Section title="Standing orders (stance)" icon="flag">
               <div className="posture-grid">
-                {STANCES.map(([k, l, d]) => <Tip key={k} tip={d}><button className={`posture${a.stance === k ? ' on' : ''}`} onClick={() => store.act((s) => setStance(s, a.id, k))}>{l}</button></Tip>)}
+                {STANCES.map(([k, l, d]) => <Tip key={k} tip={d}><button className={`posture${a.stance === k ? ' on' : ''}`} onClick={() => store.cmd('setStance', [a.id, k])}>{l}</button></Tip>)}
               </div>
             </Section>
             <Section title="Commanding general" icon="star">
@@ -133,12 +133,12 @@ export function ArmyPanel() {
                   <b>{gen.name}</b> <span className="chip">{TRAITS[gen.trait].label}</span>
                   <div className="small">Attack {gen.attack} · Defence {gen.defense} · Logistics {gen.logistics} · XP {gen.xp.toFixed(0)}/40</div>
                   <div className="small muted">{TRAITS[gen.trait].desc}</div>
-                  <Btn small kind="ghost" onClick={() => store.act((s) => doAssignGeneral(s, gen.id, null))}>Relieve of command</Btn>
+                  <Btn small kind="ghost" onClick={() => store.cmd('doAssignGeneral', [gen.id, null])}>Relieve of command</Btn>
                 </div>
               ) : <p className="small muted">No general. Assign one for skill bonuses:</p>}
               <div className="row gap wrap">
                 {Object.values(g.generals).filter((x) => x.owner === g.player && !x.available && x.armyId !== a.id).map((x) => (
-                  <Btn small key={x.id} onClick={() => store.act((s) => doAssignGeneral(s, x.id, a.id))} title={`${TRAITS[x.trait].label}: ${TRAITS[x.trait].desc}`}>{x.name} ({x.attack}/{x.defense}/{x.logistics}){x.armyId != null ? ' ⇄' : ''}</Btn>
+                  <Btn small key={x.id} onClick={() => store.cmd('doAssignGeneral', [x.id, a.id])} title={`${TRAITS[x.trait].label}: ${TRAITS[x.trait].desc}`}>{x.name} ({x.attack}/{x.defense}/{x.logistics}){x.armyId != null ? ' ⇄' : ''}</Btn>
                 ))}
               </div>
               <p className="small muted">Hire more generals in Military → Generals.</p>

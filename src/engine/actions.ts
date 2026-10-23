@@ -159,6 +159,7 @@ export function proposePeace(s: GameState, warId: number, terms: PeaceTerms): Re
   if (!w) return fail('War not found.');
   if (w.leaderA !== s.player && w.leaderD !== s.player) return fail('Only war leaders can negotiate.');
   const enemy = w.leaderA === s.player ? w.leaderD : w.leaderA;
+  if (s.nations[enemy]?.isPlayer) return offerToHuman(s, w.id, enemy, { ...terms, taker: terms.white ? null : s.player });
   if (terms.white) {
     const ev = evaluatePeace(s, w, s.player, terms);
     if (!ev.accept) return fail(ev.reason);
@@ -175,6 +176,7 @@ export function concedePeace(s: GameState, warId: number, terms: PeaceTerms): Re
   const w = s.wars.find((x) => x.id === warId);
   if (!w) return fail('War not found.');
   const enemy = w.leaderA === s.player ? w.leaderD : w.leaderA;
+  if (s.nations[enemy]?.isPlayer) return offerToHuman(s, w.id, enemy, { ...terms, taker: enemy });
   const ev = evaluatePeace(s, w, enemy, { ...terms, taker: enemy });
   // AI accepts concessions that are at least what it thinks it earned (it cannot refuse a generous offer)
   const demand = Math.max(0, ev.score - (s.nations[enemy].warExhaustion * 0.35));
@@ -182,9 +184,17 @@ export function concedePeace(s: GameState, warId: number, terms: PeaceTerms): Re
   makePeace(s, w, enemy, { ...terms, taker: enemy });
   return ok('Peace signed on their terms.');
 }
+/** Peace terms between two human players need the other side's consent. */
+function offerToHuman(s: GameState, warId: number, enemy: string, terms: PeaceTerms): Result {
+  s.peaceOffers = s.peaceOffers.filter((o) => !(o.warId === warId && o.from === s.player));
+  s.peaceOffers.push({ id: s.nextId++, from: s.player, to: enemy, warId, day: s.day, terms });
+  addEvent(s, 'peace', `${s.nations[s.player].name} offers peace to ${s.nations[enemy].name}.`, [s.player, enemy], { important: true });
+  return ok(`Offer sent to ${s.nations[enemy].name}. They will answer in their Diplomacy panel.`);
+}
 export function answerPeaceOffer(s: GameState, offerId: number, accept: boolean): Result {
   const o = s.peaceOffers.find((x) => x.id === offerId);
   if (!o) return fail('Offer expired.');
+  if (o.to !== s.player) return fail('That offer was not made to you.');
   s.peaceOffers = s.peaceOffers.filter((x) => x.id !== offerId);
   if (!accept) { addEvent(s, 'peace', `You rejected ${s.nations[o.from].name}'s peace offer.`, [s.player, o.from]); return ok('Rejected.'); }
   const w = s.wars.find((x) => x.id === o.warId);
@@ -195,6 +205,7 @@ export function answerPeaceOffer(s: GameState, offerId: number, accept: boolean)
 export function answerProposal(s: GameState, id: number, accept: boolean): Result {
   const p = s.proposals.find((x) => x.id === id);
   if (!p) return fail('Expired.');
+  if (p.to !== s.player) return fail('That proposal was not made to you.');
   if (p.kind === 'callToArms') { answerCallToArms(s, id, accept); return ok(accept ? 'You have joined the war.' : 'You declined.'); }
   s.proposals = s.proposals.filter((x) => x.id !== id);
   if (accept) applyTreaty(s, p.from, p.to, p.kind);
@@ -208,6 +219,27 @@ export function doMoveFleet(s: GameState, fleetId: number, zone: number): Result
 }
 export function doOrderShip(s: GameState, type: ShipType, port: number): Result { const e = orderShip(s, P(s), type, port); return e ? fail(e) : ok('Keel laid down.'); }
 export function markTutorial(s: GameState, f: string) { flag(s, f); }
+export function haltArmy(s: GameState, armyId: number): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  if (a.battleId != null) return fail('The army is engaged in battle.');
+  a.path = []; a.moveProgress = 0;
+  return ok(`${a.name} halted.`);
+}
+export function pauseProduction(s: GameState): Result {
+  for (const l of P(s).production) l.factories = 0;
+  return ok('All production lines paused.');
+}
+/** Host only: hand a disconnected human's nation to the AI (or take it back). */
+export function setHumanControl(s: GameState, nation: string, human: boolean): Result {
+  const n = s.nations[nation];
+  if (!n) return fail('Unknown nation.');
+  if (nation === s.player) return fail('You cannot hand over your own nation.');
+  n.isPlayer = human;
+  s.players = human ? [...new Set([...s.players, nation])] : s.players.filter((x) => x !== nation);
+  addEvent(s, 'info', `${n.name} is now controlled by ${human ? 'a human player' : 'the AI'}.`, [nation], { important: true });
+  return ok(`${n.name} is now ${human ? 'human' : 'AI'}-controlled.`);
+}
 
 export function peaceTermsFor(s: GameState, warId: number): { war: ReturnType<typeof warBetween> } { return { war: s.wars.find((w) => w.id === warId) }; }
 export type { Army };

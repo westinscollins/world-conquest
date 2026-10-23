@@ -87,10 +87,10 @@ export function ProvincePanel() {
               <Section title="Administration of conquered land" icon="flag">
                 <p className="small muted">Former owner: {g.nations[st.formerOwner]?.name ?? COUNTRY_GEO[st.formerOwner]?.name}. {st.status === 'integrating' ? `Integration ${pct(st.integration)} complete.` : ''}</p>
                 <div className="row gap wrap">
-                  {(st.status === 'occupied' || st.status === 'autonomous') && (() => { const c = buildCost(g, player, p, 'integrate'); return <Btn kind="primary" disabled={!c.ok || player.treasury < c.cost} onClick={() => store.setUI({ confirm: { title: `Integrate ${geo.name}?`, body: `Cost: ${moneyIC(c.cost)} · Time: ${c.days} days.\nThe province becomes core: full output, taxes and recruitment. Resistance falls.`, onOk: () => { const r = store.act((s) => build(s, p, 'integrate')); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Integrate ({moneyIC(c.cost)}, {c.days}d)</Btn>; })()}
-                  {st.status === 'occupied' && <Btn onClick={() => { const r = store.act((s) => doProvinceStatus(s, p, 'autonomous')); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Grant autonomy</Btn>}
-                  {st.status === 'autonomous' && <Btn onClick={() => { const r = store.act((s) => doProvinceStatus(s, p, 'occupied')); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Direct rule</Btn>}
-                  {st.formerOwner !== g.player && <Btn kind="ghost" onClick={() => store.setUI({ confirm: { title: `Release ${g.nations[st.formerOwner]?.name ?? st.formerOwner}?`, body: `All non-core provinces you hold that belonged to ${g.nations[st.formerOwner]?.name} are returned and it becomes your subject state (pays 15% tribute, follows you in wars). Reduces infamy. This is irreversible except by later annexation.`, danger: true, onOk: () => { const r = store.act((s) => doRelease(s, st.formerOwner)); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Release as subject</Btn>}
+                  {(st.status === 'occupied' || st.status === 'autonomous') && (() => { const c = buildCost(g, player, p, 'integrate'); return <Btn kind="primary" disabled={!c.ok || player.treasury < c.cost} onClick={() => store.setUI({ confirm: { title: `Integrate ${geo.name}?`, body: `Cost: ${moneyIC(c.cost)} · Time: ${c.days} days.\nThe province becomes core: full output, taxes and recruitment. Resistance falls.`, onOk: () => { const r = store.cmd('build', [p, 'integrate']); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Integrate ({moneyIC(c.cost)}, {c.days}d)</Btn>; })()}
+                  {st.status === 'occupied' && <Btn onClick={() => { const r = store.cmd('doProvinceStatus', [p, 'autonomous']); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Grant autonomy</Btn>}
+                  {st.status === 'autonomous' && <Btn onClick={() => { const r = store.cmd('doProvinceStatus', [p, 'occupied']); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Direct rule</Btn>}
+                  {st.formerOwner !== g.player && <Btn kind="ghost" onClick={() => store.setUI({ confirm: { title: `Release ${g.nations[st.formerOwner]?.name ?? st.formerOwner}?`, body: `All non-core provinces you hold that belonged to ${g.nations[st.formerOwner]?.name} are returned and it becomes your subject state (pays 15% tribute, follows you in wars). Reduces infamy. This is irreversible except by later annexation.`, danger: true, onOk: () => { const r = store.cmd('doRelease', [st.formerOwner]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Release as subject</Btn>}
                 </div>
               </Section>
             )}
@@ -162,7 +162,7 @@ function BuildTab({ p }: { p: number }) {
             <div key={k} className={`build-item${!c.ok ? ' dis' : ''}`}>
               <div className="bi-top">
                 <b>{label}{lvl != null ? <span className="muted"> · level {lvl}/{BUILDINGS[k as BuildingKind].max}</span> : null}</b>
-                <Btn small kind="primary" disabled={!c.ok || !afford} title={c.reason ?? (!afford ? 'Insufficient funds' : '')} onClick={() => { const r = store.act((s) => build(s, p, k)); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Build</Btn>
+                <Btn small kind="primary" disabled={!c.ok || !afford} title={c.reason ?? (!afford ? 'Insufficient funds' : '')} onClick={() => { const r = store.cmd('build', [p, k]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Build</Btn>
               </div>
               <div className="bi-cost"><span><Icon name="coin" size={12} color="#e8c36a" /> {moneyIC(c.cost)}</span><span>⏱ {c.days} days</span>{c.upkeep > 0 && <span>upkeep {money(c.upkeep, { digits: 2 })}/yr</span>}{(() => { const r = c.ok ? yearlyReturn(g, n, p, k) : null; return r == null ? null : <span className={r > 0 && c.cost / r <= 30 ? 'good' : 'muted'} title="Estimated change in your yearly budget once built: extra taxes (and food exports for estates) minus upkeep.">{r > 0 && c.cost / r <= 30 ? `≈ +${money(r, { digits: 2 })}/yr · pays back in ~${Math.ceil(c.cost / r)} yr` : `≈ ${money(r, { digits: 2, sign: true })}/yr · built for its other effects, not profit`}</span>; })()}</div>
               <div className="bi-desc">{c.reason ? <span className="warn">{c.reason}</span> : c.effect}</div>
@@ -197,7 +197,7 @@ function RecruitTab({ p }: { p: number }) {
             <div key={t} className={`build-item${!c.ok ? ' dis' : ''}`}>
               <div className="bi-top">
                 <b>{sp.label}</b>
-                <Btn small kind="primary" disabled={!c.ok} title={c.reason} onClick={() => { const r = store.act((s) => doRecruit(s, t, p)); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Recruit</Btn>
+                <Btn small kind="primary" disabled={!c.ok} title={c.reason} onClick={() => { const r = store.cmd('doRecruit', [t, p]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Recruit</Btn>
               </div>
               <div className="bi-cost">
                 <span><Icon name="coin" size={12} color="#e8c36a" /> {moneyIC(c.cost, { digits: 2 })}</span>

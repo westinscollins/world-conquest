@@ -9,6 +9,9 @@ import { invalidateArmies, invalidateTerritory, invalidateDiplo } from '../engin
 import { resetSupplyCache } from '../engine/supply';
 import { saveGame } from './storage';
 import { audio } from '../audio/music';
+import { runCommand } from '../engine/commands';
+import { Session } from './net/session';
+import type { Result } from '../engine/actions';
 
 export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy';
 export type Panel = null | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
@@ -34,6 +37,8 @@ export interface UIState {
 
 class Store {
   game: GameState | null = null;
+  /** Online multiplayer session, if any. */
+  net: Session | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
     panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
@@ -51,10 +56,15 @@ class Store {
 
   setUI(patch: Partial<UIState>) { this.ui = { ...this.ui, ...patch }; this.emit(); }
 
-  start(g: GameState) {
+  start(g: GameState, opts: { net?: Session } = {}) {
+    if (opts.net) this.net = opts.net;
+    else if (this.net) { void this.net.close(); this.net = null; }
+    const resync = this.net && this.game && this.ui.screen === 'game';
     this.game = g;
     invalidateTerritory(); invalidateArmies(); invalidateDiplo(); resetSupplyCache();
-    refreshAllBudgets(g);
+    // guests take the host's state verbatim (recomputing here could make the two copies differ)
+    if (this.net?.role !== 'guest') refreshAllBudgets(g);
+    if (resync) { this.emit(); return; }
     this.ui = { ...this.ui, screen: 'game', speed: 0, selectedProvince: g.nations[g.player].capital, selectedArmy: null, selectedNation: null, panel: g.tutorial ? 'help' : null, lastAutosave: g.day, battleReport: null, intel: null };
     this.emit();
     this.loop();
@@ -62,13 +72,37 @@ class Store {
   }
   quitToMenu() {
     cancelAnimationFrame(this.raf);
+    if (this.net) { void this.net.close(); this.net = null; }
     this.game = null;
     this.ui = { ...this.ui, screen: 'menu', speed: 0, panel: null };
     this.emit();
     audio.setMood('menu');
   }
 
-  setSpeed(i: number) { this.ui = { ...this.ui, speed: i }; this.emit(); }
+  setSpeed(i: number) {
+    if (this.net?.role === 'guest') { this.net.requestSpeed(i); return; } // the host owns the clock
+    this.ui = { ...this.ui, speed: i };
+    if (this.net?.role === 'host') this.net.hostSpeed(i);
+    this.emit();
+  }
+  /** Show the clock state the host announced (guests). */
+  setSpeedDisplay(i: number) { this.ui = { ...this.ui, speed: i }; this.emit(); }
+
+  /**
+   * Issue a player order by name. Single player and host: runs at once and returns the result.
+   * Guest: sent to the host and executed when it comes back in the shared stream; the result is
+   * shown as a message when it arrives (returns undefined).
+   */
+  cmd(name: string, args: unknown[] = [], done?: (r: Result) => void): Result | undefined {
+    const g = this.game;
+    if (!g) return undefined;
+    if (this.net?.role === 'guest') { this.net.sendCommand(name, args, done); return undefined; }
+    const r = runCommand(g, g.player, name, args);
+    if (this.net?.role === 'host') this.net.record(['c', this.net.myPeer, g.player, name, args]);
+    this.emit();
+    done?.(r);
+    return r;
+  }
   togglePause() { this.setSpeed(this.ui.speed === 0 ? 1 : 0); }
 
   /** Run a mutation against the game and refresh views. */
@@ -101,7 +135,9 @@ class Store {
       const dt = Math.min(0.25, (t - this.lastT) / 1000);
       this.lastT = t;
       const g = this.game;
-      if (g && this.ui.speed > 0 && !this.ui.confirm && !g.outcome) {
+      const guest = this.net?.role === 'guest';
+      const host = this.net?.role === 'host';
+      if (g && !guest && this.ui.speed > 0 && (host || (!this.ui.confirm && !g.outcome))) {
         this.acc += dt * SPEEDS[this.ui.speed];
         let n = 0;
         const t0 = performance.now();
@@ -109,6 +145,7 @@ class Store {
           this.acc -= 1;
           tick(g);
           n++;
+          if (host) this.net!.recordTick(g);
           this.afterTick(g);
         }
         if (this.acc > 3) this.acc = 3;
@@ -123,7 +160,14 @@ class Store {
   private lastMood: string = 'peace';
   private lastEmit = 0;
   private wasDeficit = false;
+  /** Guest: a day arrived from the host. */
+  netTick(g: GameState) {
+    this.afterTick(g);
+    const t = performance.now();
+    if (t - this.lastEmit > 100) { this.lastEmit = t; this.emit(); }
+  }
   private afterTick(g: GameState) {
+    const online = !!this.net;
     // notifications → toasts (+ pause on war declarations against the player)
     if (g.notifications.length) {
       const ids = new Set(g.notifications);
@@ -131,13 +175,13 @@ class Store {
       for (const e of g.events.filter((x) => ids.has(x.id))) {
         const kind = e.kind === 'war' ? 'war' : e.kind === 'battle' ? (e.text.includes(`${g.nations[g.player].name} victorious`) ? 'good' : e.text.includes('victorious') ? 'bad' : 'info') : e.kind === 'achievement' ? 'good' : 'info';
         this.toast(e.text, kind);
-        if (e.kind === 'war' && e.text.includes('declared war on ' + g.nations[g.player].name)) { this.ui = { ...this.ui, speed: 0 }; audio.sfx('alarm'); }
+        if (e.kind === 'war' && e.text.includes('declared war on ' + g.nations[g.player].name)) { if (!online) this.ui = { ...this.ui, speed: 0 }; audio.sfx('alarm'); }
         else if (e.kind === 'battle') audio.sfx('battle');
         else if (e.kind === 'achievement') audio.sfx('fanfare');
       }
     }
     if (g.peaceOffers.some((o) => o.to === g.player && o.day === g.day) || g.proposals.some((p) => p.to === g.player && p.day === g.day && p.kind === 'callToArms')) {
-      this.ui = { ...this.ui, speed: 0 };
+      if (!online) this.ui = { ...this.ui, speed: 0 };
       audio.sfx('chime');
     }
     const pn = g.nations[g.player];
@@ -155,7 +199,7 @@ class Store {
       this.ui = { ...this.ui, lastAutosave: g.day };
       saveGame('autosave', g).catch(() => this.toast('Autosave failed (storage full or unavailable).', 'bad'));
     }
-    if (g.outcome) { this.ui = { ...this.ui, speed: 0 }; audio.sfx(g.outcome.won ? 'fanfare' : 'alarm'); }
+    if (g.outcome && !online) { this.ui = { ...this.ui, speed: 0 }; audio.sfx(g.outcome.won ? 'fanfare' : 'alarm'); }
   }
 }
 
@@ -176,6 +220,21 @@ function refreshPlayer(g: GameState) {
 }
 
 export const store = new Store();
+
+/** Create a multiplayer session wired to the store. */
+export function createSession(role: 'host' | 'guest', code: string, name: string) {
+  const s: Session = new Session(role, code, name, {
+    onGame: (g) => store.start(g, { net: s }),
+    onTick: (g) => store.netTick(g),
+    onSpeed: (i) => (role === 'host' ? store.setSpeed(i) : store.setSpeedDisplay(i)),
+    onResult: (r, done) => { if (done) done(r); else if (r.message) store.toast(r.message, r.ok ? 'info' : 'bad'); store.emit(); },
+    onChange: () => store.emit(),
+    toast: (t, k) => store.toast(t, k),
+    getGame: () => store.game,
+    getSpeed: () => store.ui.speed,
+  });
+  return s;
+}
 
 export function useStore() {
   useSyncExternalStore(store.subscribe, store.getVersion);

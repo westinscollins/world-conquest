@@ -56,8 +56,8 @@ export function IntelDialog() {
   if (attackers.some((x) => armyOrg(x) < 0.5)) risks.push('Some of your formations are disorganised: rest them first.');
   const attack = () => {
     for (const x of attackers) {
-      store.act((s) => setPosture(s, x.id, a.posture));
-      const r = store.act((s) => moveArmy(s, x.id, p));
+      store.cmd('setPosture', [x.id, a.posture]);
+      const r = store.cmd('moveArmy', [x.id, p]);
       if (r && !r.ok) store.toast(r.message, 'bad');
     }
     store.toast(`Offensive launched on ${geo.name} (${POSTURES[a.posture].label}).`, 'war');
@@ -104,7 +104,7 @@ export function IntelDialog() {
       <h4>Operational posture</h4>
       <div className="posture-grid">
         {(Object.keys(POSTURES) as Posture[]).filter((x) => x !== 'defensive').map((x) => (
-          <button key={x} className={`posture${a.posture === x ? ' on' : ''}`} onClick={() => store.act((s) => setPosture(s, a.id, x))} title={POSTURES[x].desc}>
+          <button key={x} className={`posture${a.posture === x ? ' on' : ''}`} onClick={() => store.cmd('setPosture', [a.id, x])} title={POSTURES[x].desc}>
             <b>{POSTURES[x].label}</b><span>{POSTURES[x].desc}</span>
           </button>
         ))}

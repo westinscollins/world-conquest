@@ -52,6 +52,7 @@ export function DiplomacyPanel() {
                   <div key={n.id} className={`nation-row${sel?.id === n.id ? ' on' : ''}`} onClick={() => store.setUI({ selectedNation: n.id })}>
                     <span className="swatch" style={{ background: n.color }} />
                     <span className="nr-name">{n.name}</span>
+                    {n.isPlayer && <span className="chip good" title="Controlled by another human player">player</span>}
                     {atWar(g, n.id, g.player) && <span className="chip bad">war</span>}
                     {r?.alliance && <span className="chip good">ally</span>}
                     {n.overlord === g.player && <span className="chip good">subject</span>}
@@ -115,11 +116,11 @@ function NationDetail({ id }: { id: string }) {
       {!war && (
         <Section title="Diplomatic actions" icon="handshake">
           <div className="row gap wrap">
-            <Btn small onClick={() => res(store.act((s) => doMission(s, id)))}>Diplomatic mission ({moneyIC(2 * me.priceIndex)})</Btn>
-            {!r?.trade ? <Btn small onClick={() => res(store.act((s) => doTreaty(s, id, 'trade')))}>Propose trade</Btn> : <Btn small kind="ghost" onClick={() => res(store.act((s) => doCancelTreaty(s, id, 'trade')))}>End trade</Btn>}
-            {(r?.nap ?? 0) <= g.day && <Btn small onClick={() => res(store.act((s) => doTreaty(s, id, 'nap')))}>Non-aggression pact</Btn>}
-            {!r?.alliance ? <Btn small onClick={() => res(store.act((s) => doTreaty(s, id, 'alliance')))}>Propose alliance</Btn> : <Btn small kind="ghost" onClick={() => store.setUI({ confirm: { title: 'Break alliance?', body: 'Relations will drop sharply.', danger: true, onOk: () => res(store.act((s) => doCancelTreaty(s, id, 'alliance'))) } })}>Break alliance</Btn>}
-            {n.overlord === g.player && <Btn small onClick={() => res(store.act((s) => doAnnexSubject(s, id)))}>Annex subject</Btn>}
+            <Btn small onClick={() => res(store.cmd('doMission', [id]))}>Diplomatic mission ({moneyIC(2 * me.priceIndex)})</Btn>
+            {!r?.trade ? <Btn small onClick={() => res(store.cmd('doTreaty', [id, 'trade']))}>Propose trade</Btn> : <Btn small kind="ghost" onClick={() => res(store.cmd('doCancelTreaty', [id, 'trade']))}>End trade</Btn>}
+            {(r?.nap ?? 0) <= g.day && <Btn small onClick={() => res(store.cmd('doTreaty', [id, 'nap']))}>Non-aggression pact</Btn>}
+            {!r?.alliance ? <Btn small onClick={() => res(store.cmd('doTreaty', [id, 'alliance']))}>Propose alliance</Btn> : <Btn small kind="ghost" onClick={() => store.setUI({ confirm: { title: 'Break alliance?', body: 'Relations will drop sharply.', danger: true, onOk: () => res(store.cmd('doCancelTreaty', [id, 'alliance'])) } })}>Break alliance</Btn>}
+            {n.overlord === g.player && <Btn small onClick={() => res(store.cmd('doAnnexSubject', [id]))}>Annex subject</Btn>}
           </div>
           <p className="small muted">Alliances commit both sides to defensive wars — you will be called to arms if your ally is attacked.</p>
         </Section>
@@ -129,8 +130,8 @@ function NationDetail({ id }: { id: string }) {
           <p className="small muted">Demand border provinces. They yield only if they fear your coalition; refusal grants you a casus belli (justified war: smaller stability and infamy penalties).</p>
           <div className="chips">{border.map((p) => <label key={p} className="chip check"><input type="checkbox" checked={ultProv.includes(p)} onChange={(e) => setUlt(e.target.checked ? [...ultProv, p] : ultProv.filter((x) => x !== p))} />{PROV[p].name}</label>)}</div>
           <div className="row gap">
-            <Btn small disabled={!ultProv.length} onClick={() => store.setUI({ confirm: { title: 'Issue ultimatum?', body: `Demand ${ultProv.map((p) => PROV[p].name).join(', ')} from ${n.name}. Relations −25, infamy +3.`, onOk: () => { res(store.act((s) => doUltimatum(s, id, ultProv))); setUlt([]); } } })}>Demand provinces</Btn>
-            <Btn small onClick={() => store.setUI({ confirm: { title: 'Demand submission?', body: `Demand that ${n.name} become your subject. Needs overwhelming strength. Relations −25, infamy +6.`, onOk: () => res(store.act((s) => doUltimatum(s, id, [], true))) } })}>Demand vassalage</Btn>
+            <Btn small disabled={!ultProv.length} onClick={() => store.setUI({ confirm: { title: 'Issue ultimatum?', body: `Demand ${ultProv.map((p) => PROV[p].name).join(', ')} from ${n.name}. Relations −25, infamy +3.`, onOk: () => { res(store.cmd('doUltimatum', [id, ultProv])); setUlt([]); } } })}>Demand provinces</Btn>
+            <Btn small onClick={() => store.setUI({ confirm: { title: 'Demand submission?', body: `Demand that ${n.name} become your subject. Needs overwhelming strength. Relations −25, infamy +6.`, onOk: () => res(store.cmd('doUltimatum', [id, [], true])) } })}>Demand vassalage</Btn>
           </div>
         </Section>
       )}
@@ -139,7 +140,7 @@ function NationDetail({ id }: { id: string }) {
           {chk.ok ? (
             <>
               <p className="small">Declaring war costs <b className="bad">−{chk.stabilityCost} stability</b> and <b className="bad">+{chk.infamy} infamy</b>{chk.justified ? ' (justified by your casus belli)' : ' (unjustified!)'}{chk.breaksNap ? ', and breaks your non-aggression pact' : ''}. Trade with them ends.{chk.joiners.length ? <> Their allies will join: <b>{chk.joiners.map((j) => g.nations[j]?.name).join(', ')}</b>.</> : ''}</p>
-              <Btn kind="danger" onClick={() => store.setUI({ confirm: { title: `Declare war on ${n.name}?`, body: `This cannot be undone without a peace treaty.\n\nStability −${chk.stabilityCost} · Infamy +${chk.infamy}${chk.joiners.length ? `\nTheir allies join: ${chk.joiners.map((j) => g.nations[j]?.name).join(', ')}` : ''}\nEstimated balance: you ${myP.toFixed(0)} vs them ${theirP.toFixed(0)}.`, danger: true, onOk: () => { const r2 = store.act((s) => doDeclareWar(s, id)); res(r2); if (r2?.ok) audio.sfx('alarm'); } } })}>Declare war</Btn>
+              <Btn kind="danger" onClick={() => store.setUI({ confirm: { title: `Declare war on ${n.name}?`, body: `This cannot be undone without a peace treaty.\n\nStability −${chk.stabilityCost} · Infamy +${chk.infamy}${chk.joiners.length ? `\nTheir allies join: ${chk.joiners.map((j) => g.nations[j]?.name).join(', ')}` : ''}\nEstimated balance: you ${myP.toFixed(0)} vs them ${theirP.toFixed(0)}.`, danger: true, onOk: () => { const r2 = store.cmd('doDeclareWar', [id]); res(r2); if (r2?.ok) audio.sfx('alarm'); } } })}>Declare war</Btn>
             </>
           ) : <p className="small muted">{chk.reason}</p>}
         </Section>
@@ -191,8 +192,7 @@ function PeaceDialog({ warId }: { warId: number }) {
   const ev = mode === 'demand' ? evaluatePeace(g, w, g.player, terms) : null;
   const enemyOut = g.nations[enemy].budget.output;
   const send = () => {
-    const r = store.act((s) => (mode === 'demand' || terms.white ? proposePeace(s, w.id, terms) : concedePeace(s, w.id, terms)));
-    if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) { audio.sfx('fanfare'); close(); } }
+    store.cmd(mode === 'demand' || terms.white ? 'proposePeace' : 'concedePeace', [w.id, terms], (res) => { store.toast(res.message, res.ok ? 'good' : 'bad'); if (res.ok) { audio.sfx('fanfare'); close(); } });
   };
   return (
     <Modal title={`Peace negotiations — ${w.name}`} onClose={close} wide>
@@ -241,8 +241,8 @@ function Offers() {
           <b>{g.nations[o.from]?.name} offers peace</b>
           <p>{describeTerms(g, o.terms)}{o.terms.taker === o.from && !o.terms.white ? ' (to them)' : ''}</p>
           <div className="row gap">
-            <Btn kind="primary" onClick={() => store.setUI({ confirm: { title: 'Accept peace?', body: describeTerms(g, o.terms), danger: !o.terms.white && o.terms.taker !== g.player, onOk: () => { const r = store.act((s) => answerPeaceOffer(s, o.id, true)); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Accept</Btn>
-            <Btn onClick={() => store.act((s) => answerPeaceOffer(s, o.id, false))}>Reject</Btn>
+            <Btn kind="primary" onClick={() => store.setUI({ confirm: { title: 'Accept peace?', body: describeTerms(g, o.terms), danger: !o.terms.white && o.terms.taker !== g.player, onOk: () => { const r = store.cmd('answerPeaceOffer', [o.id, true]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); } } })}>Accept</Btn>
+            <Btn onClick={() => store.cmd('answerPeaceOffer', [o.id, false])}>Reject</Btn>
           </div>
         </div>
       ))}
@@ -251,8 +251,8 @@ function Offers() {
           <b>{g.nations[p.from]?.name}: {p.kind === 'callToArms' ? 'call to arms!' : `proposes ${p.kind === 'nap' ? 'a non-aggression pact' : p.kind === 'trade' ? 'a trade agreement' : 'a defensive alliance'}`}</b>
           {p.kind === 'callToArms' && <p className="small">Your ally has been attacked. Refusing dissolves the alliance and costs reputation.</p>}
           <div className="row gap">
-            <Btn kind="primary" onClick={() => { const r = store.act((s) => answerProposal(s, p.id, true)); r && store.toast(r.message, 'good'); }}>Accept</Btn>
-            <Btn onClick={() => { const r = store.act((s) => answerProposal(s, p.id, false)); r && store.toast(r.message, 'info'); }}>Decline</Btn>
+            <Btn kind="primary" onClick={() => { const r = store.cmd('answerProposal', [p.id, true]); r && store.toast(r.message, 'good'); }}>Accept</Btn>
+            <Btn onClick={() => { const r = store.cmd('answerProposal', [p.id, false]); r && store.toast(r.message, 'info'); }}>Decline</Btn>
           </div>
         </div>
       ))}

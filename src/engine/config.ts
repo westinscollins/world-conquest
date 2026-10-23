@@ -7,7 +7,7 @@
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy

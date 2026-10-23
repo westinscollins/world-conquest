@@ -43,14 +43,14 @@ export function EconomyPanel() {
           <p className="small muted">All figures are annual rates in millions of Imperial Credits (fictional game currency). Income − expenses = {money(b.totalIncome)} − {money(b.totalExpense)} = <b>{money(b.net, { sign: true })}</b>. The treasury changes by net ÷ 365 each day. One-time purchases (recruitment, construction) are paid immediately. This month so far: +{money(n.ledgerMonth.income)} / −{money(n.ledgerMonth.expense)}.</p>
           <Section title="Taxation" icon="coin">
             <div className="slider-row">
-              <input type="range" min={ECON.MIN_TAX * 100} max={ECON.MAX_TAX * 100} value={Math.round(n.taxRate * 100)} onChange={(e) => store.act((s) => setTax(s, +e.target.value / 100))} />
+              <input type="range" min={ECON.MIN_TAX * 100} max={ECON.MAX_TAX * 100} value={Math.round(n.taxRate * 100)} onChange={(e) => store.cmd('setTax', [+e.target.value / 100])} />
               <b>{pct(n.taxRate)}</b>
             </div>
             <p className="small muted">Each point above {pct(ECON.BASE_TAX)} costs ~1.3 stability (target) and {pct(ECON.TAX_GROWTH_PENALTY / 100, 2)} annual growth; lower taxes boost growth and stability. Collection efficiency {pct(collectionEfficiency(n))} (stability {n.stability.toFixed(0)}).</p>
           </Section>
           <Section title="Research funding" icon="flask">
             <div className="slider-row">
-              <input type="range" min={0} max={Math.max(10, Math.round(b.output * 0.05))} step={0.5} value={n.researchFunding} onChange={(e) => store.act((s) => setResearchFunding(s, +e.target.value))} />
+              <input type="range" min={0} max={Math.max(10, Math.round(b.output * 0.05))} step={0.5} value={n.researchFunding} onChange={(e) => store.cmd('setResearchFunding', [+e.target.value])} />
               <b>{money(n.researchFunding)}/yr</b>
             </div>
             <p className="small muted">Yields {researchRate(g, n).toFixed(1)} research points per year (diminishing returns; research institutes add more).</p>
@@ -62,8 +62,8 @@ export function EconomyPanel() {
               <Stat label="Ceiling" value={`${money(maxDebt(n))} IC`} tip="150% of annual output. Beyond it, deficits mean default." />
             </div>
             <div className="row gap wrap">
-              {[ECON.LOAN_STEP, ECON.LOAN_STEP * 4].map((v) => <Btn key={v} small onClick={() => { const r = store.act((s) => takeLoan(s, v)); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Borrow {money(v)}</Btn>)}
-              {n.debt > 0 && [ECON.LOAN_STEP, n.debt].map((v, i) => <Btn key={i} small disabled={n.treasury < Math.min(v, n.debt)} onClick={() => { const r = store.act((s) => repayLoan(s, v)); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>{i ? 'Repay all' : `Repay ${money(v)}`}</Btn>)}
+              {[ECON.LOAN_STEP, ECON.LOAN_STEP * 4].map((v) => <Btn key={v} small onClick={() => { const r = store.cmd('takeLoan', [v]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Borrow {money(v)}</Btn>)}
+              {n.debt > 0 && [ECON.LOAN_STEP, n.debt].map((v, i) => <Btn key={i} small disabled={n.treasury < Math.min(v, n.debt)} onClick={() => { const r = store.cmd('repayLoan', [v]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>{i ? 'Repay all' : `Repay ${money(v)}`}</Btn>)}
             </div>
             <p className="small muted">If the treasury goes negative, emergency bonds are issued automatically at +{pct(ECON.EMERGENCY_PREMIUM)} interest. Past the ceiling the state defaults: production stops and stability collapses. Large deficits cause inflation (price index {(n.priceIndex * 100).toFixed(0)}).</p>
           </Section>
@@ -89,9 +89,9 @@ export function EconomyPanel() {
                     <td>{EQUIP_LABEL[k]}{n.techMods.quality[k] > 1 ? <span className="muted small"> q{n.techMods.quality[k].toFixed(2)}</span> : null}</td>
                     <td>{money(n.stockpile[k])}</td>
                     <td className="nowrap">
-                      <button className="iconbtn small" onClick={() => store.act((s) => setProduction(s, k, f - 1))} disabled={f <= 0}>−</button>
+                      <button className="iconbtn small" onClick={() => store.cmd('setProduction', [k, f - 1])} disabled={f <= 0}>−</button>
                       <b style={{ display: 'inline-block', width: 24, textAlign: 'center' }}>{f}</b>
-                      <button className="iconbtn small" onClick={() => store.act((s) => setProduction(s, k, f + 1))}>+</button>
+                      <button className="iconbtn small" onClick={() => store.cmd('setProduction', [k, f + 1])}>+</button>
                     </td>
                     <td>{money(outY)}</td>
                     <td className="bad">{money(outY * n.techMods.equipCost[k] * n.priceIndex)}</td>
@@ -135,7 +135,7 @@ export function EconomyPanel() {
               <span>{c.kind === 'develop' ? 'Development' : c.kind === 'repair' ? 'Repairs' : c.kind === 'integrate' ? 'Integration' : BUILDINGS[c.kind].label} — {PROV[c.province].name}</span>
               <Bar value={1 - c.daysLeft / c.totalDays} />
               <span className="muted">{c.daysLeft}d</span>
-              <button className="iconbtn small" title="Cancel (50% of remaining value refunded)" onClick={() => store.setUI({ confirm: { title: 'Cancel project?', body: `Only 50% of the remaining value (${moneyIC(c.cost * 0.5 * (c.daysLeft / c.totalDays))}) is refunded.`, danger: true, onOk: () => store.act((s) => cancelBuild(s, c.id)) } })}>✕</button>
+              <button className="iconbtn small" title="Cancel (50% of remaining value refunded)" onClick={() => store.setUI({ confirm: { title: 'Cancel project?', body: `Only 50% of the remaining value (${moneyIC(c.cost * 0.5 * (c.daysLeft / c.totalDays))}) is refunded.`, danger: true, onOk: () => store.cmd('cancelBuild', [c.id]) } })}>✕</button>
             </div>
           ))}
           {n.training.length > 0 && <h4>Military training</h4>}
@@ -191,10 +191,10 @@ function BudgetAdvisor() {
   const atWar = g.wars.some((w) => w.attackers.includes(g.player) || w.defenders.includes(g.player));
   const top = b.expenses.slice().sort((x, y) => y.amount - x.amount).slice(0, 3);
   const fixes: { label: string; gain: string; run: () => void }[] = [];
-  if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / ECON.MOBILIZED_UPKEEP))}/yr`, run: () => store.act((s) => setMobilization(s, false)) });
-  if (line('production') > 0.05) fixes.push({ label: 'Pause equipment production', gain: `+${money(line('production'))}/yr`, run: () => store.act((s) => { for (const l of s.nations[s.player].production) l.factories = 0; }) });
-  if (n.researchFunding > 0.5) fixes.push({ label: 'Halve research funding', gain: `+${money(n.researchFunding / 2)}/yr`, run: () => store.act((s) => setResearchFunding(s, n.researchFunding / 2)) });
-  if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.act((s) => setTax(s, n.taxRate + 0.02)) });
+  if (n.mobilize && !atWar) fixes.push({ label: 'Demobilise', gain: `≈ +${money(line('military') * (1 - 1 / ECON.MOBILIZED_UPKEEP))}/yr`, run: () => store.cmd('setMobilization', [false]) });
+  if (line('production') > 0.05) fixes.push({ label: 'Pause equipment production', gain: `+${money(line('production'))}/yr`, run: () => store.cmd('pauseProduction', []) });
+  if (n.researchFunding > 0.5) fixes.push({ label: 'Halve research funding', gain: `+${money(n.researchFunding / 2)}/yr`, run: () => store.cmd('setResearchFunding', [n.researchFunding / 2]) });
+  if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.cmd('setTax', [n.taxRate + 0.02]) });
   return (
     <div className="advisor">
       <b className="bad">You are losing {money(-b.net)} IC a year.</b>

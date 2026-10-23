@@ -17,7 +17,7 @@ export function onMapRightClick(p: number | null, sea: number | null) {
   if (!g) return;
   const ui = store.ui;
   if (ui.selectedFleet != null && sea != null) {
-    const r = store.act((s) => doMoveFleet(s, ui.selectedFleet!, sea));
+    const r = store.cmd('doMoveFleet', [ui.selectedFleet!, sea]);
     if (r) store.toast(r.ok ? `${r.message} Destination: ${WORLD.seas[sea].name}.` : r.message, r.ok ? 'info' : 'bad');
     return;
   }
@@ -36,7 +36,7 @@ export function onMapRightClick(p: number | null, sea: number | null) {
     return;
   }
   if (path) {
-    const r = store.act((s) => moveArmy(s, a.id, p));
+    const r = store.cmd('moveArmy', [a.id, p]);
     if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); }
     return;
   }
@@ -48,7 +48,7 @@ export function onMapRightClick(p: number | null, sea: number | null) {
       confirm: {
         title: 'Naval transport',
         body: `No land route to ${PROV[p].name}. Embark ${a.name} (${a.units.length} formations) by sea?\n\nRoute: ${chk.route.length} sea zones · ~${chk.days} days\nCost: ${moneyIC(chk.cost)}\n${chk.risk > 0.3 ? `⚠ Enemy fleets dominate part of the route (risk ${Math.round(chk.risk * 100)}%): expect losses at sea.` : 'Route currently safe.'}${hostile.length ? '\n⚠ The landing zone is defended: amphibious assault penalties apply.' : ''}`,
-        onOk: () => { const r = store.act((s) => seaMove(s, a.id, p)); if (r) store.toast(r.message, r.ok ? 'info' : 'bad'); },
+        onOk: () => { const r = store.cmd('seaMove', [a.id, p]); if (r) store.toast(r.message, r.ok ? 'info' : 'bad'); },
       },
     });
     return;

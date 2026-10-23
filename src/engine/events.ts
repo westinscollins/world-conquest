@@ -9,8 +9,11 @@ export function addEvent(
   nations: string[],
   extra: { province?: number; battleId?: number; important?: boolean } = {},
 ): GameEvent {
-  const ev: GameEvent = { id: s.nextId++, day: s.day, kind, text, nations, ...extra };
-  const involvesPlayer = nations.includes(s.player);
+  s.eventSeq = (s.eventSeq ?? 0) + 1;
+  const ev: GameEvent = { id: s.eventSeq, day: s.day, kind, text, nations, ...extra };
+  const humans = s.players?.length ? s.players : [s.player];
+  const involvesPlayer = nations.some((n) => humans.includes(n));
+  const involvesMe = nations.includes(s.player);
   // Keep the log focused: world events not involving the player are only logged when important.
   if (!involvesPlayer && !extra.important) return ev;
   s.events.push(ev);
@@ -19,7 +22,7 @@ export function addEvent(
     s.timeline.push(ev);
     if (s.timeline.length > 600) s.timeline.splice(0, s.timeline.length - 600);
   }
-  if (involvesPlayer && (extra.important || kind === 'war' || kind === 'battle' || kind === 'peace')) s.notifications.push(ev.id);
+  if (involvesMe && (extra.important || kind === 'war' || kind === 'battle' || kind === 'peace')) s.notifications.push(ev.id);
   return ev;
 }
 

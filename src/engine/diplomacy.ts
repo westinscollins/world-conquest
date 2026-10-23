@@ -302,7 +302,14 @@ export function proposeTreaty(s: GameState, from: Nation, toId: string, kind: 'a
   if (kind === 'alliance' && r.alliance) return { ok: false, reason: 'Already allied.' };
   if (kind === 'trade' && r.trade) return { ok: false, reason: 'Trade agreement already in place.' };
   if (kind === 'nap' && r.nap > s.day) return { ok: false, reason: 'Pact already in force.' };
-  const accept: DiploResult = to.isPlayer ? { ok: true, reason: 'Accepted.' } : aiWouldAccept(s, to, from, kind);
+  if (to.isPlayer) {
+    // another human player decides for themselves
+    if (s.proposals.some((p) => p.from === from.id && p.to === toId && p.kind === kind)) return { ok: false, reason: 'A proposal is already waiting for their answer.' };
+    s.proposals.push({ id: s.nextId++, from: from.id, to: toId, kind, day: s.day });
+    addEvent(s, 'diplomacy', `${from.name} proposes ${{ alliance: 'a defensive alliance', trade: 'a trade agreement', nap: 'a non-aggression pact' }[kind]} to ${to.name}.`, [from.id, toId], { important: true });
+    return { ok: true, reason: `Proposal sent to ${to.name}. They will answer in their Diplomacy panel.` };
+  }
+  const accept: DiploResult = aiWouldAccept(s, to, from, kind);
   if (!accept.ok) {
     changeRelation(s, from.id, toId, -2);
     return accept;

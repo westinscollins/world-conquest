@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { store } from './store';
 import { CAMPAIGNS, newGame } from '../engine/setup';
 import { Btn, Modal } from './common';
@@ -6,45 +6,16 @@ import { SaveLoadDialog } from './SaveLoad';
 import { listSaves, loadGame } from './storage';
 import { COUNTRY_GEO, WORLD } from '../engine/geo';
 import type { GameSettings, VictoryConfig } from '../engine/types';
-import { ECON } from '../engine/config';
-import { money, num } from './format';
+import { NationPicker } from './NationPicker';
+import { MultiplayerDialog } from './MultiplayerDialog';
 import { audio } from '../audio/music';
 import { Icon } from './icons';
 
 const SUBREGIONS = [...new Set(WORLD.countries.map((c) => c.subregion))].sort();
-/** Starting output estimate, same formula as the world setup. */
-const startOutput = (gdp: number, pop: number) => ECON.OUTPUT_K * Math.pow(Math.max(500, gdp), ECON.OUTPUT_EXP) * (1 + 0.04 * Math.log10(pop / 1e6 + 1));
-const NATIONS = WORLD.countries.map((c) => ({ id: c.id, name: c.name, region: c.subregion, provinces: c.provinces.length, pop: c.pop, output: startOutput(c.gdp, c.pop) })).sort((a, b) => b.output - a.output);
-const difficultyOf = (out: number) => (out > 2500 ? ['Easy', 'd-tutorial'] : out > 600 ? ['Medium', 'd-standard'] : out > 150 ? ['Hard', 'd-hard'] : ['Very hard', 'd-hard']);
-
-function NationPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const [q, setQ] = useState('');
-  const list = useMemo(() => NATIONS.filter((n) => !q || n.name.toLowerCase().includes(q.toLowerCase()) || n.region.toLowerCase().includes(q.toLowerCase())), [q]);
-  return (
-    <div className="nation-pick">
-      <input id="nation-search" placeholder={`Search ${NATIONS.length} nations or regions…`} value={q} onChange={(e) => setQ(e.target.value)} />
-      <div className="np-list">
-        {list.map((n, i) => {
-          const [d, cls] = difficultyOf(n.output);
-          return (
-            <button key={n.id} className={`np-row${value === n.id ? ' on' : ''}`} onClick={() => onChange(n.id)}>
-              <span className="np-rank">{NATIONS.indexOf(n) + 1}</span>
-              <span className="np-name"><b>{n.name}</b><span>{n.region} · {n.provinces} province{n.provinces > 1 ? 's' : ''} · {num(n.pop)} people</span></span>
-              <span className="np-out">{money(n.output)}</span>
-              <span className={`diff ${cls}`}>{d}</span>
-            </button>
-          );
-        })}
-        {!list.length && <p className="muted small">No nation matches “{q}”.</p>}
-      </div>
-      <p className="small muted">Ranked by starting economy (yearly output in IC). Smaller economies are harder starts.</p>
-    </div>
-  );
-}
-
 export function MainMenu() {
   const [camp, setCamp] = useState('tutorial');
   const [load, setLoad] = useState(false);
+  const [mp, setMp] = useState(false);
   const [custom, setCustom] = useState(false);
   const [hasAuto, setHasAuto] = useState(false);
   const [vol, setVol] = useState(audio.musicVolume);
@@ -100,10 +71,12 @@ export function MainMenu() {
         <div className="menu-foot">
           {hasAuto && <Btn kind="primary" onClick={cont}>Continue last game</Btn>}
           <Btn onClick={() => setLoad(true)}>Load game</Btn>
+          <Btn kind="primary" onClick={() => { audio.init(); setMp(true); }}>Online multiplayer</Btn>
           <div className="vol"><Icon name="music" /> <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { audio.init(); audio.setMusicVolume(+e.target.value); setVol(+e.target.value); }} /></div>
         </div>
       </div>
       {load && <SaveLoadDialog loadOnly onClose={() => setLoad(false)} />}
+      {mp && <MultiplayerDialog onClose={() => setMp(false)} />}
       {custom && <CustomSetup camp={camp} nation={camp === 'sandbox' ? nation : undefined} onClose={() => setCustom(false)} onStart={start} />}
     </div>
   );

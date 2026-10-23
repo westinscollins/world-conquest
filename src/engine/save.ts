@@ -36,6 +36,10 @@ export function migrate(raw: any): GameState {
     raw.stats ??= { battles: 0, wars: 0, peaceDeals: 0, annexations: 0 };
     if (raw.tutorial) { raw.tutorial.flags ??= {}; raw.tutorial.startProvinces ??= 2; }
   }
+  if (raw.version < 4) {
+    raw.players ??= [raw.player];
+    raw.eventSeq ??= raw.nextId ?? 0;
+  }
   s.version = SAVE_VERSION;
   // derived data is recomputed rather than trusted
   for (const p of s.provinces) p.infra = infraOf(p);

@@ -36,7 +36,7 @@ const PERSONALITY_OVERRIDE: Record<string, Personality> = {
 /** Military spending as share of output per scenario nation (others derive from personality). */
 const MIL_SHARE: Record<string, number> = { SRB: 0.0714, POL: 0.07, DEU: 0.045, TUR: 0.16, JPN: 0.045, RUS: 0.11, USA: 0.07, CHN: 0.06, ARM: 0.12, AZE: 0.1, IRN: 0.09, PRK: 0.2, ISR: 0.1, IND: 0.06 };
 
-export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed?: number; nation?: string } = {}): GameState {
+export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed?: number; nation?: string; players?: string[] } = {}): GameState {
   const camp0 = CAMPAIGNS.find((c) => c.id === campaignId) ?? CAMPAIGNS[1];
   // any nation may be played: the campaign's default nation is only a suggestion
   const camp = opts.nation && COUNTRY_GEO[opts.nation] ? { ...camp0, nation: opts.nation } : camp0;
@@ -46,13 +46,13 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
   const settings: GameSettings = {
     difficulty: camp.difficulty, startYear: 2040, alternateHistory: 'fractured', aiAggression: camp.difficulty === 'tutorial' ? 0.55 : camp.difficulty === 'hard' ? 1.25 : 1,
     victory: { kind: 'domination', provinceShare: 0.35 }, ...opts,
-    nation: undefined,
+    nation: undefined, players: undefined,
   } as GameSettings;
   if (camp.id === 'hard' && !opts.victory) settings.victory = { kind: 'survival', years: 10 };
   if (camp.id === 'tutorial' && !opts.victory) settings.victory = { kind: 'hegemony', region: 'Southern Europe', regionShare: 0.5 };
 
   const s: GameState = {
-    version: SAVE_VERSION, seed, rng: seed ^ 0x9e3779b9, day: 0, startYear: settings.startYear, player: camp.nation,
+    version: SAVE_VERSION, seed, rng: seed ^ 0x9e3779b9, day: 0, startYear: settings.startYear, player: camp.nation, players: [camp.nation, ...(opts.players ?? []).filter((x) => x !== camp.nation && COUNTRY_GEO[x])], eventSeq: 0,
     nations: {}, provinces: [], armies: {}, fleets: {}, generals: {}, battles: {}, activeBattles: [], wars: [], relations: {},
     events: [], peaceOffers: [], proposals: [],
     market: { food: { price: RESOURCE.food.basePrice, supply: 0, demand: 0 }, steel: { price: RESOURCE.steel.basePrice, supply: 0, demand: 0 }, oil: { price: RESOURCE.oil.basePrice, supply: 0, demand: 0 }, rare: { price: RESOURCE.rare.basePrice, supply: 0, demand: 0 } },
@@ -68,7 +68,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
     if (settings.alternateHistory === 'fractured' && rnd() < 0.15 && !PERSONALITY_OVERRIDE[c.id]) pers = 'expansionist';
     const n: Nation = {
       id: c.id, name: c.name, color: FIXED_COLORS[c.id] ?? PALETTE[(i * 7 + c.mapcolor * 3) % PALETTE.length],
-      isPlayer: c.id === camp.nation, alive: true, personality: pers, capital: c.capital,
+      isPlayer: c.id === camp.nation || (opts.players ?? []).includes(c.id), alive: true, personality: pers, capital: c.capital,
       treasury: output * ECON.START_TREASURY_RATIO, debt: 0, interestRate: ECON.BASE_INTEREST, taxRate: ECON.BASE_TAX,
       researchFunding: 0, stability: 70, warSupport: 50, warExhaustion: 0, infamy: 0, manpower: 0, mobilization: 0, mobilize: false, priceIndex: 1,
       stockpile: { smallArms: 0, artillery: 0, vehicles: 0, armor: 0, aircraft: 0, ships: 0 }, production: [], training: [], shipyard: [], construction: [],

@@ -309,3 +309,27 @@ svg.map.moving { cursor: crosshair; }
 .np-name { display: flex; flex-direction: column; min-width: 0; } .np-name span { font-size: 11px; color: var(--muted); }
 .np-out { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--gold2); }
 .np-row .diff { text-align: center; }
+.np-row:disabled { opacity: .45; cursor: not-allowed; } .diff.taken { color: var(--muted) !important; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.note { background: rgba(111,159,224,.1); border: 1px solid rgba(111,159,224,.35); border-radius: 6px; padding: 8px 10px; }
+.mp-start { display: flex; flex-direction: column; gap: 12px; }
+.mp-field { display: flex; flex-direction: column; gap: 4px; max-width: 280px; font-size: 12px; color: var(--muted); }
+.mp-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mp-choice > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: rgba(255,255,255,.02); }
+.mp-choice h4 { margin-top: 0; }
+.code-in { font-family: ui-monospace, monospace; font-size: 15px; letter-spacing: .2em; width: 150px; text-transform: lowercase; }
+.lobby-code { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--gold); border-radius: 8px; background: rgba(217,179,92,.08); }
+.lobby-code .code { font-family: ui-monospace, monospace; font-size: 22px; letter-spacing: .25em; color: var(--gold2); }
+.lobby-grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 16px; margin-top: 10px; }
+.lobby-grid > div { min-width: 0; }
+.seats { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.seats li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--line2); border-radius: 5px; }
+.seats li > span:last-child { margin-left: auto; font-size: 12px; } .seats li.me { border-color: var(--line); }
+.loadbar { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.online-pill { position: absolute; top: 60px; right: 372px; z-index: 13; background: var(--panel); border: 1px solid rgba(111,196,122,.5); border-radius: 14px; padding: 3px 10px; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.online-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 6px var(--good); }
+.online-pill.warn { border-color: var(--warn); } .online-pill.warn .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.online-pop { position: absolute; top: 88px; right: 372px; z-index: 30; width: 320px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
+.net-banner { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); z-index: 40; background: rgba(60, 45, 12, .96); border: 1px solid var(--warn); color: var(--gold2); padding: 8px 16px; border-radius: 6px; font-size: 12.5px; }
+@media (max-width: 1100px) { .online-pill, .online-pop { right: 312px; } }
+@media (max-width: 600px) { .mp-choice, .lobby-grid { grid-template-columns: 1fr; } .online-pill { right: 8px; top: 100px; } .online-pop { right: 8px; top: 128px; } }

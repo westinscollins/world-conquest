@@ -38,8 +38,8 @@ export function ResearchPanel() {
                   <div className="small">{t.effect}</div>
                   {!done && (
                     <div className="row gap">
-                      {avail && !active && <Btn small kind="primary" onClick={() => store.act((s) => chooseResearch(s, t.id))}>Research</Btn>}
-                      {!active && !queued && <Btn small kind="ghost" onClick={() => store.act((s) => queueResearch(s, t.id))}>Queue</Btn>}
+                      {avail && !active && <Btn small kind="primary" onClick={() => store.cmd('chooseResearch', [t.id])}>Research</Btn>}
+                      {!active && !queued && <Btn small kind="ghost" onClick={() => store.cmd('queueResearch', [t.id])}>Queue</Btn>}
                       {queued && <span className="chip">queued</span>}
                       {active && <span className="chip good">in progress {pct(n.research.progress / t.cost)}</span>}
                     </div>

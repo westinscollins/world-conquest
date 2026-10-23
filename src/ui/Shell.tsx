@@ -158,3 +158,40 @@ export function useHotkeys() {
     return () => window.removeEventListener('keydown', h);
   }, []);
 }
+
+/** In-game multiplayer status: who is connected, sync state, and host controls for absent players. */
+export function OnlineBar() {
+  const { g } = useStore();
+  const [open, setOpen] = useState(false);
+  const s = store.net;
+  if (!s || !g) return null;
+  const online = new Map(s.seats.map((x) => [x.nation, x]));
+  const absent = g.players.filter((n) => n !== g.player && !online.get(n));
+  const problem = s.status || (s.loading ? `Receiving the game… ${s.loading.got}/${s.loading.of}` : '');
+  return (
+    <>
+      <div className={cls('online-pill', (!!problem || absent.length > 0) && 'warn')} onClick={() => setOpen(!open)} title="Multiplayer status">
+        <span className="dot" /> Online · {s.code} · {s.seats.length} connected{s.role === 'guest' ? '' : ' · you host'}
+      </div>
+      {open && (
+        <div className="online-pop" onMouseLeave={() => setOpen(false)}>
+          <b>Players</b>
+          {g.players.map((n) => {
+            const seat = online.get(n);
+            return (
+              <div key={n} className="row gap">
+                <span className="swatch" style={{ background: g.nations[n]?.color }} />
+                <span style={{ flex: 1 }}>{g.nations[n]?.name}{n === g.player ? ' (you)' : ''}</span>
+                <span className={seat ? 'good small' : 'bad small'}>{seat ? seat.name : 'disconnected'}</span>
+                {s.role === 'host' && !seat && n !== g.player && <Btn small onClick={() => store.cmd('setHumanControl', [n, false])}>Hand to AI</Btn>}
+              </div>
+            );
+          })}
+          {s.role === 'host' && g.players.length === 1 && <p className="small muted">Everyone else has left or been handed to the AI.</p>}
+          <p className="small muted">{s.role === 'host' ? 'Your computer runs the shared clock. Save from the menu as usual; to continue later, host again from that save and players rejoin with the code.' : 'The host runs the shared clock. Anyone can pause. Orders take a moment to reach the host.'}{s.desyncs ? ` Re-synced ${s.desyncs}×.` : ''}</p>
+        </div>
+      )}
+      {problem && <div className="net-banner">{problem}</div>}
+    </>
+  );
+}
