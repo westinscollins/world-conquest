@@ -67,7 +67,7 @@ export function transferProvince(s: GameState, p: number, to: string, status: Pr
   if (old) old.construction = old.construction.filter((c) => c.province !== p);
   invalidateTerritory();
   if (old && old.capital === p) {
-    const alt = ownedBy(s, from).sort((a, b) => PROV[b].cityPop - PROV[a].cityPop)[0];
+    const alt = ownedBy(s, from).slice().sort((a, b) => PROV[b].cityPop - PROV[a].cityPop)[0]; // (a copy: the list is a shared cache)
     if (alt != null) old.capital = alt;
   }
   checkNationAlive(s, from);

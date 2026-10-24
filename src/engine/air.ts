@@ -17,6 +17,7 @@ import { atWar, isFriendly, armiesIn, controlledBy } from './world';
 import { qualityOf, unitEquipCost, newWing } from './military';
 import { provinceWeather } from './weather';
 import { addEvent } from './events';
+import { infraOf } from './economy';
 
 export const isAirType = (t: UnitType): t is 'air' | 'bomber' => t === 'air' || t === 'bomber';
 
@@ -176,14 +177,20 @@ export function airCover(s: GameState, by: string, p: number): number {
   }
   return cover;
 }
+/** Strike power one wing brings to a sea zone. */
+function wingNaval(s: GameState, w: AirWing, zone: number) {
+  const km = seaKm(w.base, zone);
+  let p = 0;
+  for (const u of w.units) if (km <= rangeOf(u.type)) p += (u.type === 'bomber' ? 8 : 3) * squadronEff(u, s.nations[w.owner]);
+  return p;
+}
 /** Naval strike power a nation's wings bring to a sea zone (counts toward sea control). */
 export function navalAir(s: GameState, nation: string, zone: number): number {
   let p = 0;
   for (const w of Object.values(s.airWings ?? {})) {
     if (!flying(w) || w.mission !== 'naval' || w.target !== zone) continue;
     if (w.owner !== nation && !isFriendly(s, w.owner, nation)) continue;
-    const km = seaKm(w.base, zone);
-    for (const u of w.units) if (km <= rangeOf(u.type)) p += (u.type === 'bomber' ? 8 : 3) * squadronEff(u, s.nations[w.owner]);
+    p += wingNaval(s, w, zone);
   }
   return p;
 }
@@ -236,7 +243,8 @@ export function airMissionsDaily(s: GameState) {
     }
     // the airbase was lost: fly to the nearest friendly province
     if (s.provinces[w.base].controller !== w.owner) {
-      const home = controlledBy(s, w.owner).sort((a, b) => distKm(w.base, a) - distKm(w.base, b))[0];
+      // (the territory list is a shared cache: find the nearest without reordering it)
+      const home = controlledBy(s, w.owner).reduce<number | null>((best, p) => (best == null || distKm(w.base, p) < distKm(w.base, best) ? p : best), null);
       if (home == null) { delete s.airWings[w.id]; continue; }
       w.rebase = { to: home, days: 1 };
       if (n.isPlayer) addEvent(s, 'military', `${w.name} lost its airbase and is flying to ${PROV[home].name}.`, [w.owner], { province: home });
@@ -280,10 +288,10 @@ function bombingRun(s: GameState, w: AirWing, n: Nation) {
   while (w.bombAcc >= AIR.BOMB_BUILDING) {
     w.bombAcc -= AIR.BOMB_BUILDING;
     const k = (['power', 'railway', 'factory', 'depot', 'port'] as const).find((x) => st.buildings[x] > 0);
-    if (!k) { st.damage = Math.min(0.9, st.damage + 0.02); break; }
+    if (!k) { st.damage = Math.min(0.9, st.damage + 0.02); w.bombAcc = 0; break; } // (nothing left: the bombs fall on rubble)
     st.buildings[k]--;
     st.damage = Math.min(0.9, st.damage + 0.03);
-    st.infra = 1 + st.buildings.road + st.buildings.railway * 2;
+    st.infra = infraOf(st);
     lost.push(k);
   }
   if (flak > 0) lose(s, w, AIR.BOMB_LOSS * (flak / (escort + flak)));
@@ -298,18 +306,20 @@ function bombingRun(s: GameState, w: AirWing, n: Nation) {
 function navalStrike(s: GameState, w: AirWing, n: Nation) {
   const z = w.target;
   if (z == null || checkMission(s, w, 'naval', z)) { w.mission = 'defense'; w.target = null; return; }
-  const power = navalAir(s, w.owner, z);
-  if (power <= 0) return;
-  for (const f of Object.values(s.fleets)) {
-    if (f.sea !== z || !atWar(s, f.owner, w.owner)) continue;
-    const frac = Math.min(0.08, power * AIR.NAVAL_STRIKE);
+  const power = wingNaval(s, w, z); // (this wing's own aircraft; other wings strike on their own turn)
+  const targets = Object.values(s.fleets).filter((f) => f.sea === z && atWar(s, f.owner, w.owner));
+  if (power <= 0 || !targets.length) return;
+  w.last.sorties = 1;
+  const frac = Math.min(0.08, power * AIR.NAVAL_STRIKE / targets.length);
+  for (const f of targets) {
     for (const k in f.ships) { const kk = k as keyof typeof f.ships; f.ships[kk] = Math.max(0, f.ships[kk] * (1 - frac)); }
     f.org = Math.max(0, f.org - frac * 2);
-    w.last.sorties = 1;
-    // ships' anti-aircraft fire
-    lose(s, w, AIR.LOSS * 0.3);
-    if (s.day % 5 === 0 && (n.isPlayer || s.nations[f.owner]?.isPlayer)) addEvent(s, 'battle', `${w.name} struck the ${f.name} in the ${WORLD.seas[z].name} (−${Math.round(frac * 100)}% ships).`, [w.owner, f.owner]);
+    const left = Object.values(f.ships).reduce((t, v) => t + v, 0);
+    if (left < 0.5) { delete s.fleets[f.id]; addEvent(s, 'battle', `${f.name} of ${s.nations[f.owner]?.name} was sunk by ${w.name} of ${n.name}.`, [f.owner, w.owner], { important: f.owner === s.player || w.owner === s.player }); }
+    else if (s.day % 5 === 0 && (n.isPlayer || s.nations[f.owner]?.isPlayer)) addEvent(s, 'battle', `${w.name} struck the ${f.name} in the ${WORLD.seas[z].name} (−${Math.round(frac * 100)}% ships).`, [w.owner, f.owner]);
   }
+  // the ships' anti-aircraft fire
+  lose(s, w, AIR.LOSS * 0.3 * Math.min(2, targets.length));
 }
 
 /** Replace lost aircraft and crews at the base (paid from the treasury), recover readiness. */

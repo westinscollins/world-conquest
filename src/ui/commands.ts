@@ -3,11 +3,12 @@ import { store } from './store';
 import { PROV, WORLD, isCoastal, seaRoute, distKm } from '../engine/geo';
 import { armiesIn, atWar, isFriendly } from '../engine/world';
 import { findPath, armyStrength } from '../engine/military';
-import { invasionPlan, nationTransportCapacity, seaControl } from '../engine/naval';
+import { invasionPlan, nationTransportCapacity, seaControl, transportFee } from '../engine/naval';
 import { wingsOf } from '../engine/air';
 import { checkStrike } from '../engine/strikes';
-import { NUKE, AIR } from '../engine/config';
+import { NUKE, AIR, MIL, COMBAT } from '../engine/config';
 import { audio } from '../audio/music';
+import { money } from './format';
 
 export function focusProvince(p: number) {
   window.dispatchEvent(new CustomEvent('wc-focus', { detail: p }));
@@ -98,19 +99,25 @@ export function onMapRightClick(p: number | null, sea: number | null, queue = fa
   store.toast(`No route to ${PROV[p].name}.`, 'bad');
 }
 
-/** Naval invasion: show what the landing will face, then order it. */
+/** Naval invasion: show what the landing will face, then order it (armies with a land route march there). */
 function confirmInvasion(ids: number[], p: number) {
   const g = store.game!;
-  const armies = ids.map((id) => g.armies[id]);
+  const armies = ids.map((id) => g.armies[id]).filter((x) => !findPath(g, x, p)); // (the ones that must sail)
+  const overland = ids.length - armies.length;
   const plan = invasionPlan(g, armies, p);
-  if (!plan) { store.toast(`No route to ${PROV[p].name}: none of your ports with a sea route to it can be reached.`, 'bad'); return; }
+  if (!plan) { store.toast(`No route to ${PROV[p].name}: none of your ports with a sea route to it can be reached by ${armies.length > 1 ? 'all of these armies' : 'this army'}.`, 'bad'); return; }
   const n = g.nations[g.player];
   const tc = nationTransportCapacity(g, n);
   const brigades = armies.reduce((t, x) => t + x.units.length, 0);
   const soldiers = armies.reduce((t, x) => t + armyStrength(x), 0);
+  const fee = transportFee(n, brigades, plan.seaDays / MIL.TRANSPORT_DAYS_PER_ZONE);
   const defenders = armiesIn(g, p).filter((x) => atWar(g, x.owner, g.player)).reduce((t, x) => t + armyStrength(x), 0);
   const sea = PROV[p].seas.map((z) => ({ z, c: seaControl(g, g.player, z) }));
-  const held = sea.some(({ c }) => c.own > 0 && c.own >= c.hostile);
+  // the landing penalty as the battle will apply it (sea control of the best landing waters, amphibious tech)
+  const ctl = Math.max(0, ...sea.map(({ c }) => (c.own > 0 ? c.own / (c.own + c.hostile) : 0)));
+  const base = COMBAT.AMPHIBIOUS_PENALTY + 0.3 * ctl;
+  const penalty = Math.round((1 - (base + (1 - base) * n.techMods.amphibious)) * 100);
+  const held = ctl >= 0.5;
   const contested = sea.filter(({ c }) => c.hostile > c.own);
   const wings = wingsOf(g, g.player).filter((w) => w.mission === 'support' && w.units.some((u) => distKm(w.base, p) <= AIR.RANGE[u.type]));
   // the landing waters, and the warships that could go there first
@@ -119,11 +126,11 @@ function confirmInvasion(ids: number[], p: number) {
   const navy = Object.values(g.fleets).filter((f) => f.owner === g.player && f.sea !== zone && f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup >= 0.5);
   const invade = () => { const r = store.cmd('moveArmies', [ids, p]); if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); } };
   const lines = [
-    `${armies.length === 1 ? armies[0].name : `${armies.length} armies`}: ${brigades} brigades, ${Math.round(soldiers / 1000)}k soldiers.`,
+    `${armies.length === 1 ? armies[0].name : `${armies.length} armies`}: ${brigades} brigades, ${Math.round(soldiers / 1000)}k soldiers.${overland ? ` (${overland} more ${overland === 1 ? 'army has' : 'armies have'} a land route and march${overland === 1 ? 'es' : ''} there directly.)` : ''}`,
     plan.port === armies[0].location && armies.every((x) => x.location === plan.port) ? `They board at ${PROV[plan.port].name} and land in ~${Math.ceil(plan.seaDays)} days.` : `They march to ${PROV[plan.port].name}, sail together and land in ~${Math.ceil(plan.sailIn + plan.seaDays)} days.`,
-    `Transport: ${Math.max(0, tc.cap - tc.used)} of ${tc.cap} brigades free${brigades > tc.cap - tc.used ? ' — NOT ENOUGH: send fewer armies or build Transport Flotillas' : ''}.`,
+    `Transport: ${Math.max(0, tc.cap - tc.used)} of ${tc.cap} brigades free${brigades > tc.cap - tc.used ? ' — NOT ENOUGH: send fewer armies or build Transport Flotillas' : ''}. Shipping costs ${money(fee, { digits: 1 })}.`,
     defenders ? `Defenders in ${PROV[p].name}: ~${Math.round(defenders / 1000)}k soldiers.` : `${PROV[p].name} is undefended right now.`,
-    held ? '✓ Your fleets hold the landing waters: naval gunfire support, easier landing (−10% instead of −40%), more troops ashore at once.' : contested.length ? `⚠ Enemy fleets hold the ${WORLD.seas[contested[0].z].name}: expect losses at sea and a −40% landing penalty. Send your navy first.` : '⚠ No fleet of yours covers the landing waters: −40% landing penalty and no naval gunfire. Send your navy first.',
+    held ? `✓ Your fleets hold the landing waters: naval gunfire support, more troops ashore at once, landing penalty only −${penalty}%.` : contested.length ? `⚠ Enemy fleets hold the ${WORLD.seas[contested[0].z].name}: expect losses at sea and a −${penalty}% landing penalty. Send your navy first.` : `⚠ No fleet of yours covers the landing waters: −${penalty}% landing penalty and no naval gunfire. Send your navy first.`,
     wings.length ? `✓ ${wings.length} air wing${wings.length > 1 ? 's' : ''} on ground support can reach ${PROV[p].name}.` : `⚠ No air wing on ground support can reach ${PROV[p].name}: rebase wings near ${PROV[plan.port].name} and set them to "Support ground forces".`,
   ];
   store.setUI({

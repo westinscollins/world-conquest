@@ -20,6 +20,11 @@ export function nationTransportCapacity(s: GameState, n: Nation) {
   return { cap, used };
 }
 
+/** Shipping fee for carrying `brigades` across `zones` sea zones. */
+export function transportFee(n: Nation, brigades: number, zones: number) {
+  return MIL.TRANSPORT_COST_PER_ZONE * brigades * zones * (1 - 0.3 * n.techMods.amphibious) * n.priceIndex;
+}
+
 /**
  * Plan a naval invasion for a group of armies: the friendly port they can all reach soonest that
  * has a sea route to `dest`, each army's march there, and the day the last one arrives (they sail
@@ -59,14 +64,30 @@ export function orderInvasion(s: GameState, armies: Army[], dest: number): { ok:
   const { cap, used } = nationTransportCapacity(s, n);
   const brigades = free.reduce((t, a) => t + a.units.length, 0);
   if (brigades > cap - used) return { ok: false, reason: `Not enough transport capacity: ${brigades} brigades to carry, ${Math.max(0, cap - used)} of ${cap} free. Send fewer armies or build Transport Flotillas.` };
+  const fee = transportFee(n, brigades, plan.seaDays / MIL.TRANSPORT_DAYS_PER_ZONE);
+  if (n.treasury < fee) return { ok: false, reason: `Shipping ${brigades} brigades costs ${fmt(fee)}; the treasury has ${fmt(Math.max(0, n.treasury))}.` };
   const sailDay = s.day + Math.ceil(plan.sailIn);
   for (const a of free) {
     a.path = plan.paths.get(a.id) ?? [];
     a.moveProgress = 0;
     a.seaDest = dest;
+    a.seaPort = plan.port;
     a.sailDay = sailDay;
   }
   return { ok: true, port: plan.port, days: Math.ceil(plan.sailIn + plan.seaDays) };
+}
+
+/** Whether an army's invasion order still stands: it is heading for (or waiting in) its port. */
+export function invasionOn(a: Army) {
+  if (a.seaDest == null || a.embarked) return false;
+  if (a.seaPort == null) return true; // (orders from before ports were recorded)
+  return a.path.length ? a.path[a.path.length - 1] === a.seaPort : a.location === a.seaPort;
+}
+/** The army was given other orders (or could not reach the port): it no longer sails. */
+export function cancelInvasion(s: GameState, a: Army) {
+  const dest = a.seaDest;
+  a.seaDest = null;
+  if (dest != null && s.nations[a.owner]?.isPlayer) addEvent(s, 'military', `${a.name} will not sail for ${PROV[dest].name}: it is no longer heading for the port${a.seaPort != null ? ` of ${PROV[a.seaPort].name}` : ''}.`, [a.owner], { province: a.location });
 }
 
 /**
@@ -75,11 +96,12 @@ export function orderInvasion(s: GameState, armies: Army[], dest: number): { ok:
  * stragglers.
  */
 export function sailWhenReady(s: GameState, a: Army) {
-  if (a.seaDest == null || a.path.length || a.battleId || a.embarked) return;
-  const group = Object.values(s.armies).filter((b) => b.owner === a.owner && b.seaDest === a.seaDest && b.sailDay === a.sailDay && !b.embarked && !b.battleId);
+  if (!invasionOn(a) || a.path.length || a.battleId) return;
+  const group = Object.values(s.armies).filter((b) => b.owner === a.owner && b.seaDest === a.seaDest && b.sailDay === a.sailDay && invasionOn(b));
+  // wait (a while) for the armies still on the march, fighting on the way included
   if (group.some((b) => b.path.length) && s.day < (a.sailDay ?? 0) + MIL.INVASION_WAIT) return;
   for (const b of group) {
-    if (b.path.length) continue;
+    if (b.path.length || b.battleId) continue;
     const dest = b.seaDest!;
     b.seaDest = null;
     const r = embark(s, b, dest);
@@ -103,8 +125,7 @@ export function checkSeaMove(s: GameState, a: Army, dest: number): SeaMoveCheck 
   if (!route) return fail('No sea route.');
   const { cap, used } = nationTransportCapacity(s, n);
   if (used + a.units.length > cap) return fail(`Not enough transport capacity: ${Math.max(0, cap - used)} of ${cap} brigades free, this army has ${a.units.length}. Split the army, or build Transport Flotillas.`);
-  const amphib = n.techMods.amphibious;
-  const cost = MIL.TRANSPORT_COST_PER_ZONE * a.units.length * route.length * (1 - 0.3 * amphib) * n.priceIndex;
+  const cost = transportFee(n, a.units.length, route.length);
   if (n.treasury < cost) return fail(`Transport costs ${fmt(cost)}.`);
   let risk = 0;
   for (const z of route) risk = Math.max(risk, seaControl(s, a.owner, z).hostileShare);

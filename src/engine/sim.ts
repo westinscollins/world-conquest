@@ -16,7 +16,7 @@ import { battleDaily, startBattle, joinBattle } from './battle';
 import { armiesIn, atWar, isAtWar, invalidateArmies, isFriendly } from './world';
 import { setController, resistanceMonthly } from './territory';
 import { relationsWeekly, updateWarScore, checkCapitulation } from './diplomacy';
-import { seaTransportDaily, fleetsDaily, shipyardDaily, sailWhenReady } from './naval';
+import { seaTransportDaily, fleetsDaily, shipyardDaily, sailWhenReady, invasionOn, cancelInvasion } from './naval';
 import { strategicDaily } from './strikes';
 import { eventsDaily } from './policy';
 import { revoltsMonthly } from './regime';
@@ -114,7 +114,11 @@ export function tick(s: GameState) {
 }
 
 function moveArmy(s: GameState, a: Army) {
-  if (a.seaDest != null && !a.path.length) sailWhenReady(s, a); // naval invasion: board when the group is in port
+  if (a.seaDest != null) {
+    // naval invasion: board when the group is in port; other orders since then call it off
+    if (!invasionOn(a)) cancelInvasion(s, a);
+    else if (!a.path.length) sailWhenReady(s, a);
+  }
   if (!a.path.length || a.battleId != null || a.embarked) { if (!a.path.length && !a.battleId) a.fatigue = Math.max(0, a.fatigue - 0.04); return; }
   const next = a.path[0];
   if (!canEnter(s, a.owner, next)) {

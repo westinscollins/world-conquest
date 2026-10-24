@@ -84,6 +84,7 @@ export interface Army {
   embarked: null | { route: number[]; dest: number; progress: number; from: number };
   seaDest?: number | null;   // naval invasion: embark for this province on reaching the port
   sailDay?: number;          // ...but not before this day (so a group sails together)
+  seaPort?: number;          // ...from this port
   lastSupplyRatio: number;
   lastSupplyCause: string[];
 }

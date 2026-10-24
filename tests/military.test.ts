@@ -3,15 +3,17 @@
 import { describe, it, expect } from 'vitest';
 import { newGame } from '../src/engine/setup';
 import { runDays } from '../src/engine/sim';
-import { PROV, COUNTRY_GEO, distKm } from '../src/engine/geo';
+import { PROV, COUNTRY_GEO, distKm, seaRoute } from '../src/engine/geo';
 import { createArmy, newUnit } from '../src/engine/military';
 import { battleDaily, startBattle, navalSupport } from '../src/engine/battle';
 import { declareWar } from '../src/engine/diplomacy';
 import { setController } from '../src/engine/territory';
 import { serialize, deserialize } from '../src/engine/save';
-import { invalidateArmies } from '../src/engine/world';
+import { invalidateArmies, controlledBy } from '../src/engine/world';
+import { infraOf } from '../src/engine/economy';
 import { wingsOf, createWing, setMission, rebaseWing, airMissionsDaily, computeBattleAir, wingPlanes, navalAir } from '../src/engine/air';
 import { orderInvasion, moveFleet, nationTransportCapacity } from '../src/engine/naval';
+import { setAirMission } from '../src/engine/regime';
 import { runCommand, stateHash } from '../src/engine/commands';
 import { AIR, SAVE_VERSION } from '../src/engine/config';
 import type { GameState, UnitType } from '../src/engine/types';
@@ -78,9 +80,15 @@ describe('air force', () => {
     const st = s.provinces[taipei];
     const count = () => st.buildings.power + st.buildings.railway + st.buildings.factory + st.buildings.depot + st.buildings.port;
     const before = count();
+    expect(st.buildings.port).toBeGreaterThan(0);
     for (let d = 0; d < 30; d++) { airMissionsDaily(s); s.day++; }
     expect(count()).toBeLessThan(before);
     expect(st.damage).toBeGreaterThan(0);
+    expect(st.infra).toBe(infraOf(st)); // (what a reloaded copy computes: no multiplayer desync)
+    // once everything is flattened, bombs fall on rubble instead of piling up for whatever is rebuilt
+    for (let d = 0; d < 120; d++) { airMissionsDaily(s); s.day++; }
+    expect(count()).toBe(0);
+    expect(w.bombAcc).toBeLessThan(AIR.BOMB_BUILDING);
   });
 
   it('naval strike wings sink enemy ships and count toward sea control', () => {
@@ -97,6 +105,21 @@ describe('air force', () => {
     expect(ships()).toBeLessThan(before * 0.9);
   });
 
+  it('three wings sink no more than one wing with the same aircraft', () => {
+    const sunk = (split: boolean) => {
+      const { s, fuzhou } = chinaTaiwan();
+      const f = Object.values(s.fleets).find((x) => x.owner === 'TWN')!;
+      const bombers = squadrons(s, ['bomber', 'bomber', 'bomber']);
+      for (const g of split ? bombers.map((u) => [u]) : [bombers]) setMission(s, createWing(s, 'CHN', fuzhou, g), 'naval', f.sea);
+      const total = () => Object.values(f.ships).reduce((t, v) => t + v, 0);
+      const before = total();
+      airMissionsDaily(s);
+      return 1 - total() / before;
+    };
+    expect(sunk(true) / sunk(false)).toBeGreaterThan(0.95); // (the strikes compound, so not exactly equal)
+    expect(sunk(true) / sunk(false)).toBeLessThan(1.05);
+  });
+
   it('wings rebase only to held territory, and fly home when their airbase falls', () => {
     const { s, taipei, fuzhou } = chinaTaiwan();
     const w = wingsOf(s, 'CHN').find((x) => x.base !== fuzhou)!;
@@ -106,7 +129,9 @@ describe('air force', () => {
     expect(w.base).toBe(fuzhou);
     expect(w.rebase).toBeNull();
     setController(s, fuzhou, 'TWN');
+    const order = controlledBy(s, 'CHN').slice();
     airMissionsDaily(s);
+    expect(controlledBy(s, 'CHN')).toEqual(order); // (a shared cache: reordering it would desync a reloaded copy)
     expect(w.rebase).not.toBeNull();
     expect(s.provinces[w.rebase!.to].controller).toBe('CHN');
   });
@@ -120,6 +145,16 @@ describe('air force', () => {
     expect(stateHash(s)).not.toBe(h);
     expect(runCommand(s, 'TWN', 'doWingMission', [w.id, 'support', null]).ok).toBe(false);
     expect(w.mission).toBe('idle');
+  });
+
+  it('a refused War Room bombing order changes nothing', () => {
+    const { s } = chinaTaiwan(false);
+    declareWar(s, s.nations.CHN, 'BRA');
+    const before = wingsOf(s, 'CHN').map((w) => `${w.mission}:${w.target}`);
+    const air = JSON.stringify(s.nations.CHN.regime.air);
+    expect(setAirMission(s, s.nations.CHN, 'bombing', 'BRA')).toMatch(/can reach/);
+    expect(wingsOf(s, 'CHN').map((w) => `${w.mission}:${w.target}`)).toEqual(before);
+    expect(JSON.stringify(s.nations.CHN.regime.air)).toBe(air);
   });
 
   it('old saves: aircraft that flew inside armies become air wings', () => {
@@ -181,6 +216,36 @@ describe('war at sea and invasions', () => {
     // too many brigades for the shipping available
     const all = Object.values(s.armies).filter((a) => a.owner === 'CHN' && !a.embarked && !a.battleId);
     expect(orderInvasion(s, all, taipei).reason).toMatch(/transport capacity/);
+  });
+
+  it('halting, retreating or rerouting an army calls off its sailing', () => {
+    const { s, taipei, fuzhou } = chinaTaiwan();
+    // armies standing in ports of their own (they could sail from where they are)
+    const inPort = Object.values(s.armies)
+      .filter((a) => a.owner === 'CHN' && s.provinces[a.location].buildings.port > 0 && seaRoute(PROV[a.location].seas, PROV[taipei].seas))
+      .sort((a, b) => distKm(a.location, fuzhou) - distKm(b.location, fuzhou))
+      .filter((x, i, l) => l.findIndex((y) => y.location === x.location) === i);
+    const [a, b, c] = inPort;
+    expect(orderInvasion(s, [a, b], taipei).ok).toBe(true); // one group: one of them marches to the other's port
+    expect(orderInvasion(s, [c], taipei).ok).toBe(true);
+    expect(runCommand(s, 'CHN', 'doHaltMany', [[a.id]]).ok).toBe(true);
+    expect(runCommand(s, 'CHN', 'doRetreatMany', [[b.id]]).ok).toBe(true);
+    c.path = [PROV[c.location].neighbors.find((q) => s.provinces[q].controller === 'CHN')!]; // new orders elsewhere (e.g. from automation)
+    runDays(s, 1);
+    expect(c.seaDest ?? null).toBeNull();
+    runDays(s, 40);
+    for (const x of [a, b, c]) {
+      expect(x.seaDest ?? null).toBeNull();
+      expect(x.embarked).toBeFalsy();
+      expect(x.location).not.toBe(taipei);
+    }
+  });
+
+  it('an invasion needs the money for the shipping', () => {
+    const { s, taipei, fuzhou } = chinaTaiwan();
+    const a = Object.values(s.armies).filter((x) => x.owner === 'CHN').sort((x, y) => distKm(x.location, fuzhou) - distKm(y.location, fuzhou))[0];
+    s.nations.CHN.treasury = 0;
+    expect(orderInvasion(s, [a], taipei).reason).toMatch(/costs/);
   });
 
   it('China takes Taipei when its navy and air force support the landing', () => {

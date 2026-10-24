@@ -19,7 +19,8 @@ export default function App() {
       <TopBar />
       <OnlineBar />
       <LeftNav />
-      {ui.selectedArmy != null ? <ArmyPanel /> : ui.selectedFleet != null ? <FleetPanel /> : ui.selectedWing != null ? <AirWingPanel /> : <ProvincePanel />}
+      {/* (a piece that was just destroyed falls back to the province view instead of an empty panel) */}
+      {ui.selectedArmy != null && g.armies[ui.selectedArmy] ? <ArmyPanel /> : ui.selectedFleet != null && g.fleets[ui.selectedFleet] ? <FleetPanel /> : ui.selectedWing != null && g.airWings?.[ui.selectedWing] ? <AirWingPanel /> : <ProvincePanel />}
       <MapModes />
       <ArmyBar />
       <EventLog />

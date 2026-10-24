@@ -136,7 +136,7 @@ export function retreatArmy(s: GameState, armyId: number): Result {
   const b = a.battleId != null ? s.battles[a.battleId] : undefined;
   if (!b || b.result != null) return fail('This army is not in a battle.');
   if (b.attacker.armyIds.includes(a.id) && b.attacker.nation === a.owner) {
-    a.battleId = null; a.path = []; a.moveProgress = 0; a.stance = 'hold';
+    a.battleId = null; a.path = []; a.moveProgress = 0; a.stance = 'hold'; a.seaDest = null;
     for (const u of a.units) u.org *= 0.85;
     invalidateArmies();
     return ok(`${a.name} breaks off the attack on ${PROV[b.province].name}.`);
@@ -430,14 +430,14 @@ export function doMercenaries(s: GameState, type: UnitType, p: number): Result {
 export function doLicenseTech(s: GameState, tech: string): Result { return rr(licenseTech(s, P(s), tech), 'Technology licensed.'); }
 /** Bulk orders for many armies at once. */
 export function doStances(s: GameState, ids: number[], st: Stance): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player) { a.stance = st; k++; } } return ok(`${k} armies: ${STANCE_TEXT[st]}.`); }
-export function doHaltMany(s: GameState, ids: number[]): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null) { a.path = []; a.moveProgress = 0; k++; } } return ok(`${k} armies halted.`); }
+export function doHaltMany(s: GameState, ids: number[]): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null) { a.path = []; a.moveProgress = 0; a.seaDest = null; k++; } } return ok(`${k} armies halted.`); }
 export function doRetreatMany(s: GameState, ids: number[]): Result {
   let k = 0;
   for (const id of ids) {
     const a = s.armies[id];
     if (!a || a.owner !== s.player) continue;
     if (a.battleId != null) { if (retreatArmy(s, id).ok) k++; continue; }
-    a.stance = 'withdraw'; a.path = []; k++;
+    a.stance = 'withdraw'; a.path = []; a.seaDest = null; k++;
   }
   return ok(`${k} armies falling back to home territory.`);
 }

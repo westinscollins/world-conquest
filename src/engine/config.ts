@@ -465,7 +465,7 @@ export const AIR_MISSIONS: Record<'none' | 'cas' | 'bombing' | 'defense', { labe
   none: { label: 'Stand down', desc: 'All air wings stay at their bases and refit.' },
   cas: { label: 'Support ground forces', desc: 'All air wings fly over your battles in range: air superiority and strikes on enemy troops.' },
   bombing: { label: 'Strategic bombing', desc: 'All bomber wings bomb the nearest factories, power and railways of the chosen enemy in range; fighter wings escort them.' },
-  defense: { label: 'Air defence', desc: 'Fighters guard your skies: +20% interception of enemy drones and missiles.' },
+  defense: { label: 'Air defence', desc: 'All air wings guard your own skies: they cover battles on your soil and shoot down enemy raids, drones and missiles.' },
 };
 export const SAM_COST = 8, SAM_EACH = 0.04, SAM_MAX = 10;
 export const MERCENARY_MULT = 2.5;

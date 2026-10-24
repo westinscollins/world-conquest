@@ -305,18 +305,24 @@ export function setAirMission(s: GameState, n: Nation, mission: 'none' | 'cas' |
   if (mission === 'bombing' && (!target || !atWar(s, n.id, target))) return 'Choose an enemy you are at war with to bomb.';
   const wings = wingsOf(s, n.id);
   if (!wings.length) return 'You have no air wings. Build fighter or bomber squadrons first.';
-  n.regime.air = { mission, target: mission === 'bombing' ? target : null };
-  let bombing = 0;
-  for (const w of wings) {
-    if (mission === 'bombing' && w.units.some((u) => u.type === 'bomber')) {
-      // the nearest province of that enemy with something worth bombing
-      const goals = controlledBy(s, target!).filter((p) => { const b = s.provinces[p].buildings; return b.factory + b.power + b.railway + b.depot > 0 || armiesIn(s, p).some((a) => a.owner === target); });
+  // bombing: each bomber wing takes the nearest province of that enemy with something worth bombing
+  // (planned first, so a refusal changes nothing)
+  const raids = new Map<number, number>();
+  if (mission === 'bombing') {
+    const goals = controlledBy(s, target!).filter((p) => { const b = s.provinces[p].buildings; return b.factory + b.power + b.railway + b.depot > 0 || armiesIn(s, p).some((a) => a.owner === target); });
+    for (const w of wings) {
+      if (!w.units.some((u) => u.type === 'bomber')) continue;
       const best = goals.filter((p) => !checkMission(s, w, 'bombing', p)).sort((a, b) => distKm(w.base, a) - distKm(w.base, b))[0];
-      if (best != null && !setMission(s, w, 'bombing', best)) { bombing++; continue; }
+      if (best != null) raids.set(w.id, best);
     }
+    if (!raids.size) return 'None of your bomber wings can reach that enemy. Rebase them closer.';
+  }
+  n.regime.air = { mission, target: mission === 'bombing' ? target : null };
+  for (const w of wings) {
+    const p = raids.get(w.id);
+    if (p != null && !setMission(s, w, 'bombing', p)) continue;
     setMission(s, w, mission === 'none' ? 'idle' : mission === 'defense' ? 'defense' : 'support');
   }
-  if (mission === 'bombing' && !bombing) return 'None of your bomber wings can reach that enemy. Rebase them closer.';
   return null;
 }
 export function buySam(s: GameState, n: Nation): string | null {
