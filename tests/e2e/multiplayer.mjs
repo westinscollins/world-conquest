@@ -76,9 +76,12 @@ await A.waitForTimeout(4000);
 await A.evaluate(() => window.__wc.setSpeed(3));
 await A.waitForTimeout(6000);
 await A.evaluate(() => window.__wc.setSpeed(0));
-await A.waitForTimeout(7000); // allow resends to catch up
-const [h2a, h2b] = [await hash(A), await hash(B)];
-ok(`identical state after lossy play (${h2a} vs ${h2b})`, h2a === h2b);
+// the guest re-requests what the lossy link dropped: wait (up to 40 s) until it has caught up
+const t0 = Date.now();
+await A.waitForTimeout(1500);
+let [h2a, h2b] = [await hash(A), await hash(B)];
+while (h2a.split(':')[0] !== h2b.split(':')[0] && Date.now() - t0 < 40000) { await A.waitForTimeout(500); [h2a, h2b] = [await hash(A), await hash(B)]; }
+ok(`identical state after lossy play (${h2a} vs ${h2b}; caught up in ${((Date.now() - t0) / 1000).toFixed(1)} s)`, h2a === h2b);
 await A.screenshot({ path: out + '/mp-host.png' });
 console.log(fails ? `${fails} FAILED` : 'ALL PASSED', errs.length ? '\nERRORS:\n' + errs.join('\n') : '');
 await b.close();

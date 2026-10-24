@@ -88,6 +88,7 @@ export class Session {
   private buffer = new Map<number, Batch>();
   private gapSince = 0;
   private lastNeed = 0;
+  private needAt = -1; // where the guest was when it last asked for missing steps
   private stalled = false;
   private pending = new Map<string, ((r: { ok: boolean; message: string }) => void) | null>();
   private snap: { sid: string; q: number; n: number; parts: (string | undefined)[]; last: number; seat: string | null } | null = null;
@@ -478,8 +479,11 @@ export class Session {
       return;
     }
     if (this.stalled && !this.snap && now - this.lastNeed > 6000) { this.lastNeed = now; void this.room.emit('need', { snap: true }).catch(() => {}); return; }
-    if (this.phase === 'playing' && this.gapSince && now - this.gapSince > 900 && now - this.lastNeed > 1500) {
+    // a re-send that helped but still left a gap (a step lost twice): ask again sooner
+    const recovering = now - this.lastNeed < 4000 && this.applied > this.needAt;
+    if (this.phase === 'playing' && this.gapSince && now - this.gapSince > (recovering ? 300 : 900) && now - this.lastNeed > (recovering ? 500 : 1500)) {
       this.lastNeed = now;
+      this.needAt = this.applied;
       void this.room.emit('need', { from: this.applied + 1 }).catch(() => {});
     }
   }
