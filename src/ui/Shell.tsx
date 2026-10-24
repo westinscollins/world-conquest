@@ -187,7 +187,8 @@ export function ConfirmDialog() {
       <p className="pre">{c.body}</p>
       <div className="row gap end">
         <Btn onClick={close}>Cancel</Btn>
-        <Btn kind={c.danger ? 'danger' : 'primary'} onClick={() => { close(); c.onOk(); }}>Confirm</Btn>
+        {c.alt && <Btn kind="primary" onClick={() => { close(); c.alt!.onOk(); }}>{c.alt.label}</Btn>}
+        <Btn kind={c.danger ? 'danger' : c.alt ? undefined : 'primary'} onClick={() => { close(); c.onOk(); }}>{c.okLabel ?? 'Confirm'}</Btn>
       </div>
     </Modal>
   );
@@ -275,7 +276,7 @@ export function useHotkeys() {
       }
       else if (e.key === '+' || e.key === '=') store.setSpeed(Math.min(3, store.ui.speed + 1));
       else if (e.key === '-') store.setSpeed(Math.max(0, store.ui.speed - 1));
-      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, pickOperation: false, group: [] });
+      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, selectedWing: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, pickOperation: false, group: [] });
       else if (e.key === 'Tab') { e.preventDefault(); cycleArmy(e.shiftKey ? -1 : 1); }
       else armyHotkey(e.key.toLowerCase());
     };

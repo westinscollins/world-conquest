@@ -1,5 +1,6 @@
 import type { GameState } from './types';
-import { SAVE_VERSION } from './config';
+import { SAVE_VERSION, AIR } from './config';
+import { newWing } from './military';
 import { invalidateTerritory, invalidateArmies, invalidateDiplo } from './world';
 import { resetSupplyCache } from './supply';
 import { infraOf } from './economy';
@@ -50,6 +51,26 @@ export function migrate(raw: any): GameState {
   if (raw.version < 7) {
     for (const n of Object.values<any>(raw.nations)) { n.regime ??= newRegime(); n.arsenal.ballistic ??= 0; n.arsenal.recon ??= 0; }
     raw.operations ??= [];
+  }
+  if (raw.version < 8) {
+    // aircraft used to fly inside armies: they become air wings based where their army stood
+    raw.airWings ??= {};
+    const wings = new Map<string, number>();
+    for (const a of Object.values<any>(raw.armies)) {
+      const planes = a.units.filter((u: any) => u.type === 'air');
+      if (!planes.length) continue;
+      a.units = a.units.filter((u: any) => u.type !== 'air');
+      const key = `${a.owner}|${a.location}`;
+      let w = wings.has(key) ? raw.airWings[wings.get(key)!] : null;
+      if (!w || w.units.length >= AIR.MAX_WING) {
+        w = newWing(s, a.owner, a.location);
+        const m = raw.nations[a.owner]?.regime?.air?.mission;
+        w.mission = m === 'defense' ? 'defense' : 'support';
+        wings.set(key, w.id);
+      }
+      w.units.push(...planes);
+    }
+    for (const a of Object.values<any>(raw.armies)) if (!a.units.length) { const g = a.generalId != null ? raw.generals[a.generalId] : null; if (g) g.armyId = null; delete raw.armies[a.id]; }
   }
   s.version = SAVE_VERSION;
   // derived data is recomputed rather than trusted

@@ -1,5 +1,5 @@
 import type { GameState, Nation, PeaceTerms, War } from './types';
-import { DIPLO } from './config';
+import { DIPLO, ECON } from './config';
 import { invalidateDiplo, rel, peekRel, warBetween, atWar, alliesOf, enemiesOf, ownedBy, controlledBy, neighborsOf, isAtWar } from './world';
 import { addEvent } from './events';
 import { provinceOutput, fmt } from './economy';
@@ -112,11 +112,16 @@ export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck 
     if (!jn?.alive || jn.isPlayer || atWar(s, j, targetId) || peekRel(s, j, targetId)?.alliance) continue;
     if (rel(s, j, a.id).value > 50 && rel(s, j, targetId).value < 0) joinWar(s, war, j, 'attackers');
   }
-  if (t.isPlayer || a.isPlayer) {
-    // AI defender instantly mobilises
-  }
-  if (!t.isPlayer) t.mobilize = true;
+  // both sides mobilise (players can stand down in the War Room)
+  for (const x of [a, t]) mobiliseForWar(s, x);
   return c;
+}
+
+/** Going to war mobilises the nation: armies reach full organisation (only 55% unmobilised). */
+function mobiliseForWar(s: GameState, n: Nation) {
+  if (n.mobilize) return;
+  n.mobilize = true;
+  if (n.isPlayer) addEvent(s, 'military', `${n.name} mobilises for war: your armies reach full organisation over ${ECON.MOBILIZATION_DAYS} days (unmobilised armies fight at no more than 55%). You can stand down in the War Room.`, [n.id], { important: true });
 }
 
 export function joinWar(s: GameState, war: War, nation: string, side: 'attackers' | 'defenders') {
@@ -124,7 +129,7 @@ export function joinWar(s: GameState, war: War, nation: string, side: 'attackers
   war[side].push(nation);
   const n = s.nations[nation];
   n.lastWarDay = s.day;
-  if (!n.isPlayer) n.mobilize = true;
+  mobiliseForWar(s, n);
   const enemyLeader = side === 'attackers' ? war.leaderD : war.leaderA;
   changeRelation(s, nation, enemyLeader, -40);
   addEvent(s, 'war', `${n.name} joins the ${war.name} on the side of ${s.nations[side === 'attackers' ? war.leaderA : war.leaderD].name}.`, [nation, war.leaderA, war.leaderD], { important: true });
@@ -248,7 +253,9 @@ export function makePeace(s: GameState, w: War, taker: string, t: PeaceTerms) {
   }
   for (const n of [...winners, ...losers]) {
     const nn = s.nations[n];
-    if (nn && !isAtWar(s, n)) { nn.mobilize = nn.isPlayer ? nn.mobilize : false; }
+    if (!nn || !nn.mobilize || isAtWar(s, n)) continue;
+    nn.mobilize = false; // (like mobilisation on entering a war, standing down is automatic)
+    if (nn.isPlayer) addEvent(s, 'military', `${nn.name} stands down: with no war left, the armies demobilise to save upkeep. You can mobilise again in the War Room.`, [n]);
   }
   addEvent(s, 'peace', `Peace: the ${w.name} ends${t.white ? ' in a white peace' : ''}. ${parts.length ? parts.join('; ') + '.' : ''}`, [...winners, ...losers], { important: true });
   for (const l of losers) checkNationAlive(s, l);

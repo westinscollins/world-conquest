@@ -5,6 +5,7 @@ import { TopBar } from './ui/TopBar';
 import { LeftNav, MapModes, EventLog, Toasts, ConfirmDialog, TutorialCard, OutcomeModal, OnlineBar, LiveTicker, ArmyBar, DecisionCard, useHotkeys } from './ui/Shell';
 import { ProvincePanel } from './ui/ProvincePanel';
 import { ArmyPanel, FleetPanel } from './ui/ArmyPanel';
+import { AirWingPanel } from './ui/AirWingPanel';
 import { IntelDialog } from './ui/IntelDialog';
 import { BattleReport } from './ui/BattleReport';
 
@@ -18,7 +19,7 @@ export default function App() {
       <TopBar />
       <OnlineBar />
       <LeftNav />
-      {ui.selectedArmy != null ? <ArmyPanel /> : ui.selectedFleet != null ? <FleetPanel /> : <ProvincePanel />}
+      {ui.selectedArmy != null ? <ArmyPanel /> : ui.selectedFleet != null ? <FleetPanel /> : ui.selectedWing != null ? <AirWingPanel /> : <ProvincePanel />}
       <MapModes />
       <ArmyBar />
       <EventLog />

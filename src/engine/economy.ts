@@ -132,6 +132,18 @@ export function aggregate(s: GameState, n: Nation, armiesByOwner: Map<string, nu
       if (active) agg.opsDaily += unitOpsCostPerDay(u.type, n) * (a.battleId != null ? 2 : 1);
     }
   }
+  // air force: squadrons cost upkeep; flying missions in wartime burns fuel and munitions
+  for (const w of Object.values(s.airWings ?? {})) {
+    if (w.owner !== n.id) continue;
+    const active = w.mission !== 'idle' && !w.rebase && w.last.sorties > 0;
+    for (const u of w.units) {
+      agg.units++;
+      agg.personnel += u.strength;
+      agg.upkeepUnits += unitUpkeep(u.type, n) * (0.5 + 0.5 * u.strength / UNITS[u.type].personnel);
+      agg.fuelDemand += UNITS[u.type].fuel * (active ? 2 : 1);
+      if (active) agg.opsDaily += unitOpsCostPerDay(u.type, n);
+    }
+  }
   for (const t of n.training) agg.upkeepUnits += unitUpkeep(t.type, n) * 0.5;
   for (const fid of fleetsByOwner.get(n.id) || []) {
     const f = s.fleets[fid];

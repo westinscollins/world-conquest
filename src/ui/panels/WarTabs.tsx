@@ -144,7 +144,7 @@ export function StrategyTab() {
           ))}
         </div>
       </Section>
-      <Section title="Air campaign" icon="star" right={<span className="small muted">{wings.toFixed(1)} air wings</span>}>
+      <Section title="Air force: orders for every wing" icon="star" right={<span className="small muted">{Math.round(wings)} squadrons</span>}>
         <div className="policy-opts four">
           {(Object.keys(AIR_MISSIONS) as (keyof typeof AIR_MISSIONS)[]).map((k) => (
             <button key={k} className={cls('posture', r.air.mission === k && 'on')} disabled={k === 'bombing' && !enemies.length} onClick={() => say(store.cmd('doAirMission', [k, k === 'bombing' ? (r.air.target && enemies.includes(r.air.target) ? r.air.target : enemies[0] ?? null) : null]))}>{AIR_MISSIONS[k].label}<span>{AIR_MISSIONS[k].desc}</span></button>
@@ -155,7 +155,8 @@ export function StrategyTab() {
             <select value={r.air.target ?? ''} onChange={(e) => say(store.cmd('doAirMission', ['bombing', e.target.value]))}>{enemies.map((e) => <option key={e} value={e}>{g.nations[e]?.name}</option>)}</select>
           </div>
         )}
-        {wings < 0.5 && <p className="small warn">You have no air wings. Recruit Air Wings (Military → Recruit) for close air support and bombing.</p>}
+        {wings < 0.5 ? <p className="small warn">You have no aircraft. Build fighter or bomber squadrons (Military → Air force) for air superiority, close air support and bombing.</p>
+          : <p className="small muted">Each air wing can also get its own mission: click its jet on the map. Wings only reach battles and targets within range of their airbase (fighters 1,300 km, bombers 2,800 km).</p>}
       </Section>
       <Section title="Mercenaries" icon="manpower">
         <div className="row gap wrap">

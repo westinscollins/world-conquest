@@ -13,6 +13,7 @@ import { addEvent } from './events';
 import { hashNoise } from './rng';
 import { armyStrength, deleteArmy, industryBonus } from './military';
 import { infraOf } from './economy';
+import { airCover } from './air';
 
 export type StrikeKind = 'drone' | 'missile' | 'nuke' | 'ballistic' | 'recon';
 export type Munition = Exclude<StrikeKind, 'nuke'>;
@@ -42,11 +43,11 @@ export function inRange(s: GameState, by: string, kind: StrikeKind, p: number) {
 /** Share of incoming strikes shot down by enemy air wings in and around the target. */
 export function interceptRate(s: GameState, by: string, p: number, kind: StrikeKind) {
   if (kind === 'nuke') return 0;
-  let wings = 0;
-  for (const q of [p, ...PROV[p].neighbors]) for (const a of armiesIn(s, q)) if (atWar(s, a.owner, by)) for (const u of a.units) if (u.type === 'air') wings += (q === p ? 1 : 0.5) * (u.strength / UNITS.air.personnel);
-  // the defender's SAM batteries and an air-defence mission add to the interception
+  // enemy fighters covering the target (air-defence or ground-support missions in range)
+  const wings = airCover(s, by, p);
+  // and the defender's SAM batteries
   const owner = s.nations[s.provinces[p].controller];
-  const extra = owner?.regime ? Math.min(SAM_MAX * SAM_EACH, owner.regime.sam * SAM_EACH) + (owner.regime.air.mission === 'defense' ? 0.2 : 0) : 0;
+  const extra = owner?.regime ? Math.min(SAM_MAX * SAM_EACH, owner.regime.sam * SAM_EACH) : 0;
   return Math.min(0.85, Math.min(AIR_DEFENSE.MAX, wings * AIR_DEFENSE.PER_AIR_WING) + extra) * STRIKES[kind].intercept;
 }
 

@@ -3,15 +3,16 @@
  * UI components call these instead of mutating game state directly.
  */
 import type { PolicyArea, ProvinceFocus } from './types';
-import type { GameState, Posture, Stance, UnitType, BuildingKind, EquipKind, PeaceTerms, ShipType, Army } from './types';
+import type { GameState, Posture, Stance, UnitType, BuildingKind, EquipKind, PeaceTerms, ShipType, Army, AirMission } from './types';
+import { setMission, rebaseWing } from './air';
 import { recruit, findPath, assignGeneral, createArmy, deleteArmy, pathDays, armyStrength } from './military';
 import { startConstruction, cancelConstruction, borrow, repay, fmt } from './economy';
 import { declareWar, proposeTreaty, cancelTreaty, diplomaticMission, ultimatum, evaluatePeace, makePeace, annexSubject, answerCallToArms, applyTreaty } from './diplomacy';
 import { setProvinceStatus, releaseSubject } from './territory';
-import { embark, moveFleet, orderShip } from './naval';
-import { PROV } from './geo';
+import { embark, moveFleet, orderShip, orderInvasion } from './naval';
+import { PROV, WORLD } from './geo';
 import { addEvent } from './events';
-import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS, SECURITY, PROPAGANDA, INTERIOR, WAR_ECONOMY, ROE, AIR_MISSIONS } from './config';
+import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS, SECURITY, PROPAGANDA, INTERIOR, WAR_ECONOMY, ROE, AIR_MISSIONS, AIR_MISSION_INFO } from './config';
 import { canResearch } from './research';
 import { setSecurity, toggleCampaign, interiorAction, toggleMartialLaw, setWarEconomy, setRoe, setAirMission, buySam } from './regime';
 import { createOperation, cancelOperation, attackNearest, digIn, scorchedEarth, fundPartisans, fortifyBorder, hireMercenaries, licenseTech } from './warplans';
@@ -82,10 +83,16 @@ export function moveArmy(s: GameState, armyId: number, to: number): Result & { d
   if (!a || a.owner !== s.player) return fail('Not your army.');
   if (a.battleId != null) return fail('Army is engaged in battle.');
   if (a.embarked) return fail('Army is at sea.');
-  if (to === a.location) { a.path = []; a.moveProgress = 0; return ok('Halted.'); }
+  if (to === a.location) { a.path = []; a.moveProgress = 0; a.seaDest = null; return ok('Halted.'); }
   const path = findPath(s, a, to);
-  if (!path) return fail(`No land route to ${PROV[to].name}. Armies need connected provinces with military access (or naval transport from a port).`);
-  a.path = path; a.moveProgress = 0;
+  if (!path) {
+    // overseas: march to the best port and sail
+    const r = orderInvasion(s, [a], to);
+    if (!r.ok) return fail(`No land route to ${PROV[to].name}, and no naval transport: ${r.reason}`);
+    flag(s, 'moved');
+    return { ...ok(r.port === a.location ? `${a.name} boarding ships at ${PROV[a.location].name} for ${PROV[to].name} (~${r.days} days).` : `${a.name} marching to ${PROV[r.port!].name} to sail for ${PROV[to].name} (~${r.days} days in all).`), days: r.days };
+  }
+  a.path = path; a.moveProgress = 0; a.seaDest = null;
   flag(s, 'moved');
   const days = pathDays(s, a, path);
   return { ...ok(`${a.name} marching to ${PROV[to].name} (~${Math.ceil(days)} days).`), days };
@@ -141,6 +148,16 @@ export function retreatArmy(s: GameState, armyId: number): Result {
 /** Order several armies to the same province (each finds its own route). */
 export function moveArmies(s: GameState, armyIds: number[], to: number): Result {
   const moved: string[] = [], failed: string[] = [];
+  // overseas: the whole group marches to one port and sails together
+  const mine = armyIds.map((id) => s.armies[id]).filter((a): a is Army => !!a && a.owner === s.player && !a.battleId && !a.embarked);
+  const overseas = mine.filter((a) => !findPath(s, a, to));
+  if (overseas.length) {
+    const r = orderInvasion(s, overseas, to);
+    if (r.ok) moved.push(...overseas.map((a) => a.name)); else failed.push(...overseas.map((a) => a.name));
+    if (!r.ok && overseas.length === mine.length) return fail(`Naval invasion of ${PROV[to].name} not possible: ${r.reason}`);
+    armyIds = armyIds.filter((id) => !overseas.some((a) => a.id === id));
+    if (r.ok && !armyIds.length) return ok(`${overseas.length} ${overseas.length === 1 ? 'army' : 'armies'} will sail together from ${PROV[r.port!].name} for ${PROV[to].name} (~${r.days} days in all).`);
+  }
   for (const id of armyIds) {
     const a = s.armies[id];
     if (!a || a.owner !== s.player) continue;
@@ -275,12 +292,49 @@ export function doMoveFleet(s: GameState, fleetId: number, zone: number): Result
   return e ? fail(e) : ok(`${f.name} sailing.`);
 }
 export function doOrderShip(s: GameState, type: ShipType, port: number): Result { const e = orderShip(s, P(s), type, port); return e ? fail(e) : ok('Keel laid down.'); }
+
+// ---------------------------------------------------------------- air force
+const myWing = (s: GameState, id: number) => { const w = s.airWings?.[id]; return w && w.owner === s.player ? w : null; };
+/** Give an air wing a mission (bombing: an enemy province; naval strike: a sea zone). */
+export function doWingMission(s: GameState, wingId: number, mission: AirMission, target: number | null = null): Result {
+  const w = myWing(s, wingId);
+  if (!w) return fail('Not your air wing.');
+  if (!AIR_MISSION_INFO[mission]) return fail('Unknown mission.');
+  const e = setMission(s, w, mission, target);
+  if (e) return fail(e);
+  const where = mission === 'bombing' && target != null ? ` ${PROV[target].name}` : mission === 'naval' && target != null ? ` in the ${WORLD.seas[target].name}` : '';
+  return ok(`${w.name}: ${AIR_MISSION_INFO[mission].label.toLowerCase()}${where}.`);
+}
+/** Move an air wing to another airbase (a province you hold). */
+export function doRebaseWing(s: GameState, wingId: number, province: number): Result {
+  const w = myWing(s, wingId);
+  if (!w) return fail('Not your air wing.');
+  const e = rebaseWing(s, w, province);
+  return e ? fail(e) : ok(province === w.base ? `${w.name} stays at ${PROV[province].name}.` : `${w.name} relocating to ${PROV[province].name} (${w.rebase?.days ?? 1} days).`);
+}
+export function doRenameWing(s: GameState, wingId: number, name: string): Result {
+  const w = myWing(s, wingId);
+  if (!w) return fail('Not your air wing.');
+  w.name = String(name).slice(0, 40).trim() || w.name;
+  return ok('Renamed.');
+}
+/** Retire one squadron: its crews return to the manpower pool. */
+export function doDisbandSquadron(s: GameState, wingId: number, unitId: number): Result {
+  const w = myWing(s, wingId);
+  if (!w) return fail('Not your air wing.');
+  const u = w.units.find((x) => x.id === unitId);
+  if (!u) return fail('No such squadron.');
+  w.units = w.units.filter((x) => x !== u);
+  P(s).manpower += u.strength * 0.9;
+  if (!w.units.length) delete s.airWings[w.id];
+  return ok(`${UNITS[u.type].label} retired.`);
+}
 export function markTutorial(s: GameState, f: string) { flag(s, f); }
 export function haltArmy(s: GameState, armyId: number): Result {
   const a = s.armies[armyId];
   if (!a || a.owner !== s.player) return fail('Not your army.');
   if (a.battleId != null) return fail('The army is engaged in battle.');
-  a.path = []; a.moveProgress = 0;
+  a.path = []; a.moveProgress = 0; a.seaDest = null;
   return ok(`${a.name} halted.`);
 }
 export function pauseProduction(s: GameState): Result {

@@ -3,7 +3,10 @@
 export type Terrain = 'plains' | 'forest' | 'jungle' | 'hills' | 'mountains' | 'desert' | 'taiga' | 'arctic';
 export type ResourceKind = 'food' | 'steel' | 'oil' | 'rare';
 export type EquipKind = 'smallArms' | 'artillery' | 'vehicles' | 'armor' | 'aircraft' | 'ships';
-export type UnitType = 'infantry' | 'mechanized' | 'armored' | 'artillery' | 'engineers' | 'recon' | 'air';
+export type UnitType = 'infantry' | 'mechanized' | 'armored' | 'artillery' | 'engineers' | 'recon' | 'air' | 'bomber';
+/** Aircraft fly from air wings, never inside armies. */
+export type AirType = 'air' | 'bomber';
+export type AirMission = 'idle' | 'support' | 'defense' | 'bombing' | 'naval';
 export type ShipType = 'destroyer' | 'cruiser' | 'battlegroup' | 'transport';
 export type Posture = 'aggressive' | 'balanced' | 'cautious' | 'defensive' | 'mobile' | 'withdrawal';
 export type Stance = 'hold' | 'defend' | 'advance' | 'withdraw';
@@ -79,6 +82,8 @@ export interface Army {
   fatigue: number;           // 0..1
   battleId: number | null;
   embarked: null | { route: number[]; dest: number; progress: number; from: number };
+  seaDest?: number | null;   // naval invasion: embark for this province on reaching the port
+  sailDay?: number;          // ...but not before this day (so a group sails together)
   lastSupplyRatio: number;
   lastSupplyCause: string[];
 }
@@ -90,6 +95,21 @@ export interface Fleet {
   path: number[]; moveProgress: number;
   org: number; homePort: number;
   mission: 'patrol' | 'blockade' | 'escort';
+}
+
+/**
+ * An air wing: squadrons (fighters, bombers) based at an airfield in a province the nation holds.
+ * They fly the wing's mission within each squadron's range of the base.
+ */
+export interface AirWing {
+  id: number; owner: string; name: string;
+  base: number;                 // airfield province
+  units: Unit[];                // squadrons (type 'air' = fighters, 'bomber')
+  mission: AirMission;
+  target: number | null;        // bombing: province; naval: sea zone
+  rebase: null | { to: number; days: number };
+  bombAcc: number;              // accumulated bombing damage (a building falls every few points)
+  last: { sorties: number; lost: number; kills: number }; // yesterday's activity (reports)
 }
 
 export interface General {
@@ -297,6 +317,7 @@ export interface GameState {
   provinces: ProvinceState[];
   armies: Record<number, Army>;
   fleets: Record<number, Fleet>;
+  airWings: Record<number, AirWing>;
   generals: Record<number, General>;
   battles: Record<number, Battle>;
   activeBattles: number[];

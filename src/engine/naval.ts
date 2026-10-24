@@ -3,17 +3,88 @@ import { MIL, SHIPS } from './config';
 import { PROV, WORLD, seaRoute, isCoastal } from './geo';
 import { atWar, isFriendly, armiesIn, invalidateArmies } from './world';
 import { addEvent } from './events';
-import { fleetPower, armyStrength, setArmyLocation, deleteArmy, industryBonus } from './military';
+import { fleetPower, armyStrength, setArmyLocation, deleteArmy, industryBonus, landDijkstra, pathFrom } from './military';
 import { setController } from './territory';
-import { startBattle } from './battle';
+import { startBattle, joinBattle } from './battle';
+import { navalAir } from './air';
 import { fmt } from './economy';
 
+/** Brigades the merchant fleet can carry: big trading economies can charter far more shipping. */
+export function merchantCapacity(n: Nation) { return Math.floor(4 + Math.min(60, Math.max(0, n.budget?.output ?? 0) / 200)); }
 export function nationTransportCapacity(s: GameState, n: Nation) {
-  let cap = 4; // chartered merchant shipping
+  let cap = merchantCapacity(n);
   for (const f of Object.values(s.fleets)) if (f.owner === n.id) cap += f.ships.transport * SHIPS.transport.capacity;
+  cap = Math.floor(cap);
   let used = 0;
   for (const a of Object.values(s.armies)) if (a.owner === n.id && a.embarked) used += a.units.length;
   return { cap, used };
+}
+
+/**
+ * Plan a naval invasion for a group of armies: the friendly port they can all reach soonest that
+ * has a sea route to `dest`, each army's march there, and the day the last one arrives (they sail
+ * together). Null if no such port exists.
+ */
+export function invasionPlan(s: GameState, armies: Army[], dest: number): { port: number; paths: Map<number, number[]>; sailIn: number; seaDays: number } | null {
+  if (!armies.length || !isCoastal(dest)) return null;
+  const owner = armies[0].owner;
+  const dc = s.provinces[dest].controller;
+  if (!(dc === owner || isFriendly(s, owner, dc) || atWar(s, owner, dc))) return null;
+  const reach = armies.map((a) => ({ a, ...landDijkstra(s, a) }));
+  let best: { port: number; paths: Map<number, number[]>; sailIn: number; seaDays: number; score: number } | null = null;
+  for (let p = 0; p < s.provinces.length; p++) {
+    const st = s.provinces[p];
+    if (st.buildings.port <= 0 || !isCoastal(p) || !(st.controller === owner || isFriendly(s, owner, st.controller))) continue;
+    if (reach.some((r) => !isFinite(r.dist[p]))) continue;
+    const route = seaRoute(PROV[p].seas, PROV[dest].seas);
+    if (!route) continue;
+    const sailIn = Math.ceil(Math.max(...reach.map((r) => r.dist[p])));
+    const seaDays = route.length * MIL.TRANSPORT_DAYS_PER_ZONE;
+    // soonest landing; among equals, the port where most of the group already is
+    const score = sailIn + seaDays + 0.05 * reach.reduce((t, r) => t + r.dist[p], 0);
+    if (!best || score < best.score - 1e-9) {
+      best = { port: p, paths: new Map(reach.map((r) => [r.a.id, pathFrom(r.prev, r.a.location, p)])), sailIn, seaDays, score };
+    }
+  }
+  return best;
+}
+
+/** Order a group of armies to invade `dest` by sea; they march to the port and sail together. */
+export function orderInvasion(s: GameState, armies: Army[], dest: number): { ok: boolean; reason?: string; port?: number; days?: number } {
+  const free = armies.filter((a) => !a.battleId && !a.embarked);
+  if (!free.length) return { ok: false, reason: 'The armies are in battle or already at sea.' };
+  const plan = invasionPlan(s, free, dest);
+  if (!plan) return { ok: false, reason: `No friendly port with a sea route to ${PROV[dest].name} can be reached.` };
+  const n = s.nations[free[0].owner];
+  const { cap, used } = nationTransportCapacity(s, n);
+  const brigades = free.reduce((t, a) => t + a.units.length, 0);
+  if (brigades > cap - used) return { ok: false, reason: `Not enough transport capacity: ${brigades} brigades to carry, ${Math.max(0, cap - used)} of ${cap} free. Send fewer armies or build Transport Flotillas.` };
+  const sailDay = s.day + Math.ceil(plan.sailIn);
+  for (const a of free) {
+    a.path = plan.paths.get(a.id) ?? [];
+    a.moveProgress = 0;
+    a.seaDest = dest;
+    a.sailDay = sailDay;
+  }
+  return { ok: true, port: plan.port, days: Math.ceil(plan.sailIn + plan.seaDays) };
+}
+
+/**
+ * Daily, for an army waiting in port with invasion orders: the group (the armies given the same
+ * order) sails together once all of it is in port, or a while after the sailing day without the
+ * stragglers.
+ */
+export function sailWhenReady(s: GameState, a: Army) {
+  if (a.seaDest == null || a.path.length || a.battleId || a.embarked) return;
+  const group = Object.values(s.armies).filter((b) => b.owner === a.owner && b.seaDest === a.seaDest && b.sailDay === a.sailDay && !b.embarked && !b.battleId);
+  if (group.some((b) => b.path.length) && s.day < (a.sailDay ?? 0) + MIL.INVASION_WAIT) return;
+  for (const b of group) {
+    if (b.path.length) continue;
+    const dest = b.seaDest!;
+    b.seaDest = null;
+    const r = embark(s, b, dest);
+    if (s.nations[b.owner]?.isPlayer) addEvent(s, 'military', r.ok ? `${b.name} sailed from ${PROV[b.location].name} for ${PROV[dest].name} (${r.days} days at sea).` : `${b.name} could not sail for ${PROV[dest].name}: ${r.reason}`, [b.owner], { province: b.location, important: !r.ok });
+  }
 }
 
 export interface SeaMoveCheck { ok: boolean; reason?: string; route: number[]; days: number; cost: number; risk: number; }
@@ -31,7 +102,7 @@ export function checkSeaMove(s: GameState, a: Army, dest: number): SeaMoveCheck 
   const route = seaRoute(PROV[from].seas, PROV[dest].seas);
   if (!route) return fail('No sea route.');
   const { cap, used } = nationTransportCapacity(s, n);
-  if (used + a.units.length > cap) return fail(`Not enough transport capacity (${cap - used} brigades free; build Transport Flotillas).`);
+  if (used + a.units.length > cap) return fail(`Not enough transport capacity: ${Math.max(0, cap - used)} of ${cap} brigades free, this army has ${a.units.length}. Split the army, or build Transport Flotillas.`);
   const amphib = n.techMods.amphibious;
   const cost = MIL.TRANSPORT_COST_PER_ZONE * a.units.length * route.length * (1 - 0.3 * amphib) * n.priceIndex;
   if (n.treasury < cost) return fail(`Transport costs ${fmt(cost)}.`);
@@ -41,7 +112,7 @@ export function checkSeaMove(s: GameState, a: Army, dest: number): SeaMoveCheck 
 }
 
 export function seaControl(s: GameState, nation: string, zone: number) {
-  let own = 0, hostile = 0;
+  let own = navalAir(s, nation, zone), hostile = 0;
   for (const f of Object.values(s.fleets)) {
     if (f.sea !== zone) continue;
     const p = fleetPower(f, s.nations[f.owner]);
@@ -90,6 +161,9 @@ function land(s: GameState, a: Army) {
     // contested landing: amphibious assault from the sea (army technically stays at its port of origin)
     setArmyLocation(s, a, e.from);
     a.path = [dest];
+    // a later wave joins the assault already under way on that beach
+    const ongoing = s.activeBattles.map((id) => s.battles[id]).find((b) => b && b.result == null && b.province === dest && b.amphibious && (b.attacker.nation === a.owner || isFriendly(s, b.attacker.nation, a.owner)));
+    if (ongoing) { joinBattle(s, ongoing, a, true); return; }
     const b = startBattle(s, [a], dest, e.from);
     if (b) { b.amphibious = true; b.strait = false; }
     return;

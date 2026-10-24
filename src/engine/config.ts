@@ -7,7 +7,7 @@
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
@@ -117,6 +117,7 @@ export const MIL = {
   TRANSPORT_COST_PER_ZONE: 0.1, // M IC per brigade per sea zone
   OPS_COST_SHARE: 0.65,  // share of full campaign fuel/ammunition cost charged while moving or fighting
   TRANSPORT_DAYS_PER_ZONE: 3,
+  INVASION_WAIT: 10,       // days an invasion group in port waits past its sailing day for late armies
   ARMY_SUPPLY_DAYS: 25,    // carried supply stock in days of demand
   MAX_ARMY_UNITS: 24,
   ATTRITION_NO_SUPPLY: 0.004, // strength lost per day at zero supply
@@ -140,7 +141,8 @@ export const UNITS: Record<UnitType, UnitSpec> = {
   artillery: { points: 12, label: 'Artillery Regiment', short: 'ART', personnel: 1500, equip: { artillery: 3.0, smallArms: 0.3 }, trainDays: 80, speed: 22, soft: 15, hard: 3, defense: 2, breakthrough: 1, hardness: 0.1, piercing: 2, recon: 0, air: 0, supply: 1.7, fuel: 0.3, width: 1, support: true, desc: 'Fire support from the second line. Consumes heavy ammunition.' },
   engineers: { points: 5, label: 'Engineer Battalion', short: 'ENG', personnel: 1200, equip: { vehicles: 0.8, smallArms: 0.4 }, trainDays: 70, speed: 26, soft: 1, hard: 1, defense: 3, breakthrough: 1, hardness: 0.2, piercing: 1, recon: 0, air: 0, supply: 0.6, fuel: 0.3, width: 0, support: true, desc: 'Bridging, fortification and obstacle clearing. Halves river/fort penalties, faster dig-in.' },
   recon: { points: 6, label: 'Reconnaissance Battalion', short: 'REC', personnel: 900, equip: { vehicles: 1.1, smallArms: 0.2 }, trainDays: 60, speed: 50, soft: 2, hard: 1, defense: 2, breakthrough: 2, hardness: 0.3, piercing: 1, recon: 6, air: 0, supply: 0.5, fuel: 0.5, width: 0, support: true, desc: 'Scouts and drones. Better intelligence, mobile-manoeuvre bonus.' },
-  air: { points: 25, label: 'Air Wing', short: 'AIR', personnel: 450, equip: { aircraft: 11.0 }, trainDays: 150, speed: 200, soft: 7, hard: 5, defense: 0, breakthrough: 0, hardness: 0, piercing: 6, recon: 3, air: 10, supply: 1.2, fuel: 2.2, width: 0, support: true, desc: 'Fighters and strike aircraft. Air superiority and close support; grounded by storms.' },
+  air: { points: 25, label: 'Fighter Squadron', short: 'FTR', personnel: 450, equip: { aircraft: 11.0 }, trainDays: 150, speed: 200, soft: 4, hard: 3, defense: 0, breakthrough: 0, hardness: 0, piercing: 6, recon: 3, air: 10, supply: 1.2, fuel: 2.2, width: 0, support: true, desc: 'Fighter jets. Win the skies over your battles, escort bombers, shoot down raids, drones and missiles. Range 1,300 km from their airbase.' },
+  bomber: { points: 30, label: 'Bomber Squadron', short: 'BMB', personnel: 600, equip: { aircraft: 14.0 }, trainDays: 180, speed: 180, soft: 10, hard: 8, defense: 0, breakthrough: 0, hardness: 0, piercing: 8, recon: 1, air: 2, supply: 1.4, fuel: 3.0, width: 0, support: true, desc: 'Strike aircraft. Hit enemy troops in battle, bomb factories, power and railways, sink ships. Range 2,800 km; needs fighter cover against enemy jets.' },
 };
 
 export interface ShipSpec { label: string; points: number; personnel: number; cost: number; days: number; attack: number; defense: number; speed: number; capacity: number; }
@@ -199,7 +201,8 @@ export const COMBAT = {
   FORT_PER_LEVEL: 0.12,
   RIVER_PENALTY: 0.85,
   STRAIT_PENALTY: 0.7,
-  AMPHIBIOUS_PENALTY: 0.6,
+  AMPHIBIOUS_PENALTY: 0.6,  // landing from the sea (0.9 with full sea control)
+  NAVAL_FIRE: 0.15,         // gunfire ashore per point of warship attack off the coast
   OUT_OF_SUPPLY_ATTACK: 0.45, // multiplier at 0 supply
   GENERAL_PER_SKILL: 0.05,
 };
@@ -262,8 +265,34 @@ export const STRIKES: Record<'drone' | 'missile' | 'ballistic' | 'recon', Strike
   missile: { label: 'Cruise missile', plural: 'cruise missiles', cost: 5, range: 2500, kill: 0.025, org: 0.08, hitBuilding: 1, damage: 0.05, intercept: 0.5,
     desc: 'Long range (2,500 km, unlimited from a fleet offshore), harder to shoot down. Each hit destroys a building level — rail, depots, power and factories first.' },
 };
-/** Enemy air wings in and around the target shoot down incoming strikes. */
+/** Enemy fighters covering the target shoot down incoming strikes. */
 export const AIR_DEFENSE = { PER_AIR_WING: 0.09, MAX: 0.7 };
+
+// ---------------------------------------------------------------- air force
+export const AIR_TYPES = ['air', 'bomber'] as const;
+export const AIR = {
+  RANGE: { air: 1300, bomber: 2800 } as Record<string, number>, // km from the airbase
+  PLANES: { air: 24, bomber: 16 } as Record<string, number>,    // aircraft in a full squadron
+  MAX_WING: 8,              // squadrons per air wing
+  SUPERIORITY: 0.25,        // attack bonus (and enemy malus 0.8×) for owning the skies over a battle
+  CAS: 1.0,                 // ground-support firepower per point of soft/hard attack
+  LOSS: 0.014,              // share of a squadron lost per day when the enemy holds the sky (less when contested)
+  BOMB_LOSS: 0.02,          // bombers over defended territory
+  REFIT: 0.035,             // share of losses replaced per day while based (paid)
+  REBASE_DAYS: 2,
+  BOMB_TROOPS: 0.0009,      // share of troops in the target province lost per point of bombing per day
+  BOMB_BUILDING: 14,        // bombing points per building level destroyed
+  NAVAL_STRIKE: 0.0012,     // share of an enemy fleet sunk per point of naval strike per day
+  CARRIER_AIR: 14,          // air superiority one carrier battle group adds over its waters
+  SAM_AIR: 4,               // air-defence value of one SAM battery over its own territory
+};
+export const AIR_MISSION_INFO: Record<'idle' | 'support' | 'defense' | 'bombing' | 'naval', { label: string; desc: string }> = {
+  idle: { label: 'Stand down', desc: 'Stay at the airbase and refit fastest. No sorties.' },
+  support: { label: 'Support ground forces', desc: 'Fly over every battle of yours in range: fighters fight for the skies, bombers hit enemy troops.' },
+  defense: { label: 'Defend our airspace', desc: 'Intercept enemy raids, drones and missiles over your territory in range, and cover battles fought on your soil.' },
+  bombing: { label: 'Bomb a province', desc: 'Hit the troops, factories, power and railways of one enemy province in range (right-click it).' },
+  naval: { label: 'Naval strike', desc: 'Attack enemy ships in one sea zone in range and help your fleets control it (right-click a sea zone).' },
+};
 export const NUKE = {
   programCost: 350, programDays: 900,   // a nuclear programme: years of work and a fortune
   warheadCost: 60, warheadDays: 180,    // each ICBM with its warhead
@@ -431,10 +460,11 @@ export const ROE: Record<'restrained' | 'standard' | 'ruthless', { label: string
   standard: { label: 'Standard', desc: 'Normal rules of engagement.', damage: 1 },
   ruthless: { label: 'Ruthless', desc: 'No restraint: 12% more damage dealt, but occupied lands resist harder, infamy grows each month at war and youth disapprove.', damage: 1.12 },
 };
+/** War Room shortcut: give every air wing the same kind of mission. */
 export const AIR_MISSIONS: Record<'none' | 'cas' | 'bombing' | 'defense', { label: string; desc: string }> = {
-  none: { label: 'No air campaign', desc: 'Air wings only fight with their armies.' },
-  cas: { label: 'Close air support', desc: 'Every battle you fight gets +8% attack (needs air wings).' },
-  bombing: { label: 'Strategic bombing', desc: 'Bomb the chosen enemy\'s factories, rail and power every 10 days (more air wings = more hits; costs fuel).' },
+  none: { label: 'Stand down', desc: 'All air wings stay at their bases and refit.' },
+  cas: { label: 'Support ground forces', desc: 'All air wings fly over your battles in range: air superiority and strikes on enemy troops.' },
+  bombing: { label: 'Strategic bombing', desc: 'All bomber wings bomb the nearest factories, power and railways of the chosen enemy in range; fighter wings escort them.' },
   defense: { label: 'Air defence', desc: 'Fighters guard your skies: +20% interception of enemy drones and missiles.' },
 };
 export const SAM_COST = 8, SAM_EACH = 0.04, SAM_MAX = 10;

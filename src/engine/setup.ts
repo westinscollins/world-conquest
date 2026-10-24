@@ -1,5 +1,6 @@
 import type { GameSettings, GameState, Nation, Personality, ProvinceState, UnitType, Buildings } from './types';
-import { ECON, SAVE_VERSION, RESOURCE, START_NUKES } from './config';
+import { ECON, SAVE_VERSION, RESOURCE, START_NUKES, AIR } from './config';
+import { createWing } from './air';
 import { WORLD, PROV, COUNTRY_GEO } from './geo';
 import { mulberry } from './rng';
 import { baseTechMods, recomputeTechMods } from './research';
@@ -55,7 +56,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
 
   const s: GameState = {
     version: SAVE_VERSION, seed, rng: seed ^ 0x9e3779b9, day: 0, startYear: settings.startYear, player: camp.nation, players: [camp.nation, ...(opts.players ?? []).filter((x) => x !== camp.nation && COUNTRY_GEO[x])], eventSeq: 0,
-    nations: {}, provinces: [], armies: {}, fleets: {}, generals: {}, battles: {}, activeBattles: [], wars: [], relations: {},
+    nations: {}, provinces: [], armies: {}, fleets: {}, airWings: {}, generals: {}, battles: {}, activeBattles: [], wars: [], relations: {},
     events: [], peaceOffers: [], proposals: [],
     market: { food: { price: RESOURCE.food.basePrice, supply: 0, demand: 0 }, steel: { price: RESOURCE.steel.basePrice, supply: 0, demand: 0 }, oil: { price: RESOURCE.oil.basePrice, supply: 0, demand: 0 }, rare: { price: RESOURCE.rare.basePrice, supply: 0, demand: 0 } },
     nextId: 1, settings, achievements: {}, timeline: [], tutorial: camp.id === 'tutorial' ? { step: 0, done: false, flags: {}, startProvinces: 2 } : null, outcome: null, campaign: camp.id, notifications: [],
@@ -128,12 +129,15 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
     const out = n.budget.output;
     const pers = n.personality;
     const share = MIL_SHARE[n.id] ?? ({ defensive: 0.05, expansionist: 0.075, industrial: 0.035, diplomatic: 0.035, opportunistic: 0.055, isolationist: 0.045 }[pers]);
-    const milBudget = out * share;
     const rich = c.income.startsWith('1');
+    const middle = c.income.startsWith('2') || c.income.startsWith('3');
+    // the air force gets its own share of the budget (squadrons fly from airbases, not with armies)
+    const airShare = rich ? 0.12 : middle ? 0.07 : 0.02;
+    const milBudget = out * share * (1 - airShare);
     const mix: [UnitType, number][] = rich
-      ? [['infantry', 0.35], ['mechanized', 0.2], ['armored', 0.12], ['artillery', 0.14], ['recon', 0.07], ['engineers', 0.05], ['air', 0.07]]
-      : c.income.startsWith('2') || c.income.startsWith('3')
-        ? [['infantry', 0.55], ['mechanized', 0.08], ['armored', 0.06], ['artillery', 0.16], ['recon', 0.08], ['engineers', 0.04], ['air', 0.03]]
+      ? [['infantry', 0.37], ['mechanized', 0.21], ['armored', 0.13], ['artillery', 0.15], ['recon', 0.08], ['engineers', 0.06]]
+      : middle
+        ? [['infantry', 0.56], ['mechanized', 0.08], ['armored', 0.07], ['artillery', 0.17], ['recon', 0.08], ['engineers', 0.04]]
         : [['infantry', 0.75], ['artillery', 0.15], ['recon', 0.1]];
     const units: UnitType[] = [];
     let spent = 0;
@@ -164,6 +168,20 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
       const a = createArmy(s, n.id, loc, group.map((t) => { const u = newUnit(s, t, 1, 0.15 + rnd() * 0.15); u.org = 0.55; return u; }));
       a.entrench = 0.5;
       ai++;
+    }
+    // air force: fighters (and bombers for richer states) at the main cities
+    {
+      const airBudget = out * share * airShare;
+      const fighters = Math.floor(airBudget * (rich ? 0.7 : middle ? 0.8 : 1) / unitUpkeep('air', n));
+      const bombers = rich || middle ? Math.floor(airBudget * (rich ? 0.3 : 0.2) / unitUpkeep('bomber', n)) : 0;
+      const squads = [...Array.from({ length: fighters }, () => 'air' as const), ...Array.from({ length: bombers }, () => 'bomber' as const)];
+      const bases = [n.capital, ...provs.filter((p) => p !== n.capital)].slice(0, Math.max(1, Math.min(4, Math.ceil(squads.length / 6))));
+      for (let b = 0; b < bases.length && squads.length; b++) {
+        const take = squads.splice(0, Math.ceil(squads.length / (bases.length - b)));
+        for (let i = 0; i < take.length; i += AIR.MAX_WING) {
+          createWing(s, n.id, bases[b], take.slice(i, i + AIR.MAX_WING).map((t) => { const u = newUnit(s, t, 1, 0.15 + rnd() * 0.15); u.org = 0.7; return u; }));
+        }
+      }
     }
     // manpower pool
     n.manpower = c.pop * ECON.MANPOWER_SHARE * 0.6;

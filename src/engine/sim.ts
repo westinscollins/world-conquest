@@ -16,10 +16,11 @@ import { battleDaily, startBattle, joinBattle } from './battle';
 import { armiesIn, atWar, isAtWar, invalidateArmies, isFriendly } from './world';
 import { setController, resistanceMonthly } from './territory';
 import { relationsWeekly, updateWarScore, checkCapitulation } from './diplomacy';
-import { seaTransportDaily, fleetsDaily, shipyardDaily } from './naval';
+import { seaTransportDaily, fleetsDaily, shipyardDaily, sailWhenReady } from './naval';
 import { strategicDaily } from './strikes';
 import { eventsDaily } from './policy';
-import { revoltsMonthly, airDaily } from './regime';
+import { revoltsMonthly } from './regime';
+import { computeBattleAir, airMissionsDaily } from './air';
 import { operationsDaily, partisansDaily } from './warplans';
 import { aiWeekly, aiArmiesDaily, armyAutomation } from './ai';
 import { dateOf, addEvent } from './events';
@@ -48,14 +49,15 @@ export function tick(s: GameState) {
     shipyardDaily(s, n);
     strategicDaily(s, n);
     eventsDaily(s, n);
-    airDaily(s, n);
     constructionDaily(s, n);
     researchDaily(s, n);
   }
 
   // ---- movement
   for (const a of Object.values(s.armies)) moveArmy(s, a);
-  // ---- battles
+  // ---- air missions, then battles (with each side's air power over them)
+  airMissionsDaily(s);
+  computeBattleAir(s);
   for (const id of [...s.activeBattles]) { const b = s.battles[id]; if (b && b.result == null) battleDaily(s, b); }
   // ---- naval
   seaTransportDaily(s);
@@ -112,6 +114,7 @@ export function tick(s: GameState) {
 }
 
 function moveArmy(s: GameState, a: Army) {
+  if (a.seaDest != null && !a.path.length) sailWhenReady(s, a); // naval invasion: board when the group is in port
   if (!a.path.length || a.battleId != null || a.embarked) { if (!a.path.length && !a.battleId) a.fatigue = Math.max(0, a.fatigue - 0.04); return; }
   const next = a.path[0];
   if (!canEnter(s, a.owner, next)) {
@@ -145,7 +148,8 @@ function moveArmy(s: GameState, a: Army) {
     // arriving into a province with a friendly battle under way: reinforce defenders
     const b = s.activeBattles.map((id) => s.battles[id]).find((x) => x && x.province === next && x.result == null);
     if (b && (b.defender.nation === a.owner || isFriendly(s, b.defender.nation, a.owner))) joinBattle(s, b, a, false);
-    if (!a.path.length && s.nations[a.owner]?.isPlayer) addEvent(s, 'military', `${a.name} arrived in ${PROV[next].name}.`, [a.owner], { province: next });
+    if (!a.path.length && s.nations[a.owner]?.isPlayer && a.seaDest == null) addEvent(s, 'military', `${a.name} arrived in ${PROV[next].name}.`, [a.owner], { province: next });
+    if (!a.path.length && a.seaDest != null) sailWhenReady(s, a); // reached the port: board with the others
   }
 }
 

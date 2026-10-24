@@ -1,13 +1,12 @@
 // Map command routing (right-click orders) shared by the map and panels.
 import { store } from './store';
-import { PROV, WORLD, isCoastal } from '../engine/geo';
+import { PROV, WORLD, isCoastal, seaRoute, distKm } from '../engine/geo';
 import { armiesIn, atWar, isFriendly } from '../engine/world';
-import { findPath } from '../engine/military';
-import { moveArmy, seaMove, doMoveFleet } from '../engine/actions';
-import { checkSeaMove } from '../engine/naval';
+import { findPath, armyStrength } from '../engine/military';
+import { invasionPlan, nationTransportCapacity, seaControl } from '../engine/naval';
+import { wingsOf } from '../engine/air';
 import { checkStrike } from '../engine/strikes';
-import { NUKE } from '../engine/config';
-import { moneyIC } from './format';
+import { NUKE, AIR } from '../engine/config';
 import { audio } from '../audio/music';
 
 export function focusProvince(p: number) {
@@ -42,9 +41,25 @@ export function onMapRightClick(p: number | null, sea: number | null, queue = fa
   const g = store.game;
   if (!g) return;
   const ui = store.ui;
-  if (ui.selectedFleet != null && sea != null) {
-    const r = store.cmd('doMoveFleet', [ui.selectedFleet!, sea]);
-    if (r) store.toast(r.ok ? `${r.message} Destination: ${WORLD.seas[sea].name}.` : r.message, r.ok ? 'info' : 'bad');
+  // air wings: rebase to your province, bomb an enemy province, strike ships in a sea zone
+  const w = ui.selectedWing != null ? g.airWings?.[ui.selectedWing] : undefined;
+  if (w && w.owner === g.player) {
+    const say = (r: { ok: boolean; message: string } | undefined) => { if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); } };
+    if (sea != null) { say(store.cmd('doWingMission', [w.id, 'naval', sea])); return; }
+    if (p == null) return;
+    const ctrl = g.provinces[p].controller;
+    if (ctrl === g.player) { say(store.cmd('doRebaseWing', [w.id, p])); return; }
+    if (atWar(g, ctrl, g.player) || armiesIn(g, p).some((x) => atWar(g, x.owner, g.player))) { say(store.cmd('doWingMission', [w.id, 'bombing', p])); return; }
+    store.toast(`${PROV[p].name}: air wings can only be based in provinces you hold, and bomb provinces of enemies you are at war with.`, 'bad');
+    return;
+  }
+  // fleets: right-click a sea zone, or any coastal province, to sail there
+  const f = ui.selectedFleet != null ? g.fleets[ui.selectedFleet] : undefined;
+  if (f && f.owner === g.player && (sea != null || p != null)) {
+    const zone = sea ?? (p != null && PROV[p].seas.length ? PROV[p].seas.slice().sort((a, b) => (seaRoute([f.sea], [a])?.length ?? 99) - (seaRoute([f.sea], [b])?.length ?? 99))[0] : null);
+    if (zone == null) { store.toast(`${PROV[p!].name} is inland: ships can only sail to the sea. Right-click a coastal province or a sea zone.`, 'bad'); return; }
+    const r = store.cmd('doMoveFleet', [f.id, zone]);
+    if (r) { store.toast(r.ok ? `${r.message} Destination: ${WORLD.seas[zone].name}.` : r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); }
     return;
   }
   if (ui.selectedArmy == null || p == null) return;
@@ -61,6 +76,9 @@ export function onMapRightClick(p: number | null, sea: number | null, queue = fa
     return;
   }
   const group = ui.group.filter((id) => g.armies[id]?.owner === g.player && id !== a.id);
+  // overseas: one order — march to the best port, sail together, land
+  const all = [a, ...group.map((id) => g.armies[id])].filter((x) => !x.battleId && !x.embarked);
+  if (isCoastal(p) && all.length && all.some((x) => !findPath(g, x, p))) { confirmInvasion(all.map((x) => x.id), p); return; }
   if (group.length) {
     const r = store.cmd('moveArmies', [[a.id, ...group], p]);
     if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); }
@@ -77,18 +95,51 @@ export function onMapRightClick(p: number | null, sea: number | null, queue = fa
     if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); }
     return;
   }
-  // no land route: offer naval transport
-  if (isCoastal(p) && isCoastal(a.location)) {
-    const chk = checkSeaMove(g, a, p);
-    if (!chk.ok) { store.toast(`No land route. Naval transport unavailable: ${chk.reason}`, 'bad'); return; }
-    store.setUI({
-      confirm: {
-        title: 'Naval transport',
-        body: `No land route to ${PROV[p].name}. Embark ${a.name} (${a.units.length} formations) by sea?\n\nRoute: ${chk.route.length} sea zones · ~${chk.days} days\nCost: ${moneyIC(chk.cost)}\n${chk.risk > 0.3 ? `⚠ Enemy fleets dominate part of the route (risk ${Math.round(chk.risk * 100)}%): expect losses at sea.` : 'Route currently safe.'}${hostile.length ? '\n⚠ The landing zone is defended: amphibious assault penalties apply.' : ''}`,
-        onOk: () => { const r = store.cmd('seaMove', [a.id, p]); if (r) store.toast(r.message, r.ok ? 'info' : 'bad'); },
-      },
-    });
-    return;
-  }
   store.toast(`No route to ${PROV[p].name}.`, 'bad');
+}
+
+/** Naval invasion: show what the landing will face, then order it. */
+function confirmInvasion(ids: number[], p: number) {
+  const g = store.game!;
+  const armies = ids.map((id) => g.armies[id]);
+  const plan = invasionPlan(g, armies, p);
+  if (!plan) { store.toast(`No route to ${PROV[p].name}: none of your ports with a sea route to it can be reached.`, 'bad'); return; }
+  const n = g.nations[g.player];
+  const tc = nationTransportCapacity(g, n);
+  const brigades = armies.reduce((t, x) => t + x.units.length, 0);
+  const soldiers = armies.reduce((t, x) => t + armyStrength(x), 0);
+  const defenders = armiesIn(g, p).filter((x) => atWar(g, x.owner, g.player)).reduce((t, x) => t + armyStrength(x), 0);
+  const sea = PROV[p].seas.map((z) => ({ z, c: seaControl(g, g.player, z) }));
+  const held = sea.some(({ c }) => c.own > 0 && c.own >= c.hostile);
+  const contested = sea.filter(({ c }) => c.hostile > c.own);
+  const wings = wingsOf(g, g.player).filter((w) => w.mission === 'support' && w.units.some((u) => distKm(w.base, p) <= AIR.RANGE[u.type]));
+  // the landing waters, and the warships that could go there first
+  const route = seaRoute(PROV[plan.port].seas, PROV[p].seas) ?? PROV[p].seas;
+  const zone = route[route.length - 1];
+  const navy = Object.values(g.fleets).filter((f) => f.owner === g.player && f.sea !== zone && f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup >= 0.5);
+  const invade = () => { const r = store.cmd('moveArmies', [ids, p]); if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); } };
+  const lines = [
+    `${armies.length === 1 ? armies[0].name : `${armies.length} armies`}: ${brigades} brigades, ${Math.round(soldiers / 1000)}k soldiers.`,
+    plan.port === armies[0].location && armies.every((x) => x.location === plan.port) ? `They board at ${PROV[plan.port].name} and land in ~${Math.ceil(plan.seaDays)} days.` : `They march to ${PROV[plan.port].name}, sail together and land in ~${Math.ceil(plan.sailIn + plan.seaDays)} days.`,
+    `Transport: ${Math.max(0, tc.cap - tc.used)} of ${tc.cap} brigades free${brigades > tc.cap - tc.used ? ' — NOT ENOUGH: send fewer armies or build Transport Flotillas' : ''}.`,
+    defenders ? `Defenders in ${PROV[p].name}: ~${Math.round(defenders / 1000)}k soldiers.` : `${PROV[p].name} is undefended right now.`,
+    held ? '✓ Your fleets hold the landing waters: naval gunfire support, easier landing (−10% instead of −40%), more troops ashore at once.' : contested.length ? `⚠ Enemy fleets hold the ${WORLD.seas[contested[0].z].name}: expect losses at sea and a −40% landing penalty. Send your navy first.` : '⚠ No fleet of yours covers the landing waters: −40% landing penalty and no naval gunfire. Send your navy first.',
+    wings.length ? `✓ ${wings.length} air wing${wings.length > 1 ? 's' : ''} on ground support can reach ${PROV[p].name}.` : `⚠ No air wing on ground support can reach ${PROV[p].name}: rebase wings near ${PROV[plan.port].name} and set them to "Support ground forces".`,
+  ];
+  store.setUI({
+    confirm: {
+      title: `Naval invasion of ${PROV[p].name}`,
+      body: lines.join('\n'),
+      okLabel: 'Invade',
+      onOk: invade,
+      alt: !held && navy.length ? {
+        label: `Send the navy (${navy.length} fleet${navy.length > 1 ? 's' : ''}), then invade`,
+        onOk: () => {
+          const sent = navy.filter((f) => store.cmd('doMoveFleet', [f.id, zone])?.ok).length;
+          if (sent) store.toast(`${sent} fleet${sent > 1 ? 's' : ''} sailing to the ${WORLD.seas[zone].name} to cover the landing.`, 'info');
+          invade();
+        },
+      } : undefined,
+    },
+  });
 }

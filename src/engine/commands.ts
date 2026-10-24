@@ -2,7 +2,7 @@
  * Command registry. Every change a player makes goes through `runCommand`, so it can be sent
  * over the network and replayed identically on every computer in a multiplayer game.
  */
-import type { GameState, Nation } from './types';
+import type { AirMission, GameState, Nation } from './types';
 import * as A from './actions';
 import { aggregate, computeBudget } from './economy';
 import { invalidateArmies } from './world';
@@ -29,6 +29,7 @@ export const COMMANDS = {
   doScorched: A.doScorched, doPartisans: A.doPartisans, doFortifyBorder: A.doFortifyBorder, doMercenaries: A.doMercenaries,
   doLicenseTech: A.doLicenseTech, doStances: A.doStances, doHaltMany: A.doHaltMany, doRetreatMany: A.doRetreatMany,
   doPostureMany: A.doPostureMany, doMergeMany: A.doMergeMany,
+  doWingMission: A.doWingMission, doRebaseWing: A.doRebaseWing, doRenameWing: A.doRenameWing, doDisbandSquadron: A.doDisbandSquadron,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export const isCommand = (n: string): n is CommandName => Object.prototype.hasOwnProperty.call(COMMANDS, n);
@@ -62,6 +63,7 @@ export function refreshBudget(s: GameState, n: Nation | undefined) {
 }
 
 /** Checksum of the simulation-relevant state (excludes logs, achievements and other per-viewer data). */
+const MISSIONS: AirMission[] = ['idle', 'support', 'defense', 'bombing', 'naval'];
 export function stateHash(s: GameState): string {
   let h = 2166136261 >>> 0;
   const mix = (v: number) => { h ^= v | 0; h = Math.imul(h, 16777619) >>> 0; };
@@ -74,6 +76,7 @@ export function stateHash(s: GameState): string {
   }
   for (const p of s.provinces) { mix(p.owner.charCodeAt(0) * 31 + p.owner.charCodeAt(2)); mix(p.controller.charCodeAt(1)); num(p.damage); }
   for (const a of Object.values(s.armies)) { mix(a.id); mix(a.location); num(a.units.reduce((t, u) => t + u.strength, 0) / 10); }
+  for (const w of Object.values(s.airWings ?? {})) { mix(w.id); mix(w.base); mix(MISSIONS.indexOf(w.mission)); mix(w.target ?? -1); mix(w.rebase?.to ?? -1); num(w.units.reduce((t, u) => t + u.equipment, 0)); }
   mix(s.wars.length); mix(s.activeBattles.length);
   return (h >>> 0).toString(36);
 }

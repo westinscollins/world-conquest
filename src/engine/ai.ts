@@ -4,9 +4,10 @@
  * The AI reasons with *perceived* power (imperfect intel), weighs alliances and war exhaustion,
  * and must pay for everything through the same economy as the player.
  */
-import type { Army, BuildingKind, GameState, Nation, UnitType, War, PeaceTerms } from './types';
+import type { AirWing, Army, BuildingKind, GameState, Nation, Unit, UnitType, War, PeaceTerms } from './types';
 import { BUILDINGS, ECON, PERSONALITY, UNITS, MIL } from './config';
-import { PROV, COUNTRY_GEO, landLinks } from './geo';
+import { PROV, COUNTRY_GEO, landLinks, distKm } from './geo';
+import { wingsOf, wingRange, setMission, rebaseWing, checkMission } from './air';
 import { ownedBy, controlledBy, neighborsOf, atWar, enemiesOf, armiesIn, isAtWar, rel, peekRel, alliesOf, isFriendly } from './world';
 import { buildCost, startConstruction, provinceOutput, borrow, repay } from './economy';
 import { recruit, findPath, armyStrength, armyOrg, unitUpkeep, armyPower, deleteArmy, recruitCost, armySupplyDemand, militaryStrength } from './military';
@@ -26,6 +27,63 @@ export function aiWeekly(s: GameState, n: Nation) {
   if (Math.floor(s.day / 7) % 4 === nationIndex(n.id) % 4) aiDiplomacy(s, n); // monthly-ish
   aiPeace(s, n);
   aiStrikes(s, n);
+  aiAir(s, n);
+}
+
+// ---------------------------------------------------------------- air force
+/** Peace: wings guard the home skies. War: they fly over the fighting, moving closer if needed. */
+function aiAir(s: GameState, n: Nation) {
+  const wings = wingsOf(s, n.id);
+  if (!wings.length) return;
+  const enemies = enemiesOf(s, n.id);
+  if (!enemies.length) { for (const w of wings) if (w.mission !== 'defense' && !w.rebase) setMission(s, w, 'defense'); return; }
+  // where the fighting is: our battles, else enemy-held provinces next to ours
+  const front = new Set<number>();
+  for (const id of s.activeBattles) { const b = s.battles[id]; if (b && (b.attacker.nation === n.id || b.defender.nation === n.id)) front.add(b.province); }
+  if (!front.size) for (const p of controlledBy(s, n.id)) for (const l of landLinks(p)) if (enemies.includes(s.provinces[l.to].controller)) front.add(l.to);
+  if (!front.size) return;
+  const frontList = [...front].sort((a, b) => a - b);
+  const home = controlledBy(s, n.id).filter((p) => s.provinces[p].owner === n.id);
+  for (const w of wings) {
+    if (w.rebase || !w.units.length) continue;
+    const reach = wingRange(w);
+    const near = frontList.filter((p) => distKm(w.base, p) <= reach * 0.9);
+    if (!near.length) {
+      // move to the home province nearest the front
+      const goal = frontList.reduce((best, p) => (distKm(w.base, p) < distKm(w.base, best) ? p : best), frontList[0]);
+      const base = home.reduce((best, p) => (best == null || distKm(p, goal) < distKm(best, goal) ? p : best), null as number | null);
+      if (base != null && base !== w.base && distKm(base, goal) < distKm(w.base, goal) - 100) { rebaseWing(s, w, base); continue; }
+    }
+    // bombers hit the enemy province massing the most troops in range; fighters cover the battles
+    if (w.units.some((u) => u.type === 'bomber')) {
+      let best: number | null = null, bestTroops = 0;
+      for (const p of frontList) {
+        if (checkMission(s, w, 'bombing', p)) continue;
+        const troops = armiesIn(s, p).filter((a) => atWar(s, a.owner, n.id)).reduce((t, a) => t + armyStrength(a), 0);
+        if (troops > bestTroops) { bestTroops = troops; best = p; }
+      }
+      if (best != null && bestTroops > 20000 && (w.mission !== 'bombing' || w.target !== best)) { setMission(s, w, 'bombing', best); continue; }
+    }
+    if (w.mission !== 'support' && w.mission !== 'bombing') setMission(s, w, 'support');
+  }
+}
+/** Yearly upkeep of the air force. */
+function airUpkeep(s: GameState, n: Nation) {
+  let t = 0;
+  for (const w of wingsOf(s, n.id)) for (const u of w.units) t += unitUpkeep(u.type, n);
+  return t;
+}
+/** Retire squadrons, the most expensive first; the crews return to the manpower pool. */
+function retireSquadrons(s: GameState, n: Nation, count: number) {
+  for (let i = 0; i < count; i++) {
+    let best: { w: AirWing; u: Unit; up: number } | null = null;
+    for (const w of wingsOf(s, n.id)) for (const u of w.units) { const up = unitUpkeep(u.type, n); if (!best || up > best.up) best = { w, u, up }; }
+    if (!best) return;
+    const { w, u } = best;
+    w.units = w.units.filter((x) => x !== u);
+    n.manpower += u.strength * 0.8;
+    if (!w.units.length) delete s.airWings[w.id];
+  }
 }
 
 // ---------------------------------------------------------------- economy
@@ -48,6 +106,8 @@ function aiEconomy(s: GameState, n: Nation) {
       let cut = Math.ceil(armies.reduce((t, a) => t + a.units.length, 0) * 0.08);
       for (const a of armies) while (cut > 0 && a.units.length > 1) { const u = a.units.pop()!; n.manpower += u.strength * 0.8; cut--; }
     }
+    // aircraft are the costliest formations to keep (and their fuel is imported): ground them first
+    if (!war || n.bankrupt) retireSquadrons(s, n, Math.ceil(wingsOf(s, n.id).reduce((t, w) => t + w.units.length, 0) * 0.15));
     n.researchFunding = Math.round(out * 0.003 * 10) / 10;
     return;
   }
@@ -115,14 +175,17 @@ function aiMilitaryBuild(s: GameState, n: Nation) {
   const target = out * share;
   if (mil < target * 0.92 && n.treasury > out * 0.08 && !n.bankrupt) {
     const mix: UnitType[] = COUNTRY_GEO[n.id].income.startsWith('1')
-      ? ['infantry', 'mechanized', 'artillery', 'armored', 'infantry', 'recon', 'air', 'engineers']
-      : ['infantry', 'infantry', 'artillery', 'infantry', 'recon', 'mechanized', 'infantry', 'engineers'];
+      ? ['infantry', 'mechanized', 'artillery', 'armored', 'infantry', 'recon', 'air', 'engineers', 'bomber']
+      : ['infantry', 'infantry', 'artillery', 'infantry', 'recon', 'mechanized', 'infantry', 'engineers', 'air'];
     let budget = Math.min(n.treasury - out * 0.05, target - mil + 5);
     let k = 0;
     const where = recruitLocation(s, n);
     if (where == null) return;
+    // the air force stays a modest share of the military budget (squadrons cost several brigades)
+    const airFull = airUpkeep(s, n) > target * 0.2;
     while (budget > 0 && k < 6) {
-      const t = mix[(n.training.length + k + Math.floor(s.day / 7)) % mix.length];
+      const pick = mix[(n.training.length + k + Math.floor(s.day / 7)) % mix.length];
+      const t = airFull && (pick === 'air' || pick === 'bomber') ? 'infantry' : pick;
       if (n.manpower < UNITS[t].personnel) break;
       const up = unitUpkeep(t, n);
       if (recruitCost(t, n) > n.treasury - out * 0.03) break;
@@ -132,10 +195,11 @@ function aiMilitaryBuild(s: GameState, n: Nation) {
       k++;
     }
   } else if (!war && mil > target * 1.4 && n.budget.net < 0) {
-    // demobilise the weakest formation to save money
+    // demobilise to save money: a squadron if the air force is a big part of the bill, else the weakest formation
     const armies = Object.values(s.armies).filter((a) => a.owner === n.id && !a.battleId && !a.path.length);
     const a = armies.sort((x, y) => armyStrength(x) - armyStrength(y))[0];
-    if (a && a.units.length) {
+    if (airUpkeep(s, n) > mil * 0.3 || !a) retireSquadrons(s, n, 1);
+    else if (a.units.length) {
       const u = a.units.pop()!;
       n.manpower += u.strength * 0.8;
       if (!a.units.length) deleteArmy(s, a.id);
@@ -227,7 +291,7 @@ export function aiArmiesDaily(s: GameState) {
  * `full` = AI: may attack, defend and redeploy; otherwise follows the army's stance.
  */
 export function armyAutomation(s: GameState, a: Army, full = false) {
-  if (a.battleId != null || a.embarked) return;
+  if (a.battleId != null || a.embarked || a.seaDest != null) return; // (an invasion group waits in port for its ships)
   const n = s.nations[a.owner];
   // AI: drop a long march whose destination is no longer a front (e.g. that enemy made peace)
   if (full && a.path.length) {

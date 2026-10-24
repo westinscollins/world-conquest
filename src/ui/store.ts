@@ -24,6 +24,7 @@ export interface UIState {
   selectedProvince: number | null;
   selectedArmy: number | null;
   selectedFleet: number | null;
+  selectedWing: number | null;
   selectedNation: string | null;
   panel: Panel;
   mapMode: MapMode;
@@ -37,7 +38,7 @@ export interface UIState {
   /** Waiting for a map click to choose the target of a coordinated operation. */
   pickOperation: boolean;
   toasts: { id: number; text: string; kind: 'info' | 'good' | 'bad' | 'war' }[];
-  confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void };
+  confirm: null | { title: string; body: string; danger?: boolean; onOk: () => void; okLabel?: string; alt?: { label: string; onOk: () => void } };
   peaceWar: number | null;
   lastAutosave: number;
   hover: null | { province: number; x: number; y: number };
@@ -48,7 +49,7 @@ class Store {
   /** Online multiplayer session, if any. */
   net: Session | null = null;
   ui: UIState = {
-    screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedNation: null,
+    screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedWing: null, selectedNation: null,
     panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], strike: null, pickOperation: false, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;

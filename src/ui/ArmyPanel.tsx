@@ -176,7 +176,7 @@ export function FleetPanel() {
           {(Object.keys(SHIPS) as ShipType[]).map((k) => <tr key={k}><td>{SHIPS[k].label}</td><td className="right">{f.ships[k].toFixed(1)}</td></tr>)}
         </tbody></table>
         <Stat label="Organisation" value={pct(f.org)} />
-        {f.owner === g.player && <p className="small muted">Right-click a sea zone node on the map to sail there. Fleets fight enemy fleets in the same zone, protect your sea lanes, and blockade enemy ports (reducing their sea supply). Transport capacity: {f.ships.transport * SHIPS.transport.capacity} brigades.</p>}
+        {f.owner === g.player && <p className="small muted">Right-click any coastal province or sea zone on the map to sail there. Fleets fight enemy fleets in the same waters, protect your sea lanes and landings (naval gunfire, easier landings), and blockade enemy ports. Transport capacity: {Math.floor(f.ships.transport * SHIPS.transport.capacity)} brigades.</p>}
       </div>
     </div>
   );

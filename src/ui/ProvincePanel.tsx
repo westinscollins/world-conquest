@@ -196,7 +196,8 @@ function BuildTab({ p }: { p: number }) {
 function RecruitTab({ p }: { p: number }) {
   const g = store.game!;
   const n = g.nations[g.player];
-  const types = Object.keys(UNITS) as UnitType[];
+  const all = Object.keys(UNITS) as UnitType[];
+  const types = [...all.filter((t) => t !== 'air' && t !== 'bomber'), ...all.filter((t) => t === 'air' || t === 'bomber')];
   const training = n.training.filter((t) => t.province === p);
   return (
     <>
@@ -212,6 +213,7 @@ function RecruitTab({ p }: { p: number }) {
           const sp = UNITS[t];
           return (
             <div key={t} className={`build-item${!c.ok ? ' dis' : ''}`}>
+              {t === 'air' && <h4 className="sp-h">Aircraft — they form an air wing based here</h4>}
               <div className="bi-top">
                 <b>{sp.label}</b>
                 <Btn small kind="primary" disabled={!c.ok} title={c.reason} onClick={() => { const r = store.cmd('doRecruit', [t, p]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); if (r.ok) audio.sfx('coins'); } }}>Recruit</Btn>

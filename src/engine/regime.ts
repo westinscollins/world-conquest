@@ -6,14 +6,14 @@
  * repression push back — each with its own price.
  */
 import type { GameState, GroupId, Nation, Regime } from './types';
-import { GROUPS, PROPAGANDA, PROPAGANDA_MEDIA, PROPAGANDA_SATURATION, SECURITY, INTERIOR, STAGES, REVOLT_AT, WAR_ECONOMY, ROE, AIR_MISSIONS, SAM_COST, SAM_MAX, ECON, POLICY_AREAS, type GovEffect } from './config';
-import { PROV } from './geo';
+import { GROUPS, PROPAGANDA, PROPAGANDA_MEDIA, PROPAGANDA_SATURATION, SECURITY, INTERIOR, STAGES, REVOLT_AT, WAR_ECONOMY, ROE, AIR_MISSIONS, SAM_COST, SAM_MAX, ECON, POLICY_AREAS, UNITS, type GovEffect } from './config';
+import { PROV, distKm } from './geo';
+import { wingsOf, setMission, checkMission } from './air';
 import { addEvent } from './events';
 import { isAtWar, ownedBy, armiesIn, enemiesOf, atWar, controlledBy } from './world';
 import { scoreFor } from './diplomacy';
 import { hashNoise } from './rng';
 import { touchGov } from './policy';
-import { infraOf } from './economy';
 
 export const GROUP_IDS = Object.keys(GROUPS) as GroupId[];
 
@@ -299,10 +299,24 @@ export function setRoe(s: GameState, n: Nation, roe: 'restrained' | 'standard' |
   n.regime.roe = roe; touchGov();
   return null;
 }
+/** War Room shortcut: every air wing gets the same kind of mission. */
 export function setAirMission(s: GameState, n: Nation, mission: 'none' | 'cas' | 'bombing' | 'defense', target: string | null): string | null {
   if (!AIR_MISSIONS[mission]) return 'Invalid mission.';
   if (mission === 'bombing' && (!target || !atWar(s, n.id, target))) return 'Choose an enemy you are at war with to bomb.';
+  const wings = wingsOf(s, n.id);
+  if (!wings.length) return 'You have no air wings. Build fighter or bomber squadrons first.';
   n.regime.air = { mission, target: mission === 'bombing' ? target : null };
+  let bombing = 0;
+  for (const w of wings) {
+    if (mission === 'bombing' && w.units.some((u) => u.type === 'bomber')) {
+      // the nearest province of that enemy with something worth bombing
+      const goals = controlledBy(s, target!).filter((p) => { const b = s.provinces[p].buildings; return b.factory + b.power + b.railway + b.depot > 0 || armiesIn(s, p).some((a) => a.owner === target); });
+      const best = goals.filter((p) => !checkMission(s, w, 'bombing', p)).sort((a, b) => distKm(w.base, a) - distKm(w.base, b))[0];
+      if (best != null && !setMission(s, w, 'bombing', best)) { bombing++; continue; }
+    }
+    setMission(s, w, mission === 'none' ? 'idle' : mission === 'defense' ? 'defense' : 'support');
+  }
+  if (mission === 'bombing' && !bombing) return 'None of your bomber wings can reach that enemy. Rebase them closer.';
   return null;
 }
 export function buySam(s: GameState, n: Nation): string | null {
@@ -314,42 +328,11 @@ export function buySam(s: GameState, n: Nation): string | null {
   n.regime.sam++;
   return null;
 }
-/** Air wings the nation fields (by strength). */
+/** Squadrons the nation fields (by strength). */
 export function airWings(s: GameState, id: string) {
   let w = 0;
-  for (const a of Object.values(s.armies)) if (a.owner === id) for (const u of a.units) if (u.type === 'air') w += u.strength / 450;
+  for (const x of wingsOf(s, id)) for (const u of x.units) w += u.strength / UNITS[u.type].personnel;
   return w;
-}
-
-/** Every 10 days: strategic bombing raids. */
-export function airDaily(s: GameState, n: Nation) {
-  const r = n.regime;
-  if (!r || r.air.mission !== 'bombing' || !r.air.target || (s.day + n.id.charCodeAt(0)) % 10 !== 0) return;
-  const t = s.nations[r.air.target];
-  if (!t?.alive || !atWar(s, n.id, t.id)) { r.air = { mission: 'none', target: null }; return; }
-  const wings = airWings(s, n.id);
-  if (wings < 0.5) return;
-  const cost = wings * 0.25 * n.priceIndex;
-  n.treasury -= cost; n.ledgerMonth.expense += cost;
-  const enemyAir = airWings(s, t.id) + (t.regime?.air.mission === 'defense' ? 3 : 0) + (t.regime?.sam ?? 0) * 0.5;
-  const hits = Math.max(0, Math.round(wings * 0.6 - enemyAir * 0.3));
-  const targets = controlledBy(s, t.id).filter((p) => { const st = s.provinces[p]; return st.buildings.factory + st.buildings.power + st.buildings.railway > 0; });
-  if (!targets.length || !hits) return;
-  const lost: string[] = [];
-  for (let i = 0; i < hits; i++) {
-    const p = targets[Math.floor(hashNoise(s.seed, s.day, i, 991) * targets.length) % targets.length];
-    const st = s.provinces[p];
-    const k = st.buildings.power > 0 ? 'power' : st.buildings.railway > 0 ? 'railway' : 'factory';
-    if (st.buildings[k] > 0) { st.buildings[k]--; lost.push(`${k} in ${PROV[p].name}`); }
-    st.damage = Math.min(0.9, st.damage + 0.03);
-    st.infra = infraOf(st);
-  }
-  if (lost.length && (n.isPlayer || t.isPlayer)) {
-    s.eventSeq = (s.eventSeq ?? 0) + 1;
-    s.strikes.push({ id: s.eventSeq, day: s.day, by: n.id, target: t.id, province: targets[0], kind: 'bombing', count: hits, intercepted: 0, killed: 0, buildings: lost });
-    if (s.strikes.length > 40) s.strikes.splice(0, s.strikes.length - 40);
-    addEvent(s, 'battle', `${n.name} bombers struck ${t.name}: destroyed ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? ` and ${lost.length - 3} more` : ''}.`, [n.id, t.id]);
-  }
 }
 
 /** AI: keep the population in check without overspending. Monthly. */

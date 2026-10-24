@@ -1,5 +1,5 @@
-import type { Army, EquipKind, GameState, Nation, ShipType, Unit, UnitType, Fleet, General, GeneralTrait } from './types';
-import { MIL, UNITS, SHIPS, SHIP_UPKEEP_SHARE, TERRAIN, WEATHER, ECON, RESOURCE, WAR_ECONOMY, REVOLT_AT } from './config';
+import type { Army, AirWing, EquipKind, GameState, Nation, ShipType, Unit, UnitType, Fleet, General, GeneralTrait } from './types';
+import { MIL, UNITS, SHIPS, SHIP_UPKEEP_SHARE, TERRAIN, WEATHER, ECON, RESOURCE, WAR_ECONOMY, REVOLT_AT, AIR } from './config';
 import { PROV, distKm, isStrait, landLinks } from './geo';
 import { atWar, isFriendly, invalidateArmies, armiesIn } from './world';
 import { addEvent } from './events';
@@ -81,6 +81,15 @@ export function setArmyLocation(s: GameState, a: Army, p: number) {
   invalidateArmies();
 }
 
+/** A new, empty air wing at an airbase (here rather than in air.ts, which builds on this module). */
+export function newWing(s: GameState, owner: string, base: number): AirWing {
+  s.airWings ??= {};
+  const count = Object.values(s.airWings).filter((w) => w.owner === owner).length;
+  const w: AirWing = { id: s.nextId++, owner, name: `${ordinal(count + 1)} Air Wing`, base, units: [], mission: 'support', target: null, rebase: null, bombAcc: 0, last: { sorties: 0, lost: 0, kills: 0 } };
+  s.airWings[w.id] = w;
+  return w;
+}
+
 // ---------------------------------------------------------------- army aggregates
 export function armyStrength(a: Army) { return a.units.reduce((t, u) => t + u.strength, 0); }
 export function armyMaxStrength(a: Army) { return a.units.reduce((t, u) => t + UNITS[u.type].personnel, 0); }
@@ -123,6 +132,7 @@ export function militaryStrength(s: GameState, id: string): number {
   let p = 0;
   for (const a of Object.values(s.armies)) if (a.owner === id) for (const u of a.units) p += UNITS[u.type].points;
   for (const f of Object.values(s.fleets)) if (f.owner === id) for (const k in f.ships) p += SHIPS[k as ShipType].points * f.ships[k as ShipType];
+  for (const w of Object.values(s.airWings ?? {})) if (w.owner === id) for (const u of w.units) p += UNITS[u.type].points;
   const n = s.nations[id];
   if (n) { for (const t of n.training) p += UNITS[t.type].points; for (const o of n.shipyard) p += SHIPS[o.type].points; }
   return p;
@@ -160,8 +170,14 @@ export function canEnter(s: GameState, owner: string, p: number): boolean {
 
 /** Dijkstra over land + strait links, cost = estimated travel days. */
 export function findPath(s: GameState, a: Army, to: number, opts: { avoidEnemy?: boolean } = {}): number[] | null {
+  void opts;
+  if (a.location === to) return [];
+  const { dist, prev } = landDijkstra(s, a, to);
+  return isFinite(dist[to]) ? pathFrom(prev, a.location, to) : null;
+}
+/** Travel days from an army to every province it can reach (or until `to` is settled). */
+export function landDijkstra(s: GameState, a: Army, to = -1): { dist: Float64Array; prev: Int32Array } {
   const from = a.location;
-  if (from === to) return [];
   const N = s.provinces.length;
   const dist = new Float64Array(N).fill(Infinity);
   const prev = new Int32Array(N).fill(-1);
@@ -187,9 +203,12 @@ export function findPath(s: GameState, a: Army, to: number, opts: { avoidEnemy?:
       if (nd < dist[l.to]) { dist[l.to] = nd; prev[l.to] = cur; open.push(l.to); }
     }
   }
-  if (!isFinite(dist[to])) return null;
+  return { dist, prev };
+}
+/** The path to `to` from a landDijkstra result. */
+export function pathFrom(prev: Int32Array, from: number, to: number): number[] {
   const path: number[] = [];
-  for (let c = to; c !== from; c = prev[c]) path.unshift(c);
+  for (let c = to; c !== from && c >= 0; c = prev[c]) path.unshift(c);
   return path;
 }
 
@@ -242,6 +261,14 @@ export function trainingDaily(s: GameState, n: Nation) {
   for (const t of done) {
     const u = newUnit(s, t.type, 1, 0.1);
     u.org = 0.5; u.morale = 0.65;
+    if (t.type === 'air' || t.type === 'bomber') {
+      // aircraft join an air wing at their airbase
+      const wings = Object.values(s.airWings ?? {}).filter((w) => w.owner === n.id && w.base === t.province && !w.rebase && w.units.length < AIR.MAX_WING);
+      const w = wings[0] ?? newWing(s, n.id, t.province);
+      w.units.push(u);
+      if (n.isPlayer) addEvent(s, 'military', `${UNITS[t.type].label} ready at ${PROV[t.province].name} (${w.name}).`, [n.id], { province: t.province });
+      continue;
+    }
     let army = t.armyId != null ? s.armies[t.armyId] : undefined;
     if (army && (army.owner !== n.id || army.location !== t.province || army.units.length >= MIL.MAX_ARMY_UNITS)) army = undefined;
     if (!army) army = armiesIn(s, t.province).find((a) => a.owner === n.id && !a.battleId && a.units.length < MIL.MAX_ARMY_UNITS && !a.path.length);

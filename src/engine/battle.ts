@@ -9,7 +9,7 @@
  * armour and positions matter more than raw numbers. Randomness is seeded and bounded (±12%/day).
  */
 import type { Army, Battle, BattleFactor, BattleSide, GameState, Posture, Unit, War } from './types';
-import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE } from './config';
+import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE, AIR, SHIPS } from './config';
 import { PROV, isStrait, landLinks, distKm } from './geo';
 import { Stream } from './rng';
 import { armiesIn, atWar, isFriendly, warBetween, invalidateArmies, controlledBy } from './world';
@@ -17,14 +17,39 @@ import { armyStrength, armyOrg, armyMorale, armyEquip, qualityOf, setArmyLocatio
 import { provinceWeather } from './weather';
 import { addEvent } from './events';
 import { setController } from './territory';
-import { TRAITS } from './military';
+import { TRAITS, fleetPower } from './military';
+import { battleAirFor, battleSides, navalAir, airNear } from './air';
 
 // ---------------------------------------------------------------- side evaluation
 interface SideEval {
   soft: number; hard: number; defense: number; breakthrough: number; hardness: number; recon: number; air: number;
+  cas: { soft: number; hard: number }; naval: number; seaCtl: number; airWings: number;
   front: Unit[]; reserve: Unit[]; support: Unit[]; speed: number; width: number;
   supply: number; generalAtk: number; generalDef: number; trait: string;
   equipment: number; quality: number;
+}
+
+/**
+ * Warships off the coast: the share of the province's waters a side controls (fleets and naval
+ * aircraft), and the gunfire its ships there add to the fighting ashore.
+ */
+export function navalSupport(s: GameState, province: number, leader: string, side: Set<string>, enemy: Set<string>) {
+  let control = 0, fire = 0;
+  for (const z of PROV[province].seas) {
+    let own = navalAir(s, leader, z), hostile = 0, guns = 0;
+    for (const f of Object.values(s.fleets)) {
+      if (f.sea !== z) continue;
+      const n = s.nations[f.owner];
+      if (side.has(f.owner)) {
+        own += fleetPower(f, n);
+        guns += (f.ships.destroyer * SHIPS.destroyer.attack + f.ships.cruiser * SHIPS.cruiser.attack + f.ships.battlegroup * SHIPS.battlegroup.attack) * (n?.techMods.quality.ships ?? 1) * (0.4 + 0.6 * f.org);
+      } else if (enemy.has(f.owner)) hostile += fleetPower(f, n);
+    }
+    const ctl = own > 0 ? own / (own + hostile) : 0;
+    control = Math.max(control, ctl);
+    if (ctl >= 0.5) fire += guns * ctl;
+  }
+  return { control, fire: fire * COMBAT.NAVAL_FIRE };
 }
 
 function unitEff(u: Unit, q: number) {
@@ -49,7 +74,11 @@ function evaluate(s: GameState, armies: Army[], b: Battle, isAttacker: boolean):
       if (g && g.attack + g.defense > gA + gD) { gA = g.attack; gD = g.defense; trait = g.trait; }
     }
   }
-  const width = Math.round(t.width * (b.amphibious && isAttacker ? 0.6 : 1));
+  // the national air force and navy join in
+  const [sa, sd] = battleSides(s, b);
+  const nav = navalSupport(s, b.province, isAttacker ? b.attacker.nation : b.defender.nation, isAttacker ? sa : sd, isAttacker ? sd : sa);
+  // a landing can only put so many troops ashore at once; holding the sea lets more land
+  const width = Math.round(t.width * (b.amphibious && isAttacker ? 0.6 + 0.3 * nav.control : 1));
   const line = all.filter((u) => !UNITS[u.type].support && u.strength > 50).sort((x, y) => y.org - x.org);
   const support = all.filter((u) => UNITS[u.type].support && u.strength > 20);
   const front: Unit[] = [];
@@ -60,7 +89,13 @@ function evaluate(s: GameState, armies: Army[], b: Battle, isAttacker: boolean):
     front.push(u); used += UNITS[u.type].width;
   }
   const reserve = line.filter((u) => !front.includes(u));
-  const ev: SideEval = { soft: 0, hard: 0, defense: 0, breakthrough: 0, hardness: 0, recon: 0, air: 0, front, reserve, support, speed: isFinite(speed) ? speed : 20, width, supply: supplyT ? supplyW / supplyT : 1, generalAtk: gA, generalDef: gD, trait, equipment: 0, quality: 1 };
+  const air = battleAirFor(b.id);
+  const ev: SideEval = {
+    soft: 0, hard: 0, defense: 0, breakthrough: 0, hardness: 0, recon: 0,
+    air: (isAttacker ? air?.aSup : air?.dSup) ?? 0, cas: { ...((isAttacker ? air?.aCas : air?.dCas) ?? { soft: 0, hard: 0 }) }, airWings: (isAttacker ? air?.aWings : air?.dWings) ?? 0,
+    naval: nav.fire, seaCtl: nav.control,
+    front, reserve, support, speed: isFinite(speed) ? speed : 20, width, supply: supplyT ? supplyW / supplyT : 1, generalAtk: gA, generalDef: gD, trait, equipment: 0, quality: 1,
+  };
   let hw = 0, eqT = 0, qT = 0;
   for (const u of front) {
     const sp = UNITS[u.type];
@@ -168,7 +203,8 @@ function modifiers(s: GameState, b: Battle, A: SideEval, D: SideEval, aArm: Army
   if (b.strait) atk['Strait crossing'] = COMBAT.STRAIT_PENALTY;
   if (b.amphibious) {
     const am = s.nations[aArm[0].owner]?.techMods.amphibious ?? 0;
-    atk['Amphibious landing'] = COMBAT.AMPHIBIOUS_PENALTY + (1 - COMBAT.AMPHIBIOUS_PENALTY) * am;
+    const base = COMBAT.AMPHIBIOUS_PENALTY + 0.3 * A.seaCtl; // escorts and naval cover make landings far less costly
+    atk['Amphibious landing'] = base + (1 - base) * am;
   }
   atk['Weather'] = w.attack;
   dAtkMods['Weather'] = w.attack;
@@ -178,10 +214,8 @@ function modifiers(s: GameState, b: Battle, A: SideEval, D: SideEval, aArm: Army
   aDefMods['Supply'] = 0.6 + 0.4 * Math.min(1, A.supply);
   const pa = POSTURES[b.attackerPosture], pd = POSTURES[b.defenderPosture];
   atk['Posture'] = pa.attack;
-  // air campaigns and reconnaissance
-  const aN = s.nations[b.attacker.nation], dN = s.nations[b.defender.nation];
-  if (aN?.regime?.air.mission === 'cas' && A.air > 0) atk['Close air support'] = 1.08;
-  if (dN?.regime?.air.mission === 'cas' && D.air > 0) dAtkMods['Close air support'] = 1.08;
+  // reconnaissance data from recon drones
+  const aN = s.nations[b.attacker.nation];
   if ((aN?.regime?.recon[b.province] ?? 0) > s.day) atk['Targeting data'] = 1.06;
   def['Posture'] = pd.defense;
   dAtkMods['Posture'] = pd.attack < 1 ? Math.max(0.85, pd.attack) : pd.attack;
@@ -200,12 +234,12 @@ function modifiers(s: GameState, b: Battle, A: SideEval, D: SideEval, aArm: Army
   const reconAdv = Math.max(-1, Math.min(1, (rA - rD) / (rA + rD)));
   atk['Reconnaissance'] = 1 + 0.12 * reconAdv;
   def['Reconnaissance'] = 1 - 0.06 * reconAdv;
-  // air superiority
-  const airA = A.air * w.air * t.air, airD = D.air * w.air * t.air;
+  // air superiority (fighters, carriers and air defences over the battlefield; weather already counted)
+  const airA = A.air, airD = D.air;
   if (airA + airD > 0.5) {
     const sup = (airA - airD) / (airA + airD);
-    atk['Air superiority'] = 1 + 0.2 * sup;
-    dAtkMods['Air superiority'] = 1 - 0.15 * sup;
+    atk['Air superiority'] = 1 + AIR.SUPERIORITY * sup;
+    dAtkMods['Air superiority'] = 1 - AIR.SUPERIORITY * 0.8 * sup;
   }
   // mobile manoeuvre
   if (b.attackerPosture === 'mobile') {
@@ -281,11 +315,12 @@ export function battleDaily(s: GameState, b: Battle) {
   const defMult = prod(m.def);
   const dAtkMult = prod(m.dAtkMods) * probe * spreadD;
   const aDefMult = prod(m.aDefMods);
-  // air strikes add to attack
-  const airAtkA = A.air * 0.6 * WEATHER[b.weather].air * TERRAIN[b.terrain].air;
-  const airAtkD = D.air * 0.6 * WEATHER[b.weather].air * TERRAIN[b.terrain].air;
-  const hitsA = ((A.soft + airAtkA) * (1 - D.hardness) + (A.hard + airAtkA * 0.6) * D.hardness) * atkMult;
-  const hitsD = ((D.soft + airAtkD) * (1 - A.hardness) + (D.hard + airAtkD * 0.6) * A.hardness) * dAtkMult;
+  // close air support (stronger for the side that holds the sky) and naval gunfire add firepower
+  const shareA = A.air + D.air > 0.5 ? A.air / (A.air + D.air) : 0.5;
+  const strikeA = { soft: A.cas.soft * AIR.CAS * (0.35 + 0.65 * shareA), hard: A.cas.hard * AIR.CAS * (0.35 + 0.65 * shareA) };
+  const strikeD = { soft: D.cas.soft * AIR.CAS * (1 - 0.65 * shareA), hard: D.cas.hard * AIR.CAS * (1 - 0.65 * shareA) };
+  const hitsA = ((A.soft + strikeA.soft + A.naval) * (1 - D.hardness) + (A.hard + strikeA.hard + A.naval * 0.3) * D.hardness) * atkMult;
+  const hitsD = ((D.soft + strikeD.soft + D.naval) * (1 - A.hardness) + (D.hard + strikeD.hard + D.naval * 0.3) * A.hardness) * dAtkMult;
   const defD = D.defense * defMult;
   const defA = A.breakthrough * aDefMult + A.defense * 0.25 * aDefMult; // attackers rely on breakthrough
   // defence absorbs attacks up to its value; prepared positions also blunt what gets through
@@ -302,7 +337,9 @@ export function battleDaily(s: GameState, b: Battle) {
   b.attacker.losses.killed += killedA; b.defender.losses.killed += killedD;
   if (day === 1) {
     events.push(`Reconnaissance and artillery duel. ${A.recon > D.recon * 1.3 ? 'Attacker scouts locate the defensive line.' : D.recon > A.recon * 1.3 ? 'Defender screens deny the attacker a clear picture.' : 'Neither side gains an intelligence edge.'}`);
-    if (A.air + D.air > 1) events.push(A.air > D.air ? 'Attacker aircraft contest the skies.' : 'Defender aircraft hold the skies.');
+    if (A.air + D.air > 1) events.push(A.air > D.air * 1.5 ? `Attacker air forces own the skies (${A.airWings} wing${A.airWings === 1 ? '' : 's'} overhead).` : D.air > A.air * 1.5 ? `Defender air forces own the skies (${D.airWings} wing${D.airWings === 1 ? '' : 's'} overhead).` : 'Both air forces contest the skies.');
+    if (A.naval > 0.5) events.push('Attacker warships shell the defences from offshore.');
+    if (D.naval > 0.5) events.push('Defender warships fire on the attackers from offshore.');
   }
   if (hitsA > defD * 1.4) events.push('Attackers achieve a local breakthrough.');
   if (hitsD > defA * 1.6) events.push('Counter-attack inflicts heavy losses on the assault waves.');
@@ -321,7 +358,7 @@ export function battleDaily(s: GameState, b: Battle) {
   b.attacker.strength = aArm.reduce((t, a) => t + armyStrength(a), 0);
   b.defender.strength = dArm.reduce((t, a) => t + armyStrength(a), 0);
   b.attacker.org = aOrg; b.defender.org = dOrg; b.attacker.morale = aMor; b.defender.morale = dMor;
-  b.factors = explain(s, b, A, D, m);
+  b.factors = explain(s, b, A, D, m, strikeA, strikeD);
 
   // ---- decision checks
   const rout = (org: number, mor: number) => mor < 0.22 && org < 0.35 && rnd.next() < 0.5;
@@ -345,7 +382,7 @@ function dayRecord(day: number, phase: string, aArm: Army[], dArm: Army[], aDama
 }
 
 // ---------------------------------------------------------------- explanation
-function explain(s: GameState, b: Battle, A: SideEval, D: SideEval, m: Mods): BattleFactor[] {
+function explain(s: GameState, b: Battle, A: SideEval, D: SideEval, m: Mods, casA = { soft: 0, hard: 0 }, casD = { soft: 0, hard: 0 }): BattleFactor[] {
   const f: BattleFactor[] = [];
   const push = (label: string, side: 'attacker' | 'defender', mult: number, detail: string) => { if (Math.abs(mult - 1) >= 0.015) f.push({ label, side, value: +(mult - 1).toFixed(3), detail }); };
   const t = TERRAIN[b.terrain];
@@ -364,7 +401,12 @@ function explain(s: GameState, b: Battle, A: SideEval, D: SideEval, m: Mods): Ba
   push('Leadership', 'attacker', m.atk['General'], b.attacker.general ? `${b.attacker.general} (attack ${A.generalAtk}${A.trait !== 'none' ? ', ' + TRAITS[A.trait as keyof typeof TRAITS].label : ''})` : 'No general assigned');
   push('Leadership', 'defender', m.def['General'], b.defender.general ? `${b.defender.general} (defence ${D.generalDef}${D.trait !== 'none' ? ', ' + TRAITS[D.trait as keyof typeof TRAITS].label : ''})` : 'No general assigned');
   push('Reconnaissance', 'attacker', m.atk['Reconnaissance'], 'Intelligence and scouting advantage');
-  if (m.atk['Air superiority']) push('Air superiority', 'attacker', m.atk['Air superiority'], `Air power ${A.air.toFixed(0)} vs ${D.air.toFixed(0)}`);
+  if (m.atk['Air superiority']) push('Air superiority', 'attacker', m.atk['Air superiority'], `Air power ${A.air.toFixed(0)} vs ${D.air.toFixed(0)} (${A.airWings} vs ${D.airWings} air wings overhead)`);
+  const fire = (x: SideEval, c: { soft: number; hard: number }) => 1 + Math.min(1.5, (c.soft + c.hard + x.naval * 1.3) / Math.max(1, x.soft + x.hard));
+  if (casA.soft + casA.hard > 0.3) push('Close air support', 'attacker', 1 + Math.min(1.5, (casA.soft + casA.hard) / Math.max(1, A.soft + A.hard)), 'Strike aircraft hitting the defenders');
+  if (casD.soft + casD.hard > 0.3) push('Close air support', 'defender', 1 + Math.min(1.5, (casD.soft + casD.hard) / Math.max(1, D.soft + D.hard)), 'Strike aircraft hitting the attackers');
+  if (A.naval > 0.3) push('Naval gunfire', 'attacker', fire(A, { soft: 0, hard: 0 }), 'Warships offshore shelling the defences');
+  if (D.naval > 0.3) push('Naval gunfire', 'defender', fire(D, { soft: 0, hard: 0 }), 'Warships offshore firing on the attackers');
   if (m.atk['Manoeuvre']) push('Mobile manoeuvre', 'attacker', m.atk['Manoeuvre'], 'Speed and recon exploited for flanking');
   if (m.atk['Fatigue']) push('Fatigue', 'attacker', m.atk['Fatigue'], 'Exhausted from marching and fighting');
   // equipment & quality
@@ -502,6 +544,14 @@ export function estimateBattle(s: GameState, attackers: Army[], province: number
   const w = WEATHER[provinceWeather(s, province)];
   let aP = attackers.reduce((x, a) => x + armyPower(s, a), 0);
   let dP = defs.reduce((x, a) => x + armyPower(s, a), 0) * (1 + noise);
+  // air forces in range
+  const airA = airNear(s, atkOwner, province), airD = airNear(s, defs[0].owner, province);
+  if (airA + airD > 0.5) {
+    const sup = (airA - airD) / (airA + airD);
+    aP *= 1 + AIR.SUPERIORITY * sup + Math.max(0, sup) * 0.2;
+    dP *= 1 - AIR.SUPERIORITY * 0.5 * sup;
+    if (Math.abs(sup) > 0.3) notes.push(sup > 0 ? 'Your air force rules the skies here.' : 'The enemy air force rules the skies here.');
+  }
   const fort = s.provinces[province].buildings.fort;
   aP *= t.attack * w.attack * (g.river ? COMBAT.RIVER_PENALTY : 1) * (isStrait(from, province) ? COMBAT.STRAIT_PENALTY : 1) * POSTURES[attackers[0].posture].attack;
   dP *= t.defense * (1 + COMBAT.FORT_PER_LEVEL * fort) * (1 + COMBAT.ENTRENCH_MAX_BONUS * Math.max(...defs.map((d) => d.entrench))) * 1.35; // defender advantage

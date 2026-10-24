@@ -84,7 +84,23 @@ svg.map:active { cursor: grabbing; }
 .army.dot circle { transition: r .15s; } .army.dot:hover circle:not(.dot-sel) { stroke: #fff; }
 .dot-sel { fill: none; stroke: rgba(255,255,255,.85); stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; animation: dash 1.2s linear infinite; pointer-events: none; }
 .toknum { fill: #fff; font-weight: 600; text-anchor: middle; font-family: var(--font); paint-order: stroke; stroke: rgba(0,0,0,.5); stroke-width: .3px; pointer-events: none; }
-.fleet { cursor: pointer; } .fleet.sel rect { stroke: #fff; }
+.fleet { cursor: pointer; }
+/* map pieces: armies, fleets and air wings */
+.army, .fleet, .wing { cursor: pointer; }
+.army .tok, .fleet .tok, .wing .tok { filter: url(#tokshadow); transition: stroke .12s; }
+.army:hover .tok, .fleet:hover .tok, .wing:hover .tok { stroke: #fff; }
+.tok-sel { fill: none; stroke: rgba(255,255,255,.95); stroke-width: 1.5; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; animation: dash 1.2s linear infinite; pointer-events: none; }
+.tok-label { fill: #f4e6c0; font-weight: 700; text-anchor: middle; paint-order: stroke; stroke: rgba(8, 10, 16, .9); pointer-events: none; font-family: var(--font); }
+.army.hostile .tok-label { fill: #ffb3a8; }
+.tok-warn { fill: #e05a4a; stroke: #000; stroke-width: .6; vector-effect: non-scaling-stroke; }
+.tok-badge { pointer-events: none; }
+.air-range { fill: rgba(120, 190, 255, .05); stroke: rgba(150, 205, 255, .6); stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.air-range.bomber { fill: none; stroke: rgba(255, 190, 120, .5); }
+.air-line { fill: none; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; animation: dash 1.2s linear infinite; }
+.air-line.bomb { stroke: #ff6a5a; } .air-line.naval { stroke: #6fc3ff; } .air-line.rebase { stroke: #f4d27a; }
+.wing-summary { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.mission-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.mission-grid .posture:last-child { grid-column: span 2; }
 .battle { cursor: pointer; } .battle .core { fill: #8a1f18; stroke: #ffb0a0; stroke-width: .6; vector-effect: non-scaling-stroke; }
 .battle .pulse { fill: rgba(255, 80, 50, .35); animation: pulse 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
 .battle.mine .core { fill: #c0301f; }
@@ -438,3 +454,6 @@ svg.map.moving { cursor: crosshair; }
 .roster td, .roster th { padding: 3px 5px; }
 .war-actions.calm { border-color: var(--line); background: rgba(255,255,255,.02); align-items: center; }
 .netcheck { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; } .netcheck table { margin-top: 6px; }
+.sp-h { margin: 12px 0 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.tok-num rect { fill: rgba(10, 12, 18, .9); stroke: rgba(244, 210, 122, .7); stroke-width: .6; vector-effect: non-scaling-stroke; }
+.tok-num text { fill: #f4e6c0; font-weight: 700; pointer-events: none; font-family: var(--font); }

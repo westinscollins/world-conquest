@@ -1,9 +1,11 @@
 import { live } from './live';
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { GameState, Army } from '../engine/types';
-import { PROV, WORLD } from '../engine/geo';
+import { PROV, WORLD, seaRoute } from '../engine/geo';
 import { store, useStore, type MapMode } from './store';
-import { TERRAIN, UNITS, WEATHER, STRIKES } from '../engine/config';
+import { TERRAIN, UNITS, WEATHER, STRIKES, AIR, AIR_MISSION_INFO, MIL } from '../engine/config';
+import { wingPlanes } from '../engine/air';
+import { GlyphShape, type Glyph } from './glyphs';
 import { checkStrike, interceptRate, strikeDistance, type StrikeKind } from '../engine/strikes';
 import { armyNumbers, ctrlGroup, groupOf, selectedIds } from './selection';
 import { estimateBattle } from '../engine/battle';
@@ -274,7 +276,7 @@ export function MapView() {
       const [l, r, tp, b] = [Math.min(bx.x0, bx.x1), Math.max(bx.x0, bx.x1), Math.min(bx.y0, bx.y1), Math.max(bx.y0, bx.y1)];
       if (r - l > 6 || b - tp > 6) {
         const ids: number[] = [];
-        document.querySelectorAll('.army.dot.mine').forEach((el) => { const q = el.getBoundingClientRect(); const cx = q.x + q.width / 2, cy = q.y + q.height / 2; if (cx >= l && cx <= r && cy >= tp && cy <= b) ids.push(+el.getAttribute('data-army')!); });
+        document.querySelectorAll('.army.mine').forEach((el) => { const q = el.getBoundingClientRect(); const cx = q.x + q.width / 2, cy = q.y + q.height / 2; if (cx >= l && cx <= r && cy >= tp && cy <= b) ids.push(+el.getAttribute('data-army')!); });
         if (ids.length) { const a = store.game!.armies[ids[0]]; store.setUI({ selectedArmy: ids[0], group: ids.slice(1), selectedFleet: null, selectedProvince: a?.location ?? null }); store.toast(`${ids.length} ${ids.length === 1 ? 'army' : 'armies'} selected — right-click a province to move them all.`, 'info'); }
         return;
       }
@@ -309,22 +311,24 @@ export function MapView() {
         store.setUI({ group: ui.group.includes(id) ? ui.group.filter((x) => x !== id) : [...ui.group, id] });
         return;
       }
-      store.setUI({ selectedArmy: id, selectedFleet: null, selectedProvince: a?.location ?? null, group: [] });
+      store.setUI({ selectedArmy: id, selectedFleet: null, selectedWing: null, selectedProvince: a?.location ?? null, group: [] });
       return;
     }
-    if (fleetEl) { store.setUI({ selectedFleet: +fleetEl.getAttribute('data-fleet')!, selectedArmy: null }); return; }
+    if (fleetEl) { store.setUI({ selectedFleet: +fleetEl.getAttribute('data-fleet')!, selectedArmy: null, selectedWing: null, group: [] }); return; }
+    const wingEl = t.closest?.('[data-wing]');
+    if (wingEl) { store.setUI({ selectedWing: +wingEl.getAttribute('data-wing')!, selectedArmy: null, selectedFleet: null, group: [] }); return; }
     const seaEl = t.closest?.('[data-sea]');
     if (seaEl) return;
     const p = t.getAttribute?.('data-p');
     if (p != null && ui.moveMode != null && store.game!.armies[ui.moveMode]) { onMapRightClick(+p, null); store.setUI({ moveMode: null }); return; }
-    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null, moveMode: null, group: [] });
-    else store.setUI({ selectedProvince: null, selectedArmy: null, selectedFleet: null, group: [] });
+    if (p != null) store.setUI({ selectedProvince: +p, selectedArmy: null, selectedNation: store.game!.provinces[+p].owner, selectedFleet: null, selectedWing: null, moveMode: null, group: [] });
+    else store.setUI({ selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedWing: null, group: [] });
   };
   const onContext = (e: React.MouseEvent) => {
     e.preventDefault();
     const t = e.target as Element;
     const seaEl = t.closest?.('[data-sea]');
-    const p = t.getAttribute?.('data-p') ?? t.closest?.('[data-army]')?.getAttribute('data-loc');
+    const p = t.getAttribute?.('data-p') ?? t.closest?.('[data-army]')?.getAttribute('data-loc') ?? (t.closest?.('[data-wing]') ? String(store.game!.airWings[+t.closest!('[data-wing]')!.getAttribute('data-wing')!]?.base ?? '') || null : null);
     if (ui.strike || ui.pickOperation) { store.setUI({ strike: null, pickOperation: false }); return; } // right-click cancels targeting
     onMapRightClick(p != null ? +p : null, seaEl ? +seaEl.getAttribute('data-sea')! : null, e.shiftKey);
   };
@@ -361,6 +365,11 @@ export function MapView() {
           <filter id="tokshadow" x="-30%" y="-30%" width="160%" height="160%">
             <feDropShadow dx="0" dy="0.6" stdDeviation="0.6" floodColor="#000" floodOpacity="0.7" />
           </filter>
+          <linearGradient id="tokshade" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#fff" stopOpacity="0.28" />
+            <stop offset="0.45" stopColor="#fff" stopOpacity="0" />
+            <stop offset="1" stopColor="#000" stopOpacity="0.35" />
+          </linearGradient>
           <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="#f4d27a" />
           </marker>
@@ -390,6 +399,7 @@ export function MapView() {
         <Battles g={g} px={px} />
         <Blasts px={px} />
         <Armies g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} />
+        <AirLayer g={g} k={k} px={px} />
         <LiveLayer px={px} />
         <rect x={VX - 400} y={VY - 300} width={VW + 800} height={VH + 600} fill="url(#vignette)" pointerEvents="none" opacity={0.35} />
       </svg>
@@ -445,34 +455,109 @@ function Labels({ labels, k, px, g }: { labels: ReturnType<typeof nationLabels>;
   );
 }
 
+function fleetGlyph(f: GameState['fleets'][number]): Glyph {
+  if (f.ships.battlegroup >= 0.5) return 'carrier';
+  if (f.ships.destroyer + f.ships.cruiser < 0.5) return 'transport';
+  return 'warship';
+}
+const shipCount = (f: GameState['fleets'][number]) => Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup + f.ships.transport);
+
 function SeaLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
-  const show = k > 1.8 || store.ui.selectedFleet != null || store.ui.selectedArmy != null;
-  const fleets = Object.values(g.fleets);
+  const ui = store.ui;
+  const wingSel = ui.selectedWing != null && g.airWings?.[ui.selectedWing]?.owner === g.player;
+  const show = k > 1.8 || ui.selectedFleet != null || ui.selectedArmy != null || wingSel;
+  const fleets = Object.values(g.fleets).filter((f) => shipCount(f) > 0 && (f.owner === g.player || atWar(g, f.owner, g.player) || f.id === ui.selectedFleet || k >= 6));
+  const byZone = new Map<number, typeof fleets>();
+  for (const f of fleets) (byZone.get(f.sea) || byZone.set(f.sea, []).get(f.sea)!).push(f);
+  const sc = pieceScale(k);
+  const W = 34 * px * sc, H = 18 * px * sc;
   return (
     <g className="sea">
       {show && LANES.map(([a, b]) => <line key={`${a}-${b}`} x1={WORLD.seas[a].x} y1={WORLD.seas[a].y} x2={WORLD.seas[b].x} y2={WORLD.seas[b].y} className="lane" />)}
       {show && WORLD.seas.map((s) => (
         <g key={s.id} data-sea={s.id} className="seanode">
-          <circle cx={s.x} cy={s.y} r={5 * px} />
-          {k > 2.4 && <text x={s.x} y={s.y + 13 * px} fontSize={9 * px}>{s.name}</text>}
+          <circle cx={s.x} cy={s.y} r={(ui.selectedFleet != null || wingSel ? 7 : 5) * px} />
+          {(k > 2.4 || ui.selectedFleet != null) && <text x={s.x} y={s.y + 13 * px} fontSize={9 * px}>{s.name}</text>}
         </g>
       ))}
-      {fleets.map((f, i) => {
-        const z = WORLD.seas[f.sea];
-        const n = g.nations[f.owner];
-        const total = Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup + f.ships.transport);
-        if (!total) return null;
-        if (f.owner !== g.player && !atWar(g, f.owner, g.player) && k < 6) return null;
-        const off = (i % 3) * 9 * px;
-        const sz = 16 * px;
+      {/* routes of your fleets */}
+      {fleets.filter((f) => f.owner === g.player && f.path.length).map((f) => (
+        <polyline key={`r${f.id}`} points={[f.sea, ...f.path].map((z) => `${WORLD.seas[z].x},${WORLD.seas[z].y}`).join(' ')} className={`path sea${f.id === ui.selectedFleet ? ' sel' : ''}`} strokeWidth={2 * px} markerEnd="url(#arrow)" pointerEvents="none" />
+      ))}
+      {[...byZone].map(([zone, list]) => {
+        const z = WORLD.seas[zone];
+        const fighting = list.some((a) => list.some((b) => atWar(g, a.owner, b.owner)));
+        return list.map((f, i) => {
+          const n = g.nations[f.owner];
+          const x = z.x + (i - (list.length - 1) / 2) * (W + 3 * px), y = z.y - H * 1.1;
+          const mine = f.owner === g.player, sel = f.id === ui.selectedFleet;
+          const glyph = fleetGlyph(f);
+          return (
+            <g key={f.id} data-fleet={f.id} className={`fleet${sel ? ' sel' : ''}${mine ? ' mine' : ''}`} transform={`translate(${x},${y})`}>
+              <title>{`${f.name} (${n?.name}) — ${shipCount(f)} ships in the ${z.name}${f.path.length ? `, sailing to the ${WORLD.seas[f.path[f.path.length - 1]].name}` : ''}`}</title>
+              {sel && <rect className="tok-sel" x={-W / 2 - 2.5 * px} y={-H / 2 - 2.5 * px} width={W + 5 * px} height={H + 5 * px} rx={H / 2 + 2 * px} />}
+              <rect className="tok" x={-W / 2} y={-H / 2} width={W} height={H} rx={H / 2} fill={n?.color ?? '#555'} stroke={pieceStroke(sel, atWar(g, f.owner, g.player))} strokeWidth={(sel ? 1.8 : 1.4) * px} />
+              <rect x={-W / 2} y={-H / 2} width={W} height={H} rx={H / 2} fill="url(#tokshade)" pointerEvents="none" />
+              <GlyphShape g={glyph} cx={0} cy={0.5 * px} h={8.5 * px * sc} />
+              <text className="tok-label" x={0} y={H / 2 + 8 * px * sc} fontSize={9 * px * sc} strokeWidth={2.6 * px}>{shipCount(f)} ships</text>
+              {fighting && <text x={W / 2 - 2 * px} y={-H / 2 + 2 * px} fontSize={10 * px * sc} className="tok-badge">💥</text>}
+            </g>
+          );
+        });
+      })}
+    </g>
+  );
+}
+
+/** Air wings: jets at their airbase, mission lines to their targets, range when selected. */
+function AirLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
+  const sel = store.ui.selectedWing;
+  const wings = Object.values(g.airWings ?? {}).filter((w) => w.units.length && (w.owner === g.player || w.id === sel || (atWar(g, w.owner, g.player) && k > 2.2)));
+  const byBase = new Map<number, typeof wings>();
+  for (const w of wings) (byBase.get(w.base) || byBase.set(w.base, []).get(w.base)!).push(w);
+  const sc = pieceScale(k);
+  const R = 10.5 * px * sc;
+  const { width: MW, height: MH } = WORLD.meta;
+  const rangeEllipse = (base: number, km: number, cls: string) => {
+    const pb = PROV[base];
+    const ry = (km / 111.2) * (MH / 180), rx = (km / (111.2 * Math.max(0.2, Math.cos((pb.lat * Math.PI) / 180)))) * (MW / 360);
+    return <ellipse key={cls} cx={pb.lx} cy={pb.ly} rx={rx} ry={ry} className={`air-range ${cls}`} strokeWidth={1.4 * px} />;
+  };
+  return (
+    <g className="air">
+      {sel != null && g.airWings?.[sel] && (() => {
+        const w = g.airWings[sel];
+        const kinds = [...new Set(w.units.map((u) => u.type))];
+        return <g pointerEvents="none">{kinds.map((t) => rangeEllipse(w.base, AIR.RANGE[t], t))}</g>;
+      })()}
+      {wings.map((w) => {
+        const b = PROV[w.base];
+        const lines: JSX.Element[] = [];
+        if (w.rebase) lines.push(<line key="r" x1={b.lx} y1={b.ly} x2={PROV[w.rebase.to].lx} y2={PROV[w.rebase.to].ly} className="air-line rebase" strokeWidth={1.6 * px} markerEnd="url(#arrow)" />);
+        if (w.mission === 'bombing' && w.target != null) lines.push(<line key="b" x1={b.lx} y1={b.ly} x2={PROV[w.target].lx} y2={PROV[w.target].ly} className="air-line bomb" strokeWidth={1.8 * px} markerEnd="url(#arrow-red)" />);
+        if (w.mission === 'naval' && w.target != null) lines.push(<line key="n" x1={b.lx} y1={b.ly} x2={WORLD.seas[w.target].x} y2={WORLD.seas[w.target].y} className="air-line naval" strokeWidth={1.8 * px} markerEnd="url(#arrow)" />);
+        return lines.length && (w.owner === g.player || w.id === sel) ? <g key={`l${w.id}`} pointerEvents="none">{lines}</g> : null;
+      })}
+      {[...byBase].map(([base, list]) => list.map((w, i) => {
+        const b = PROV[base];
+        const n = g.nations[w.owner];
+        // to the left of the city marker (its name is written to the right)
+        const x = b.lx - 15 * px * sc - i * (2 * R + 3 * px), y = b.ly - 3 * px * sc;
+        const mine = w.owner === g.player, isSel = w.id === sel;
+        const bombers = w.units.filter((u) => u.type === 'bomber').length;
+        const glyph: Glyph = bombers * 2 > w.units.length ? 'bomber' : 'fighter';
+        const planes = wingPlanes(w);
         return (
-          <g key={f.id} data-fleet={f.id} transform={`translate(${z.x + off - sz / 2},${z.y - sz * 1.4})`} className={`fleet${store.ui.selectedFleet === f.id ? ' sel' : ''}`} filter="url(#tokshadow)">
-            <rect width={sz * 1.5} height={sz} rx={sz * 0.15} fill={n?.color ?? '#555'} stroke={f.owner === g.player ? '#f4d27a' : '#111'} strokeWidth={px * 1.2} />
-            <path d={`M${sz * 0.2},${sz * 0.6} L${sz * 1.3},${sz * 0.6} L${sz * 1.1},${sz * 0.85} L${sz * 0.35},${sz * 0.85} Z M${sz * 0.65},${sz * 0.2} L${sz * 0.65},${sz * 0.6} L${sz * 0.95},${sz * 0.6} Z`} fill="#fff" opacity={0.9} />
-            <text x={sz * 0.75} y={sz * 1.55} fontSize={sz * 0.55} className="toknum">{total}</text>
+          <g key={w.id} data-wing={w.id} className={`wing${isSel ? ' sel' : ''}${mine ? ' mine' : ''}`} transform={`translate(${x},${y})`}>
+            <title>{`${w.name} (${n?.name}) — ${planes} aircraft at ${b.name} · ${AIR_MISSION_INFO[w.mission].label}${w.mission === 'bombing' && w.target != null ? `: ${PROV[w.target].name}` : w.mission === 'naval' && w.target != null ? `: ${WORLD.seas[w.target].name}` : ''}${w.rebase ? ` · moving to ${PROV[w.rebase.to].name}` : ''}`}</title>
+            {isSel && <circle className="tok-sel" r={R + 2.5 * px} />}
+            <circle className="tok" r={R} fill={n?.color ?? '#555'} stroke={pieceStroke(isSel, !mine && atWar(g, w.owner, g.player))} strokeWidth={(isSel ? 1.8 : 1.4) * px} />
+            <circle r={R} fill="url(#tokshade)" pointerEvents="none" />
+            <GlyphShape g={glyph} cx={0} cy={0} h={R * 1.45} />
+            {(mine || isSel) && (k > 2.6 || isSel) && <text className="tok-label" x={0} y={-R - 3 * px * sc} fontSize={8.5 * px * sc} strokeWidth={2.6 * px}>{planes}✈{w.mission === 'idle' ? ' zz' : ''}</text>}
           </g>
         );
-      })}
+      }))}
     </g>
   );
 }
@@ -505,10 +590,18 @@ function FrontLines({ g, px }: { g: GameState; px: number }) {
 }
 
 function Paths({ g, px, selArmy }: { g: GameState; px: number; selArmy: Army | null }) {
-  const list = Object.values(g.armies).filter((a) => (a.owner === g.player || a === selArmy) && (a.path.length || a.embarked));
+  const list = Object.values(g.armies).filter((a) => (a.owner === g.player || a === selArmy) && (a.path.length || a.embarked || a.seaDest != null));
   return (
     <g className="paths" pointerEvents="none">
       {list.map((a) => {
+        if (a.seaDest != null && !a.embarked) {
+          // naval invasion: march to the port, then the sea leg
+          const port = a.path.length ? a.path[a.path.length - 1] : a.location;
+          const route = seaRoute(PROV[port].seas, PROV[a.seaDest].seas) ?? [];
+          const land = [a.location, ...a.path].map((p) => `${PROV[p].lx},${PROV[p].ly}`).join(' ');
+          const sea = [`${PROV[port].lx},${PROV[port].ly}`, ...route.map((z) => `${WORLD.seas[z].x},${WORLD.seas[z].y}`), `${PROV[a.seaDest].lx},${PROV[a.seaDest].ly}`].join(' ');
+          return <g key={a.id}>{a.path.length > 0 && <polyline points={land} className={`path${a === selArmy ? ' sel' : ''}`} strokeWidth={1.8 * px} />}<polyline points={sea} className="path sea attack" strokeWidth={2.2 * px} markerEnd="url(#arrow-red)" /></g>;
+        }
         if (a.embarked) {
           const pts = [PROV[a.embarked.from], ...a.embarked.route.map((z) => WORLD.seas[z]), PROV[a.embarked.dest]];
           return <polyline key={a.id} points={pts.map((p) => `${'lx' in p ? p.lx : p.x},${'ly' in p ? p.ly : p.y}`).join(' ')} className="path sea" strokeWidth={2 * px} markerEnd="url(#arrow)" />;
@@ -605,12 +698,6 @@ function Blasts({ px }: { px: number }) {
   );
 }
 
-/** Organisation shown as a ring segment around your army dots. */
-function orgArc(cx: number, cy: number, r: number, v: number) {
-  const a = Math.max(0.001, Math.min(0.999, v)) * Math.PI * 2;
-  const x = cx + r * Math.sin(a), y = cy - r * Math.cos(a);
-  return `M${cx},${cy - r} A${r},${r} 0 ${a > Math.PI ? 1 : 0} 1 ${x},${y}`;
-}
 /** Revolts, martial law, partisans and scorched earth. */
 function ProvinceMarkers({ g, px, k }: { g: GameState; px: number; k: number }) {
   const els: JSX.Element[] = [];
@@ -630,24 +717,15 @@ function ProvinceMarkers({ g, px, k }: { g: GameState; px: number; k: number }) 
   return <g className="prov-markers" pointerEvents="none">{els}</g>;
 }
 
-function natoSymbol(type: string, w: number, h: number) {
-  const s = { stroke: '#fff', strokeWidth: h * 0.07, fill: 'none' } as const;
-  switch (type) {
-    case 'infantry': return <g {...s}><line x1={0} y1={0} x2={w} y2={h} /><line x1={w} y1={0} x2={0} y2={h} /></g>;
-    case 'armored': return <ellipse cx={w / 2} cy={h / 2} rx={w * 0.34} ry={h * 0.28} {...s} />;
-    case 'mechanized': return <g {...s}><line x1={0} y1={0} x2={w} y2={h} /><line x1={w} y1={0} x2={0} y2={h} /><ellipse cx={w / 2} cy={h / 2} rx={w * 0.34} ry={h * 0.28} /></g>;
-    case 'artillery': return <circle cx={w / 2} cy={h / 2} r={h * 0.14} fill="#fff" />;
-    case 'recon': return <line x1={0} y1={h} x2={w} y2={0} {...s} />;
-    case 'engineers': return <path d={`M${w * 0.25},${h * 0.65} V${h * 0.35} H${w * 0.75} V${h * 0.65} M${w * 0.5},${h * 0.35} V${h * 0.65}`} {...s} />;
-    case 'air': return <path d={`M${w * 0.2},${h * 0.5} Q${w * 0.35},${h * 0.2} ${w * 0.5},${h * 0.5} Q${w * 0.65},${h * 0.2} ${w * 0.8},${h * 0.5}`} {...s} />;
-    default: return null;
-  }
-}
+const GLYPH_OF: Record<string, Glyph> = { infantry: 'infantry', armored: 'armored', mechanized: 'mechanized', artillery: 'artillery', recon: 'recon', engineers: 'engineers' };
+const TALL = new Set<Glyph>(['infantry', 'fighter', 'bomber']);
+/** Size of map pieces on screen: a little smaller when the whole world is in view. */
+const pieceScale = (k: number) => (k < 1.4 ? 0.78 : k < 2.6 ? 0.9 : k < 5 ? 1.05 : 1.25);
+/** Outline of a map piece: selection white, enemies red, everything else dark so it stands out on any territory. */
+const pieceStroke = (sel: boolean, hostile: boolean) => (sel ? '#fff' : hostile ? '#ff5a4a' : '#0c0d10');
+const orgColor = (v: number) => (v > 0.6 ? '#7fe08a' : v > 0.35 ? '#f0c75e' : '#ff6a55');
 
-/** Armies drawn as dots: area grows with personnel, ring colour shows side, a red pip flags low supply. */
-export function armyDotRadius(strength: number) {
-  return Math.min(16, 2.5 + 2 * Math.sqrt(Math.max(0, strength) / 1000)); // screen pixels
-}
+/** Armies drawn as counters: nation colour, an icon of what they mostly are (soldiers, tanks…), strength and readiness. */
 function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: number; selected: number | null; group: number[] }) {
   const byLoc = new Map<number, Army[]>();
   for (const a of Object.values(g.armies)) {
@@ -656,40 +734,73 @@ function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: nu
   }
   const els: JSX.Element[] = [];
   const nums = armyNumbers(g);
+  const sc = pieceScale(k);
+  const W = 30 * px * sc, H = 20 * px * sc, gap = 3 * px * sc;
   for (const [loc, list] of byLoc) {
     const p = PROV[loc];
     // show own, enemy and selected armies; allies only when zoomed in (hide neutral clutter)
     const vis = list.filter((a) => a.owner === g.player || atWar(g, a.owner, g.player) || a.id === selected || (k > 7 && isFriendly(g, a.owner, g.player)));
     if (!vis.length) continue;
-    vis.sort((a, b) => (a.owner === g.player ? -1 : 1) - (b.owner === g.player ? -1 : 1));
-    const radii = vis.map((a) => armyDotRadius(armyStrength(a)) * px);
-    const spread = vis.length > 1 ? Math.max(...radii) * 1.15 : 0;
+    vis.sort((a, b) => (a.owner === g.player ? -1 : 1) - (b.owner === g.player ? -1 : 1) || a.id - b.id);
+    const perRow = Math.min(3, vis.length);
     vis.forEach((a, i) => {
       const n = g.nations[a.owner];
       const str = armyStrength(a);
-      const r = radii[i];
-      const ang = (i / vis.length) * Math.PI * 2 - Math.PI / 2;
-      const cx = p.lx + Math.cos(ang) * spread, cy = p.ly + Math.sin(ang) * spread;
+      const row = Math.floor(i / perRow), col = i % perRow;
+      const inRow = Math.min(perRow, vis.length - row * perRow);
+      // a row of counters just below the city marker (so its name stays readable)
+      const x = p.lx + (col - (inRow - 1) / 2) * (W + gap), y = p.ly + H * 0.5 + 9 * px * sc + row * (H + gap + 9 * px * sc);
       const sel = a.id === selected || group.includes(a.id);
       const mine = a.owner === g.player;
       const hostile = atWar(g, a.owner, g.player);
-      const label = `${mine ? a.name : `${n?.name ?? a.owner} army`} — ${mine ? Math.round(str).toLocaleString() : `~${(Math.round(str / 2000) * 2).toFixed(0)}k`} soldiers${mine ? ` · org ${Math.round(armyOrg(a) * 100)}% · supply ${Math.round(a.lastSupplyRatio * 100)}%` : ''}`;
+      const org = armyOrg(a);
+      const glyph = GLYPH_OF[dominantType(a)] ?? 'infantry';
+      const label = `${mine ? a.name : `${n?.name ?? a.owner} army`} — ${mine ? Math.round(str).toLocaleString() : `~${(Math.round(str / 2000) * 2).toFixed(0)}k`} soldiers${mine ? ` · org ${Math.round(org * 100)}% · supply ${Math.round(a.lastSupplyRatio * 100)}%` : ''}`;
+      const showStr = (mine && (k > 2.2 || sel)) || (hostile && k > 3.5);
+      const showNum = mine && (k > 1.6 || sel);
       els.push(
-        <g key={a.id} data-army={a.id} data-loc={loc} className={`army dot${sel ? ' sel' : ''}${hostile ? ' hostile' : ''}${mine ? ' mine' : ''}`}>
+        <g key={a.id} data-army={a.id} data-loc={loc} className={`army${sel ? ' sel' : ''}${hostile ? ' hostile' : ''}${mine ? ' mine' : ''}`} transform={`translate(${x},${y})`}>
           <title>{label}</title>
-          {sel && <circle cx={cx} cy={cy} r={r + 3 * px} className="dot-sel" />}
-          <circle cx={cx} cy={cy} r={r} fill={n?.color ?? '#555'} stroke={sel ? '#fff' : mine ? '#f4d27a' : hostile ? '#ff5a4a' : '#151515'} strokeWidth={(sel ? 2 : 1.4) * px} />
-          {a.lastSupplyRatio < 0.6 && mine && <circle cx={cx + r * 0.75} cy={cy - r * 0.75} r={2.2 * px} fill="#e05a4a" stroke="#000" strokeWidth={0.5 * px} />}
-          {mine && <path d={orgArc(cx, cy, r + 1.6 * px, armyOrg(a))} className="org-arc" strokeWidth={1.6 * px} />}
-          {mine && (k > 2.2 || sel) && (
-            <g className="army-tag" transform={`translate(${cx + r + 2 * px},${cy})`}>
-              <rect x={0} y={-6.5 * px} width={(String(nums.get(a.id)).length * 6 + (k > 4 ? 30 : 0) + 10) * px} height={13 * px} rx={3 * px} />
-              <text x={4 * px} y={4 * px} fontSize={9.5 * px}>#{nums.get(a.id)}{k > 4 ? ` ${Math.round(str / 1000)}k` : ''}{groupOf(a.id) != null ? ` ·${groupOf(a.id)}` : ''}</text>
+          {sel && <rect className="tok-sel" x={-W / 2 - 2.5 * px} y={-H / 2 - 2.5 * px} width={W + 5 * px} height={H + 5 * px} rx={5 * px * sc} />}
+          <rect className="tok" x={-W / 2} y={-H / 2} width={W} height={H} rx={4 * px * sc} fill={n?.color ?? '#555'} stroke={pieceStroke(sel, hostile)} strokeWidth={(sel || hostile ? 1.8 : 1.4) * px} />
+          <rect x={-W / 2} y={-H / 2} width={W} height={H} rx={4 * px * sc} fill="url(#tokshade)" pointerEvents="none" />
+          <GlyphShape g={glyph} cx={0} cy={mine ? -1.2 * px * sc : 0} h={(TALL.has(glyph) ? 15 : 10) * px * sc} />
+          {mine && <rect x={-W / 2 + 3 * px} y={H / 2 - 3.6 * px * sc} width={(W - 6 * px) * Math.max(0.04, org)} height={2 * px * sc} rx={1 * px} fill={orgColor(org)} pointerEvents="none" />}
+          {a.lastSupplyRatio < 0.6 && mine && <circle cx={W / 2 - 1 * px} cy={-H / 2 + 1 * px} r={3 * px * sc} className="tok-warn"><title>Low supply</title></circle>}
+          {a.battleId != null && <text x={W / 2 - 1 * px} y={H / 2 + 1 * px} fontSize={9 * px * sc} className="tok-badge">⚔</text>}
+          {showNum && (
+            <g className="tok-num" transform={`translate(${-W / 2},${-H / 2})`}>
+              <rect x={-4 * px * sc} y={-5 * px * sc} width={(String(nums.get(a.id)).length * 5 + 9 + (groupOf(a.id) != null ? 8 : 0)) * px * sc} height={9 * px * sc} rx={2.5 * px * sc} />
+              <text x={-1 * px * sc} y={2 * px * sc} fontSize={7.5 * px * sc}>#{nums.get(a.id)}{groupOf(a.id) != null ? ` ${groupOf(a.id)}` : ''}</text>
             </g>
           )}
+          {showStr && <text className="tok-label" x={0} y={H / 2 + 8 * px * sc} fontSize={9 * px * sc} strokeWidth={2.6 * px}>{mine ? '' : '~'}{Math.max(1, Math.round(str / 1000))}k</text>}
         </g>,
       );
     });
+  }
+  // armies at sea: a troopship part-way along its route
+  for (const a of Object.values(g.armies)) {
+    const e = a.embarked;
+    if (!e) continue;
+    const mine = a.owner === g.player, hostile = atWar(g, a.owner, g.player), sel = a.id === selected || group.includes(a.id);
+    if (!mine && !hostile && !sel) continue;
+    const pts = [[PROV[e.from].lx, PROV[e.from].ly], ...e.route.map((z) => [WORLD.seas[z].x, WORLD.seas[z].y]), [PROV[e.dest].lx, PROV[e.dest].ly]];
+    const f = Math.min(1, e.progress / Math.max(1, e.route.length * MIL.TRANSPORT_DAYS_PER_ZONE)) * (pts.length - 1);
+    const i = Math.min(pts.length - 2, Math.floor(f)), t = f - i;
+    const x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t;
+    const n = g.nations[a.owner];
+    const str = armyStrength(a);
+    els.push(
+      <g key={a.id} data-army={a.id} className={`army${sel ? ' sel' : ''}${hostile ? ' hostile' : ''}${mine ? ' mine' : ''}`} transform={`translate(${x},${y})`}>
+        <title>{`${mine ? a.name : `${n?.name ?? a.owner} troopships`} at sea for ${PROV[e.dest].name} — ${mine ? Math.round(str).toLocaleString() : `~${Math.round(str / 1000)}k`} soldiers`}</title>
+        {sel && <rect className="tok-sel" x={-W / 2 - 2.5 * px} y={-H / 2 - 2.5 * px} width={W + 5 * px} height={H + 5 * px} rx={5 * px * sc} />}
+        <rect className="tok" x={-W / 2} y={-H / 2} width={W} height={H} rx={H / 2} fill={n?.color ?? '#555'} stroke={pieceStroke(sel, hostile)} strokeWidth={(sel || hostile ? 1.8 : 1.4) * px} />
+        <rect x={-W / 2} y={-H / 2} width={W} height={H} rx={H / 2} fill="url(#tokshade)" pointerEvents="none" />
+        <GlyphShape g="transport" cx={0} cy={0} h={9 * px * sc} />
+        {(mine ? k > 1.6 || sel : k > 3.5) && <text className="tok-label" x={0} y={H / 2 + 8 * px * sc} fontSize={9 * px * sc} strokeWidth={2.6 * px}>{mine ? '' : '~'}{Math.max(1, Math.round(str / 1000))}k</text>}
+      </g>,
+    );
   }
   return <g className="armies">{els}</g>;
 }
