@@ -11,6 +11,7 @@ import type { SaveMeta } from '../engine/save';
 import { COUNTRY_GEO } from '../engine/geo';
 import { fmtDate } from '../engine/events';
 import { audio } from '../audio/music';
+import { latestBuild, updateIfStale } from './update';
 
 const NAME_KEY = 'wc-mp-name';
 function savedName() { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } }
@@ -28,6 +29,14 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
   const [source, setSource] = useState<'new' | string>('new');
   const [saves, setSaves] = useState<SaveMeta[]>([]);
   useEffect(() => { transportKind().then(setKind); listSaves().then(setSaves).catch(() => {}); }, []);
+  // an old copy of the page loads the newest version first (and comes back to this window)
+  const [latest, setLatest] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    void (async () => {
+      if (!store.net && (await updateIfStale('#mp'))) return;
+      setLatest(await latestBuild());
+    })();
+  }, []);
   // once the game is running the lobby is done
   useEffect(() => { if (store.ui.screen === 'game' && session?.phase === 'playing') onClose(); });
 
@@ -91,7 +100,12 @@ export function MultiplayerDialog({ onClose }: { onClose: () => void }) {
       )}
       {session && <Lobby s={session} source={source} setSource={setSource} saves={saves} onLeave={leave} setErr={setErr} />}
       {kind === 'p2p' && <NetCheck />}
-      <p className="small muted" style={{ marginTop: 8 }}>Game version {BUILD}. Everyone should show the same version; if not, reload the page with Ctrl+Shift+R (Cmd+Shift+R on a Mac).</p>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Game version <b>{BUILD}</b>{latest === BUILD ? ' (the newest)' : ''}. Everyone in a game should show the same version.
+        {latest && latest !== BUILD
+          ? <span className="warn"> A newer version ({latest}) is out: {session ? 'after this game, reload the page to get it' : 'reload the page (Ctrl+Shift+R, or Cmd+Shift+R on a Mac) to get it'}.</span>
+          : ' The game updates itself when you open it.'}
+      </p>
     </Modal>
   );
 }

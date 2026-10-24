@@ -42,7 +42,7 @@ export function netError(e: unknown, what: string): string {
   const code = (e as { code?: string })?.code ?? '';
   if (code === 'not_permitted') return `${what}: your access to this page is view-only. Ask the owner to share it with you with permission to edit or contribute, then reload.`;
   if (code === 'not_found') return `No open game with that code. Check the code with your host, and make sure their game is still showing the lobby (not closed or asleep).`;
-  if (code === 'unreachable') return `Found the host's game, but your networks wouldn't let the two computers connect, and the relay servers didn't answer either. Run the network check below, try again in a minute, or join from another network (for example a phone hotspot).`;
+  if (code === 'unreachable') return `Found the host's game, but couldn't connect to it from this network. First make sure you and the host show the same game version (at the bottom of this window): if not, whoever is behind should reload the page. Then try again. If it still fails, press "Check my network" below on both computers.`;
   if (code === 'network') return `${what}: couldn't reach the matchmaking server or any relay. Check your internet connection, or run the network check below to see what this network blocks.`;
   if (code === 'id_taken') return `${what}: that room code is in use. Try again for a new code.`;
   if (code === 'not_granted' || code === 'revoked') return `${what}: you can't connect to this page's online rooms. You must be signed in to claude.ai and have access to the page (ask the owner to share it with you), then reload.`;

@@ -10,18 +10,26 @@ import { NationPicker } from './NationPicker';
 import { MultiplayerDialog } from './MultiplayerDialog';
 import { audio } from '../audio/music';
 import { Icon } from './icons';
+import { updateIfStale } from './update';
+import { BUILD } from './net/session';
 
 const SUBREGIONS = [...new Set(WORLD.countries.map((c) => c.subregion))].sort();
 export function MainMenu() {
   const [camp, setCamp] = useState('tutorial');
   const [load, setLoad] = useState(false);
   // an invite link (…#join=code) opens the multiplayer dialog straight away
-  const [mp, setMp] = useState(() => typeof location !== 'undefined' && /join=/.test(location.hash));
+  // (…#mp: reopened after loading the newest version)
+  const [mp, setMp] = useState(() => typeof location !== 'undefined' && /join=|^#mp$/.test(location.hash));
   const [custom, setCustom] = useState(false);
   const [hasAuto, setHasAuto] = useState(false);
   const [vol, setVol] = useState(audio.musicVolume);
   const [nation, setNation] = useState('SRB');
   useEffect(() => { listSaves().then((s) => setHasAuto(s.length > 0)).catch(() => {}); audio.setMood('menu'); }, []);
+  // an old copy of the page (cached by the browser) loads the newest version
+  useEffect(() => {
+    if (location.hash === '#mp') history.replaceState(null, '', location.pathname + location.search);
+    if (!store.net) void updateIfStale();
+  }, []);
   const c = CAMPAIGNS.find((x) => x.id === camp)!;
   const start = (opts: Partial<GameSettings> & { seed?: number; nation?: string } = {}) => {
     audio.init();
@@ -75,6 +83,7 @@ export function MainMenu() {
           <Btn kind="primary" onClick={() => { audio.init(); setMp(true); }}>{store.net && store.net.phase !== 'playing' ? `Return to room ${store.net.code}` : 'Online multiplayer'}</Btn>
           <div className="vol"><Icon name="music" /> <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { audio.init(); audio.setMusicVolume(+e.target.value); setVol(+e.target.value); }} /></div>
         </div>
+        <div className="menu-version small muted">Game version {BUILD}</div>
       </div>
       {load && <SaveLoadDialog loadOnly onClose={() => setLoad(false)} />}
       {mp && <MultiplayerDialog onClose={() => setMp(false)} />}
