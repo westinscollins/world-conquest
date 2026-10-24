@@ -30,6 +30,7 @@ export const COMMANDS = {
   doLicenseTech: A.doLicenseTech, doStances: A.doStances, doHaltMany: A.doHaltMany, doRetreatMany: A.doRetreatMany,
   doPostureMany: A.doPostureMany, doMergeMany: A.doMergeMany,
   doWingMission: A.doWingMission, doRebaseWing: A.doRebaseWing, doRenameWing: A.doRenameWing, doDisbandSquadron: A.doDisbandSquadron,
+  disbandUnits: A.disbandUnits, disbandArmies: A.disbandArmies, doDisbandWing: A.doDisbandWing, doDecommissionFleet: A.doDecommissionFleet,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export const isCommand = (n: string): n is CommandName => Object.prototype.hasOwnProperty.call(COMMANDS, n);

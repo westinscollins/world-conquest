@@ -12,7 +12,7 @@ import { setProvinceStatus, releaseSubject } from './territory';
 import { embark, moveFleet, orderShip, orderInvasion } from './naval';
 import { PROV, WORLD } from './geo';
 import { addEvent } from './events';
-import { ECON, UNITS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS, SECURITY, PROPAGANDA, INTERIOR, WAR_ECONOMY, ROE, AIR_MISSIONS, AIR_MISSION_INFO } from './config';
+import { ECON, UNITS, SHIPS, MIL, STRIKES, NUKE, POLICY_AREAS, POLICY_CHANGE_STABILITY, DECREES, FOCUS, SECURITY, PROPAGANDA, INTERIOR, WAR_ECONOMY, ROE, AIR_MISSIONS, AIR_MISSION_INFO } from './config';
 import { canResearch } from './research';
 import { setSecurity, toggleCampaign, interiorAction, toggleMartialLaw, setWarEconomy, setRoe, setAirMission, buySam } from './regime';
 import { createOperation, cancelOperation, attackNearest, digIn, scorchedEarth, fundPartisans, fortifyBorder, hireMercenaries, licenseTech } from './warplans';
@@ -200,6 +200,40 @@ export function disbandUnit(s: GameState, armyId: number, unitId: number): Resul
   invalidateArmies();
   return ok(`${UNITS[u.type].label} disbanded; personnel returned to the reserve. Its equipment is scrapped.`);
 }
+/** Disband several formations of one army at once (all of them dissolves the army). */
+export function disbandUnits(s: GameState, armyId: number, unitIds: number[]): Result {
+  const a = s.armies[armyId];
+  if (!a || a.owner !== s.player) return fail('Not your army.');
+  if (a.battleId != null) return fail(`${a.name} is in battle: retreat first.`);
+  if (a.embarked) return fail(`${a.name} is at sea.`);
+  const drop = new Set(unitIds);
+  const gone = a.units.filter((u) => drop.has(u.id));
+  if (!gone.length) return fail('Tick the formations to disband.');
+  const men = gone.reduce((t, u) => t + u.strength, 0);
+  P(s).manpower += men * 0.9;
+  a.units = a.units.filter((u) => !drop.has(u.id));
+  const all = !a.units.length;
+  if (all) deleteArmy(s, a.id);
+  invalidateArmies();
+  return ok(`${all ? `${a.name} disbanded` : `${gone.length} formation${gone.length > 1 ? 's' : ''} of ${a.name} disbanded`}: ${Math.round(men * 0.9).toLocaleString()} soldiers returned to the reserve; the equipment is scrapped.`);
+}
+/** Disband whole armies at once (not those in battle or at sea). */
+export function disbandArmies(s: GameState, armyIds: number[]): Result {
+  let k = 0, formations = 0, men = 0, busy = 0;
+  for (const id of armyIds) {
+    const a = s.armies[id];
+    if (!a || a.owner !== s.player) continue;
+    if (a.battleId != null || a.embarked) { busy++; continue; }
+    formations += a.units.length;
+    men += a.units.reduce((t, u) => t + u.strength, 0);
+    deleteArmy(s, a.id);
+    k++;
+  }
+  P(s).manpower += men * 0.9;
+  invalidateArmies();
+  if (!k) return fail(busy ? 'Armies in battle or at sea cannot be disbanded.' : 'Select armies to disband.');
+  return ok(`${k} ${k === 1 ? 'army' : 'armies'} disbanded (${formations} formations): ${Math.round(men * 0.9).toLocaleString()} soldiers returned to the reserve; the equipment is scrapped.${busy ? ` ${busy} in battle or at sea ${busy === 1 ? 'was' : 'were'} not.` : ''}`);
+}
 export function hireGeneral(s: GameState, generalId: number): Result {
   const g = s.generals[generalId];
   const n = P(s);
@@ -317,6 +351,25 @@ export function doRenameWing(s: GameState, wingId: number, name: string): Result
   if (!w) return fail('Not your air wing.');
   w.name = String(name).slice(0, 40).trim() || w.name;
   return ok('Renamed.');
+}
+/** Retire a whole air wing at once. */
+export function doDisbandWing(s: GameState, wingId: number): Result {
+  const w = myWing(s, wingId);
+  if (!w) return fail('Not your air wing.');
+  const crews = w.units.reduce((t, u) => t + u.strength, 0);
+  P(s).manpower += crews * 0.9;
+  delete s.airWings[w.id];
+  return ok(`${w.name} retired (${w.units.length} squadron${w.units.length === 1 ? '' : 's'}): the crews return to the reserve and the aircraft are scrapped.`);
+}
+/** Decommission a fleet: the sailors return to the manpower pool, the ships are scrapped. */
+export function doDecommissionFleet(s: GameState, fleetId: number): Result {
+  const f = s.fleets[fleetId];
+  if (!f || f.owner !== s.player) return fail('Not your fleet.');
+  let crews = 0;
+  for (const k in f.ships) crews += SHIPS[k as ShipType].personnel * f.ships[k as ShipType];
+  P(s).manpower += crews * 0.9;
+  delete s.fleets[f.id];
+  return ok(`${f.name} decommissioned: ${Math.round(crews * 0.9).toLocaleString()} sailors return to the reserve.`);
 }
 /** Retire one squadron: its crews return to the manpower pool. */
 export function doDisbandSquadron(s: GameState, wingId: number, unitId: number): Result {

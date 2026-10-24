@@ -59,6 +59,7 @@ export function ArmyRoster() {
         <Btn small kind="danger" disabled={need} onClick={() => say(store.cmd('doRetreatMany', [ids]))}>Retreat</Btn>
         <Btn small disabled={need} onClick={() => say(store.cmd('doDigIn', [ids]))}>Dig in</Btn>
         <Btn small disabled={ids.length < 2} onClick={() => say(store.cmd('doMergeMany', [ids]))}>Merge</Btn>
+        <Btn small kind="danger" disabled={need} onClick={() => store.setUI({ confirm: { title: `Disband ${ids.length} ${ids.length === 1 ? 'army' : 'armies'}?`, body: `${num(Math.round(ids.reduce((t, id) => t + (g.armies[id] ? armyStrength(g.armies[id]) : 0), 0) * 0.9))} soldiers return to the manpower pool and their equipment is scrapped. Armies in battle or at sea are skipped. This cannot be undone.`, danger: true, okLabel: 'Disband', onOk: () => { say(store.cmd('disbandArmies', [ids])); setSelection([]); } } })}>Disband</Btn>
         <select disabled={need} value="" onChange={(e) => e.target.value && say(store.cmd('doPostureMany', [ids, e.target.value as Posture]))}>
           <option value="">Posture…</option>
           {(Object.keys(POSTURES) as Posture[]).map((p) => <option key={p} value={p}>{POSTURES[p].label}</option>)}

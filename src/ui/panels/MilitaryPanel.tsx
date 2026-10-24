@@ -16,6 +16,7 @@ import { audio } from '../../audio/music';
 export function MilitaryPanel() {
   const g = useGame();
   const [tab, setTab] = useState<'armies' | 'recruit' | 'generals' | 'navy' | 'air'>('armies');
+  const [picked, setPicked] = useState<number[]>([]);
   const n = g.nations[g.player];
   const armies = Object.values(g.armies).filter((a) => a.owner === g.player);
   const [where, setWhere] = useState<number>(n.capital);
@@ -36,12 +37,23 @@ export function MilitaryPanel() {
         <span className="small">{pct(n.mobilization)}</span>
       </div>
       <Tabs tabs={[['armies', `Armies (${armies.length})`], ['recruit', `Recruit${n.training.length ? ` (${n.training.length})` : ''}`], ['air', `Air force (${wingsOf(g, g.player).length})`], ['navy', 'Navy'], ['generals', 'Generals']]} value={tab} onChange={setTab} />
-      {tab === 'armies' && (
+      {tab === 'armies' && (() => {
+        const live = picked.filter((id) => g.armies[id]?.owner === g.player);
+        const toggle = (id: number) => setPicked(live.includes(id) ? live.filter((x) => x !== id) : [...live, id]);
+        return (
+        <>
+        <div className="bulk">
+          <label className="check"><input type="checkbox" checked={armies.length > 0 && live.length === armies.length} onChange={() => setPicked(live.length === armies.length ? [] : armies.map((a) => a.id))} /> Select all</label>
+          <b style={{ marginLeft: 8 }}>{live.length} selected</b>
+          <Btn small kind="danger" disabled={!live.length} onClick={() => store.setUI({ confirm: { title: `Disband ${live.length} ${live.length === 1 ? 'army' : 'armies'}?`, body: `${num(Math.round(live.reduce((t, id) => t + armyStrength(g.armies[id]), 0) * 0.9))} soldiers return to the manpower pool and their equipment is scrapped. Armies in battle or at sea are skipped. This cannot be undone.`, danger: true, okLabel: 'Disband', onOk: () => { const r = store.cmd('disbandArmies', [live]); if (r) store.toast(r.message, r.ok ? 'info' : 'bad'); setPicked([]); } } })}>Disband selected</Btn>
+          <span className="small muted">Tick armies here (or in the War Room) to disband many at once.</span>
+        </div>
         <table className="tbl clickable">
-          <thead><tr><th>Army</th><th>Location</th><th>Soldiers</th><th>Org</th><th>Supply</th><th>Orders</th></tr></thead>
+          <thead><tr><th /><th>Army</th><th>Location</th><th>Soldiers</th><th>Org</th><th>Supply</th><th>Orders</th></tr></thead>
           <tbody>
             {armies.map((a) => (
-              <tr key={a.id} onClick={() => { store.setUI({ selectedArmy: a.id, selectedProvince: a.location }); focusProvince(a.location); }}>
+              <tr key={a.id} className={live.includes(a.id) ? 'sel' : ''} onClick={() => { store.setUI({ selectedArmy: a.id, selectedProvince: a.location }); focusProvince(a.location); }}>
+                <td onClick={(e) => { e.stopPropagation(); toggle(a.id); }}><input type="checkbox" readOnly checked={live.includes(a.id)} /></td>
                 <td>{a.name}{a.battleId != null ? <span className="bad"> ⚔</span> : a.path.length ? ' →' : ''}</td>
                 <td>{a.embarked ? 'At sea' : PROV[a.location].name}</td>
                 <td>{num(armyStrength(a))}<span className="muted small">/{num(armyMaxStrength(a))}</span></td>
@@ -56,7 +68,9 @@ export function MilitaryPanel() {
             ))}
           </tbody>
         </table>
-      )}
+        </>
+        );
+      })()}
       {tab === 'recruit' && (
         <>
           <div className="row gap">
@@ -146,6 +160,7 @@ function AirTab() {
         </div>
       ))}
       {!wings.length && <p className="muted">You have no air force yet.</p>}
+      {wings.length > 0 && <p className="small muted">Click a wing to give it orders or retire it.</p>}
       <Section title="Build aircraft" icon="factory">
         <div className="row gap">
           <span>Airbase</span>

@@ -267,3 +267,44 @@ describe('war at sea and invasions', () => {
     expect(s.provinces[taipei].controller).toBe('CHN');
   });
 });
+
+describe('disbanding', () => {
+  it('several formations, whole armies, air wings and fleets go at once; the people return to the reserve', () => {
+    const { s } = chinaTaiwan(false);
+    const n = s.nations.CHN;
+    const mine = Object.values(s.armies).filter((a) => a.owner === 'CHN');
+    // several formations of one army
+    const a = mine[0];
+    const before = a.units.length, mp = n.manpower;
+    const pick = a.units.slice(0, 3);
+    const men = pick.reduce((t, u) => t + u.strength, 0);
+    expect(runCommand(s, 'CHN', 'disbandUnits', [a.id, pick.map((u) => u.id)]).ok).toBe(true);
+    expect(a.units.length).toBe(before - 3);
+    expect(n.manpower).toBeCloseTo(mp + men * 0.9, 3);
+    // all of them: the army is dissolved
+    expect(runCommand(s, 'CHN', 'disbandUnits', [a.id, a.units.map((u) => u.id)]).ok).toBe(true);
+    expect(s.armies[a.id]).toBeUndefined();
+    // whole armies at once, but not one in battle
+    const [b, c, d] = mine.slice(1, 4);
+    d.battleId = 999999;
+    const r = runCommand(s, 'CHN', 'disbandArmies', [[b.id, c.id, d.id]]);
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/2 armies disbanded/);
+    expect(s.armies[b.id]).toBeUndefined();
+    expect(s.armies[c.id]).toBeUndefined();
+    expect(s.armies[d.id]).toBeDefined();
+    // someone else's army cannot be disbanded
+    const twn = Object.values(s.armies).find((x) => x.owner === 'TWN')!;
+    expect(runCommand(s, 'CHN', 'disbandArmies', [[twn.id]]).ok).toBe(false);
+    expect(s.armies[twn.id]).toBeDefined();
+    // a whole air wing, a whole fleet
+    const w = wingsOf(s, 'CHN')[0];
+    expect(runCommand(s, 'CHN', 'doDisbandWing', [w.id]).ok).toBe(true);
+    expect(s.airWings[w.id]).toBeUndefined();
+    const f = Object.values(s.fleets).find((x) => x.owner === 'CHN')!;
+    const mp2 = n.manpower;
+    expect(runCommand(s, 'CHN', 'doDecommissionFleet', [f.id]).ok).toBe(true);
+    expect(s.fleets[f.id]).toBeUndefined();
+    expect(n.manpower).toBeGreaterThan(mp2);
+  });
+});

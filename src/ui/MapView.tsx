@@ -6,6 +6,7 @@ import { store, useStore, type MapMode } from './store';
 import { TERRAIN, UNITS, WEATHER, STRIKES, AIR, AIR_MISSION_INFO, MIL } from '../engine/config';
 import { wingPlanes } from '../engine/air';
 import { GlyphShape, type Glyph } from './glyphs';
+import { placeOnLand, LEFT, type Layout } from './placement';
 import { checkStrike, interceptRate, strikeDistance, type StrikeKind } from '../engine/strikes';
 import { armyNumbers, ctrlGroup, groupOf, selectedIds } from './selection';
 import { estimateBattle } from '../engine/battle';
@@ -512,11 +513,13 @@ function SeaLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
 /** Air wings: jets at their airbase, mission lines to their targets, range when selected. */
 function AirLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
   const sel = store.ui.selectedWing;
+  const armies = armyLayout(g, px, k, store.ui.selectedArmy); // (jets keep clear of the army counters)
   const wings = Object.values(g.airWings ?? {}).filter((w) => w.units.length && (w.owner === g.player || w.id === sel || (atWar(g, w.owner, g.player) && k > 2.2)));
   const byBase = new Map<number, typeof wings>();
   for (const w of wings) (byBase.get(w.base) || byBase.set(w.base, []).get(w.base)!).push(w);
   const sc = pieceScale(k);
   const R = 10.5 * px * sc;
+  const fq = zoomStep(px) / px;
   const { width: MW, height: MH } = WORLD.meta;
   const rangeEllipse = (base: number, km: number, cls: string) => {
     const pb = PROV[base];
@@ -538,11 +541,17 @@ function AirLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
         if (w.mission === 'naval' && w.target != null) lines.push(<line key="n" x1={b.lx} y1={b.ly} x2={WORLD.seas[w.target].x} y2={WORLD.seas[w.target].y} className="air-line naval" strokeWidth={1.8 * px} markerEnd="url(#arrow)" />);
         return lines.length && (w.owner === g.player || w.id === sel) ? <g key={`l${w.id}`} pointerEvents="none">{lines}</g> : null;
       })}
-      {[...byBase].map(([base, list]) => list.map((w, i) => {
+      {[...byBase].map(([base, list]) => {
+        // a row of jets to the left of the city marker (its name is written to the right), or
+        // wherever nearby is the province's land
+        const bw = list.length * 2 * R + (list.length - 1) * 3 * px, lab = 11 * px * sc; // (room for the plane count above)
+        const pieces = list.map((_, i): [number, number, number, number] => [bw / 2 - R - i * (2 * R + 3 * px), lab / 2, 2 * R, 2 * R]);
+        const ab = armies.get(base);
+        const [cx, cy] = placeOnLand(base, { key: `w${list.length}`, w: bw, h: 2 * R + lab, pieces }, 15 * px * sc - R, fq, LEFT, ab && [ab.cx - ab.bw / 2, ab.cy - ab.bh / 2, ab.cx + ab.bw / 2, ab.cy + ab.bh / 2]);
+        return list.map((w, i) => {
         const b = PROV[base];
         const n = g.nations[w.owner];
-        // to the left of the city marker (its name is written to the right)
-        const x = b.lx - 15 * px * sc - i * (2 * R + 3 * px), y = b.ly - 3 * px * sc;
+        const x = cx + pieces[i][0], y = cy + pieces[i][1];
         const mine = w.owner === g.player, isSel = w.id === sel;
         const bombers = w.units.filter((u) => u.type === 'bomber').length;
         const glyph: Glyph = bombers * 2 > w.units.length ? 'bomber' : 'fighter';
@@ -557,7 +566,8 @@ function AirLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
             {(mine || isSel) && (k > 2.6 || isSel) && <text className="tok-label" x={0} y={-R - 3 * px * sc} fontSize={8.5 * px * sc} strokeWidth={2.6 * px}>{planes}✈{w.mission === 'idle' ? ' zz' : ''}</text>}
           </g>
         );
-      }))}
+        });
+      })}
     </g>
   );
 }
@@ -719,37 +729,65 @@ function ProvinceMarkers({ g, px, k }: { g: GameState; px: number; k: number }) 
 
 const GLYPH_OF: Record<string, Glyph> = { infantry: 'infantry', armored: 'armored', mechanized: 'mechanized', artillery: 'artillery', recon: 'recon', engineers: 'engineers' };
 const TALL = new Set<Glyph>(['infantry', 'fighter', 'bomber']);
+/** Map units per screen pixel, rounded to quarter steps of zoom (a small set of sizes to place pieces for). */
+const zoomStep = (px: number) => 2 ** (Math.round(Math.log2(px) * 4) / 4);
 /** Size of map pieces on screen: a little smaller when the whole world is in view. */
 const pieceScale = (k: number) => (k < 1.4 ? 0.78 : k < 2.6 ? 0.9 : k < 5 ? 1.05 : 1.25);
 /** Outline of a map piece: selection white, enemies red, everything else dark so it stands out on any territory. */
 const pieceStroke = (sel: boolean, hostile: boolean) => (sel ? '#fff' : hostile ? '#ff5a4a' : '#0c0d10');
 const orgColor = (v: number) => (v > 0.6 ? '#7fe08a' : v > 0.35 ? '#f0c75e' : '#ff6a55');
 
-/** Armies drawn as counters: nation colour, an icon of what they mostly are (soldiers, tanks…), strength and readiness. */
-function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: number; selected: number | null; group: number[] }) {
+interface ArmyBlock { vis: Army[]; cx: number; cy: number; bw: number; bh: number; pieces: Layout['pieces'] }
+/**
+ * Where each province's army counters go: rows just below the city marker (so its name stays
+ * readable), or wherever nearby they sit on the province's land rather than out at sea.
+ */
+function armyLayout(g: GameState, px: number, k: number, selected: number | null): Map<number, ArmyBlock> {
   const byLoc = new Map<number, Army[]>();
   for (const a of Object.values(g.armies)) {
     if (a.embarked) continue;
     (byLoc.get(a.location) || byLoc.set(a.location, []).get(a.location)!).push(a);
   }
-  const els: JSX.Element[] = [];
-  const nums = armyNumbers(g);
   const sc = pieceScale(k);
   const W = 30 * px * sc, H = 20 * px * sc, gap = 3 * px * sc;
+  const fq = zoomStep(px) / px; // (spots are found for sizes rounded to the zoom level, and remembered)
+  const out = new Map<number, ArmyBlock>();
   for (const [loc, list] of byLoc) {
-    const p = PROV[loc];
     // show own, enemy and selected armies; allies only when zoomed in (hide neutral clutter)
     const vis = list.filter((a) => a.owner === g.player || atWar(g, a.owner, g.player) || a.id === selected || (k > 7 && isFriendly(g, a.owner, g.player)));
     if (!vis.length) continue;
     vis.sort((a, b) => (a.owner === g.player ? -1 : 1) - (b.owner === g.player ? -1 : 1) || a.id - b.id);
-    const perRow = Math.min(3, vis.length);
+    const rowStep = H + gap + 9 * px * sc;
+    // a row of up to three (a column fits a narrow island better), whichever sits on land
+    let best: ArmyBlock | null = null, bestShare = -1;
+    for (const perRow of vis.length === 1 ? [1] : vis.length <= 3 ? [vis.length, 1] : [3, 2]) {
+      const rows = Math.ceil(vis.length / perRow);
+      const bw = perRow * W + (perRow - 1) * gap, bh = rows * rowStep - gap;
+      // each counter: centred in its row, its strength written underneath
+      const pieces = vis.map((_, i): [number, number, number, number] => {
+        const row = Math.floor(i / perRow), col = i % perRow, inRow = Math.min(perRow, vis.length - row * perRow);
+        return [(col - (inRow - 1) / 2) * (W + gap), -bh / 2 + H / 2 + row * rowStep, W, H];
+      });
+      const [cx, cy, share] = placeOnLand(loc, { key: `a${vis.length}:${perRow}`, w: bw, h: bh, pieces }, 9 * px * sc, fq);
+      if (share > bestShare + 1e-9) { best = { vis, cx, cy, bw, bh, pieces }; bestShare = share; }
+      if (share === 1) break;
+    }
+    out.set(loc, best!);
+  }
+  return out;
+}
+
+/** Armies drawn as counters: nation colour, an icon of what they mostly are (soldiers, tanks…), strength and readiness. */
+function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: number; selected: number | null; group: number[] }) {
+  const els: JSX.Element[] = [];
+  const nums = armyNumbers(g);
+  const sc = pieceScale(k);
+  const W = 30 * px * sc, H = 20 * px * sc, gap = 3 * px * sc;
+  for (const [loc, { vis, cx, cy, pieces }] of armyLayout(g, px, k, selected)) {
     vis.forEach((a, i) => {
       const n = g.nations[a.owner];
       const str = armyStrength(a);
-      const row = Math.floor(i / perRow), col = i % perRow;
-      const inRow = Math.min(perRow, vis.length - row * perRow);
-      // a row of counters just below the city marker (so its name stays readable)
-      const x = p.lx + (col - (inRow - 1) / 2) * (W + gap), y = p.ly + H * 0.5 + 9 * px * sc + row * (H + gap + 9 * px * sc);
+      const x = cx + pieces[i][0], y = cy + pieces[i][1];
       const sel = a.id === selected || group.includes(a.id);
       const mine = a.owner === g.player;
       const hostile = atWar(g, a.owner, g.player);

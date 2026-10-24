@@ -93,6 +93,7 @@ export function AirWingPanel() {
           </div>
         )}
         <p className="small muted">Losses are replaced at the airbase over time (paid from the treasury); "Stand down" refits twice as fast.</p>
+        <Btn small kind="danger" onClick={() => store.setUI({ confirm: { title: `Retire ${w.name}?`, body: `All ${w.units.length} squadron${w.units.length === 1 ? '' : 's'}: the crews return to the manpower pool and the aircraft are scrapped. This cannot be undone.`, danger: true, okLabel: 'Retire', onOk: () => { say(store.cmd('doDisbandWing', [w.id])); close(); } } })}>Retire the whole wing</Btn>
       </div>
     </div>
   );

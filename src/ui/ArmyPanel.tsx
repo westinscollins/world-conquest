@@ -19,6 +19,11 @@ const STANCES: [Stance, string, string][] = [
   ['withdraw', 'Withdraw', 'Fall back to the nearest supplied home province.'],
 ];
 
+/** Ask before disbanding, saying how many soldiers go back to the reserve. */
+function confirmDisband(title: string, men: number, whole: boolean, onOk: () => void) {
+  store.setUI({ confirm: { title, body: `${num(Math.round(men * 0.9))} soldiers return to the manpower pool and their equipment is scrapped.${whole ? ' The army is dissolved.' : ''} This cannot be undone.`, danger: true, okLabel: 'Disband', onOk } });
+}
+
 export function ArmyPanel() {
   const { g, ui } = useStore();
   const [tab, setTab] = useState<'units' | 'supply' | 'orders'>('units');
@@ -32,6 +37,8 @@ export function ArmyPanel() {
   const str = armyStrength(a), max = armyMaxStrength(a);
   const gen = a.generalId != null ? g.generals[a.generalId] : null;
   const others = armiesIn(g, a.location).filter((x) => x.owner === a.owner && x.id !== a.id);
+  const chosen = sel.filter((id) => a.units.some((u) => u.id === id)); // (ticks from another army don't count)
+  const busy = a.battleId != null || !!a.embarked;
   if (!mine) {
     return (
       <div className="side-panel right">
@@ -68,7 +75,7 @@ export function ArmyPanel() {
         <span className="small muted">Orders</span>
         {STANCES.map(([st, label, tip]) => <button key={st} title={tip} className={`posture${a.stance === st ? ' on' : ''}`} onClick={() => store.cmd('setStance', [a.id, st])}>{label}</button>)}
       </div>
-      {ui.group.length > 0 && <p className="small note" style={{ margin: '0 12px 6px' }}>+{ui.group.length} more {ui.group.length === 1 ? 'army' : 'armies'} selected (shift-click to add/remove). Right-click a province to move them all. <a onClick={() => store.setUI({ group: [] })}>Clear</a></p>}
+      {ui.group.length > 0 && <p className="small note" style={{ margin: '0 12px 6px' }}>+{ui.group.length} more {ui.group.length === 1 ? 'army' : 'armies'} selected (shift-click to add/remove). Right-click a province to move them all. <a onClick={() => store.setUI({ group: [] })}>Clear</a>{mine && <> · <a className="bad" onClick={() => { const ids = [a.id, ...ui.group.filter((id) => g.armies[id]?.owner === g.player)]; confirmDisband(`Disband ${ids.length} armies?`, ids.reduce((t, id) => t + armyStrength(g.armies[id]), 0), true, () => { const r = store.cmd('disbandArmies', [ids]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); store.setUI({ group: [] }); }); }}>Disband all {ui.group.length + 1}</a></>}</p>}
       {ui.group.length === 0 && others.length > 0 && <p className="small muted" style={{ margin: '0 12px 6px' }}>Tip: shift-click other armies to move several at once.</p>}
       <div className="grid4">
         <Stat label="Strength" value={`${num(str)}`} tip={`${num(str)} of ${num(max)} personnel (${pct(str / max)})`} tone={str / max < 0.6 ? 'bad' : undefined} />
@@ -80,8 +87,14 @@ export function ArmyPanel() {
       <div className="sp-body">
         {tab === 'units' && (
           <>
+            <div className="row gap wrap" style={{ marginBottom: 6 }}>
+              <Btn small disabled={!chosen.length || chosen.length === a.units.length} onClick={() => { const r = store.cmd('splitArmy', [a.id, chosen]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); }}>Split selected</Btn>
+              {others.map((o) => <Btn small key={o.id} onClick={() => { const r = store.cmd('mergeArmies', [a.id, o.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Merge {o.name}</Btn>)}
+              {mine && <Btn small kind="danger" disabled={!chosen.length || busy} title={busy ? 'Not while in battle or at sea' : 'Disband the ticked formations'} onClick={() => confirmDisband(chosen.length === a.units.length ? `Disband ${a.name}?` : `Disband ${chosen.length} formation${chosen.length > 1 ? 's' : ''}?`, a.units.filter((u) => chosen.includes(u.id)).reduce((t, u) => t + u.strength, 0), chosen.length === a.units.length, () => { const r = store.cmd('disbandUnits', [a.id, chosen]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); })}>Disband{chosen.length > 1 ? ` ${chosen.length}` : ''}</Btn>}
+              {mine && <Btn small kind="danger" disabled={busy} title={busy ? 'Not while in battle or at sea' : 'Disband every formation of this army'} onClick={() => confirmDisband(`Disband ${a.name}?`, str, true, () => { const r = store.cmd('disbandArmies', [[a.id]]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); })}>Disband army</Btn>}
+            </div>
             <table className="tbl units">
-              <thead><tr><th /><th>Formation</th><th>Men</th><th>Equip</th><th>Org</th><th>Exp</th></tr></thead>
+              <thead><tr><th>{mine && <input type="checkbox" title="Select all formations" checked={chosen.length === a.units.length} onChange={() => setSel(chosen.length === a.units.length ? [] : a.units.map((u) => u.id))} />}</th><th>Formation</th><th>Men</th><th>Equip</th><th>Org</th><th>Exp</th></tr></thead>
               <tbody>
                 {a.units.map((u) => (
                   <tr key={u.id} className={sel.includes(u.id) ? 'sel' : ''} onClick={() => setSel(sel.includes(u.id) ? sel.filter((x) => x !== u.id) : [...sel, u.id])}>
@@ -95,11 +108,6 @@ export function ArmyPanel() {
                 ))}
               </tbody>
             </table>
-            <div className="row gap wrap">
-              <Btn small disabled={!sel.length || sel.length === a.units.length} onClick={() => { const r = store.cmd('splitArmy', [a.id, sel]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); }}>Split selected</Btn>
-              {others.map((o) => <Btn small key={o.id} onClick={() => { const r = store.cmd('mergeArmies', [a.id, o.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Merge {o.name}</Btn>)}
-              <Btn small kind="danger" disabled={sel.length !== 1} onClick={() => store.setUI({ confirm: { title: 'Disband formation?', body: 'Personnel return to the manpower pool; equipment is scrapped. This cannot be undone.', danger: true, onOk: () => { const r = store.cmd('disbandUnit', [a.id, sel[0]]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); setSel([]); } } })}>Disband</Btn>
-            </div>
             <p className="small muted">Equipment average {pct(armyEquip(a))}. Right-click a province on the map to move; right-click an enemy province to see an intelligence report before attacking.</p>
           </>
         )}
@@ -176,6 +184,7 @@ export function FleetPanel() {
           {(Object.keys(SHIPS) as ShipType[]).map((k) => <tr key={k}><td>{SHIPS[k].label}</td><td className="right">{f.ships[k].toFixed(1)}</td></tr>)}
         </tbody></table>
         <Stat label="Organisation" value={pct(f.org)} />
+        {f.owner === g.player && <Btn small kind="danger" onClick={() => store.setUI({ confirm: { title: `Decommission ${f.name}?`, body: 'The sailors return to the manpower pool and the ships are scrapped. This cannot be undone.', danger: true, onOk: () => { const r = store.cmd('doDecommissionFleet', [f.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); } } })}>Decommission fleet</Btn>}
         {f.owner === g.player && <p className="small muted">Right-click any coastal province or sea zone on the map to sail there. Fleets fight enemy fleets in the same waters, protect your sea lanes and landings (naval gunfire, easier landings), and blockade enemy ports. Transport capacity: {Math.floor(f.ships.transport * SHIPS.transport.capacity)} brigades.</p>}
       </div>
     </div>
