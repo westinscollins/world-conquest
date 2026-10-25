@@ -17,7 +17,7 @@ import { every } from './net/clock';
 import type { Result } from '../engine/actions';
 
 export type MapMode = 'political' | 'terrain' | 'resources' | 'infrastructure' | 'supply' | 'military' | 'diplomacy' | 'unrest';
-export type Panel = null | 'war' | 'regime' | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
+export type Panel = null | 'regime' | 'economy' | 'military' | 'diplomacy' | 'research' | 'stats' | 'help';
 
 export interface UIState {
   screen: 'menu' | 'game';
@@ -30,6 +30,10 @@ export interface UIState {
   panel: Panel;
   mapMode: MapMode;
   battleReport: number | null;
+  /** The zoomed-in battlefield where you command a battle day by day. */
+  battleView: number | null;
+  /** The invasion planner for this nation. */
+  invade: string | null;
   intel: null | { armyId: number; province: number };
   moveMode: number | null; // army id awaiting a left-click destination
   /** Extra armies selected with shift-click; they move together with the selected army. */
@@ -51,7 +55,7 @@ class Store {
   net: Session | null = null;
   ui: UIState = {
     screen: 'menu', speed: 0, selectedProvince: null, selectedArmy: null, selectedFleet: null, selectedWing: null, selectedNation: null,
-    panel: null, mapMode: 'political', battleReport: null, intel: null, moveMode: null, group: [], strike: null, pickOperation: false, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
+    panel: null, mapMode: 'political', battleReport: null, battleView: null, invade: null, intel: null, moveMode: null, group: [], strike: null, pickOperation: false, toasts: [], confirm: null, peaceWar: null, lastAutosave: 0, hover: null,
   };
   version = 0;
   private listeners = new Set<() => void>();
@@ -76,7 +80,7 @@ class Store {
     // guests take the host's state verbatim (recomputing here could make the two copies differ)
     if (this.net?.role !== 'guest') refreshAllBudgets(g);
     if (resync) { this.emit(); return; }
-    this.ui = { ...this.ui, screen: 'game', speed: 0, selectedProvince: g.nations[g.player].capital, selectedArmy: null, selectedNation: null, panel: g.tutorial ? 'help' : null, lastAutosave: g.day, battleReport: null, intel: null };
+    this.ui = { ...this.ui, screen: 'game', speed: 0, selectedProvince: g.nations[g.player].capital, selectedArmy: null, selectedNation: null, panel: g.tutorial ? 'help' : null, lastAutosave: g.day, battleReport: null, battleView: null, invade: null, intel: null };
     this.emit();
     this.loop();
     this.lastMood = this.moodFor();
@@ -120,6 +124,14 @@ class Store {
     return r;
   }
   togglePause() { this.setSpeed(this.ui.speed === 0 ? 1 : 0); }
+  /** Single player: advance exactly one day (from the battle view's "next day"). */
+  stepDay() {
+    const g = this.game;
+    if (!g || this.net || g.outcome) return;
+    tick(g);
+    this.afterTick(g);
+    this.emit();
+  }
 
   /** Run a mutation against the game and refresh views. */
   act<T>(fn: (g: GameState) => T): T | undefined {

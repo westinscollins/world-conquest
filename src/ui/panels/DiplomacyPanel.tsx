@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { planInvasion } from '../InvasionPlanner';
 import { store, useGame } from '../store';
 import { Section, Btn, Tabs, Stat, Tip, Modal, Bar } from '../common';
 import { money, moneyIC, num, pct } from '../format';
@@ -166,12 +167,14 @@ function NationDetail({ id }: { id: string }) {
         <Section title="War" icon="sword">
           {chk.ok ? (
             <>
+              <Btn kind="primary" onClick={() => planInvasion(id)}>⚔ Plan an invasion of {n.name}…</Btn>
               <p className="small">Declaring war costs <b className="bad">−{chk.stabilityCost} stability</b> and <b className="bad">+{chk.infamy} infamy</b>{chk.justified ? ' (justified by your casus belli)' : ' (unjustified!)'}{chk.breaksNap ? ', and breaks your non-aggression pact' : ''}. Trade with them ends.{chk.joiners.length ? <> Their allies will join: <b>{chk.joiners.map((j) => g.nations[j]?.name).join(', ')}</b>.</> : ''}</p>
-              <Btn kind="danger" onClick={() => store.setUI({ confirm: { title: `Declare war on ${n.name}?`, body: `This cannot be undone without a peace treaty.\n\nStability −${chk.stabilityCost} · Infamy +${chk.infamy}${chk.joiners.length ? `\nTheir allies join: ${chk.joiners.map((j) => g.nations[j]?.name).join(', ')}` : ''}\nEstimated balance: you ${myP.toFixed(0)} vs them ${theirP.toFixed(0)}.`, danger: true, onOk: () => { const r2 = store.cmd('doDeclareWar', [id]); res(r2); if (r2?.ok) audio.sfx('alarm'); } } })}>Declare war</Btn>
+              <Btn kind="danger" onClick={() => store.setUI({ confirm: { title: `Declare war on ${n.name}?`, body: `This cannot be undone without a peace treaty.\n\nStability −${chk.stabilityCost} · Infamy +${chk.infamy}${chk.joiners.length ? `\nTheir allies join: ${chk.joiners.map((j) => g.nations[j]?.name).join(', ')}` : ''}\nEstimated balance: you ${myP.toFixed(0)} vs them ${theirP.toFixed(0)}.`, danger: true, onOk: () => { const r2 = store.cmd('doDeclareWar', [id]); res(r2); if (r2?.ok) audio.sfx('alarm'); } } })}>Declare war only</Btn>
             </>
           ) : <p className="small muted">{chk.reason}</p>}
         </Section>
       )}
+      {war && <Btn kind="danger" onClick={() => planInvasion(id)}>⚔ Send armies to invade…</Btn>}
       {war && <Btn kind="primary" onClick={() => { const w = g.wars.find((x) => (x.attackers.includes(id) && x.defenders.includes(g.player)) || (x.defenders.includes(id) && x.attackers.includes(g.player))); if (w) store.setUI({ peaceWar: w.id }); }}>Negotiate peace…</Btn>}
     </>
   );

@@ -163,8 +163,10 @@ export function seaTransportDaily(s: GameState) {
     const zi = Math.min(e.route.length - 1, Math.floor(e.progress / MIL.TRANSPORT_DAYS_PER_ZONE));
     const zone = e.route[zi];
     const ctl = seaControl(s, a.owner, zone);
-    if (ctl.hostileShare > 0.5) {
-      const loss = 0.04 * ctl.hostileShare;
+    // enemy submarines sink troopships even where they do not control the sea
+    const subs = Object.values(s.fleets).reduce((t, f) => t + (f.sea === zone && atWar(s, f.owner, a.owner) ? f.ships.submarine ?? 0 : 0), 0);
+    if (ctl.hostileShare > 0.5 || subs >= 0.5) {
+      const loss = Math.min(0.06, (ctl.hostileShare > 0.5 ? 0.04 * ctl.hostileShare : 0) + 0.012 * Math.min(3, subs) * (1 - 0.5 * Math.min(1, ctl.own / 60)));
       for (const u of a.units) { u.strength *= 1 - loss; u.equipment *= 1 - loss; u.org *= 0.9; }
       if (s.day % 3 === 0) addEvent(s, 'military', `${a.name} intercepted at sea in the ${WORLD.seas[zone].name}! Losing ${Math.round(loss * 100)}% per day.`, [a.owner], { important: a.owner === s.player });
     }
@@ -216,6 +218,7 @@ export function fleetsDaily(s: GameState) {
       if (f.moveProgress >= 1) { f.sea = f.path.shift()!; f.moveProgress = 0; }
     }
     f.org = Math.min(1, f.org + 0.03);
+    if ((f.ships.submarine ?? 0) >= 0.5 && !f.path.length) raidCommerce(s, f);
   }
   // naval battles: fleets of warring nations in the same zone
   const byZone = new Map<number, Fleet[]>();
@@ -230,15 +233,30 @@ export function fleetsDaily(s: GameState) {
   }
 }
 
+/**
+ * Submarines strike unseen (their attack counts half again), and only destroyers hunt them well:
+ * against a fleet without destroyers they lose little. They hit transports hardest.
+ */
+function subEdge(f: Fleet, enemy: Fleet) {
+  const subs = f.ships.submarine ?? 0;
+  const total = Object.values(f.ships).reduce((t, v) => t + v, 0) || 1;
+  const hunters = enemy.ships.destroyer / Math.max(1, Object.values(enemy.ships).reduce((t, v) => t + v, 0));
+  return { share: subs / total, hunters };
+}
 function navalEngagement(s: GameState, A: Fleet, B: Fleet, zone: number) {
-  const pa = fleetPower(A, s.nations[A.owner]), pb = fleetPower(B, s.nations[B.owner]);
-  const loss = (f: Fleet, enemy: number, own: number) => {
+  const ea = subEdge(A, B), eb = subEdge(B, A);
+  const pa = fleetPower(A, s.nations[A.owner]) * (1 + 0.5 * ea.share), pb = fleetPower(B, s.nations[B.owner]) * (1 + 0.5 * eb.share);
+  const loss = (f: Fleet, enemy: number, own: number, hunters: number, enemySubs: number) => {
     const frac = Math.min(0.35, (enemy / Math.max(1, own + enemy)) * 0.12);
-    for (const k in f.ships) { const kk = k as ShipType; f.ships[kk] = Math.max(0, f.ships[kk] * (1 - frac * (kk === 'transport' ? 1.5 : 1))); }
+    for (const k in f.ships) {
+      const kk = k as ShipType;
+      const m = kk === 'transport' ? 1.5 + enemySubs : kk === 'submarine' ? 0.35 + 1.3 * hunters : 1;
+      f.ships[kk] = Math.max(0, f.ships[kk] * (1 - Math.min(0.6, frac * m)));
+    }
     f.org = Math.max(0, f.org - frac * 2);
     return frac;
   };
-  const la = loss(A, pb, pa), lb = loss(B, pa, pb);
+  const la = loss(A, pb, pa, ea.hunters, eb.share), lb = loss(B, pa, pb, eb.hunters, ea.share);
   if (s.day % 2 === 0) addEvent(s, 'battle', `Naval engagement in the ${WORLD.seas[zone].name}: ${s.nations[A.owner].name} lost ${Math.round(la * 100)}%, ${s.nations[B.owner].name} lost ${Math.round(lb * 100)}% of their fleets.`, [A.owner, B.owner]);
   for (const f of [A, B]) {
     const total = Object.values(f.ships).reduce((t, v) => t + v, 0);
@@ -249,6 +267,36 @@ function navalEngagement(s: GameState, A: Fleet, B: Fleet, zone: number) {
       if (home != null && home !== f.sea) moveFleet(s, f, home);
     }
   }
+}
+
+/**
+ * Submarines on station sink merchant shipping bound for enemy ports along their sea zone: every
+ * nation at war with the fleet's owner that has a port on these waters loses money each day
+ * (fewer losses where it controls the sea).
+ */
+export function raidCommerce(s: GameState, f: Fleet) {
+  const hit = new Map<string, number>();
+  for (const p of seaCoast(f.sea)) {
+    const st = s.provinces[p];
+    if (st.buildings.port <= 0 || !atWar(s, st.controller, f.owner)) continue;
+    hit.set(st.controller, (hit.get(st.controller) ?? 0) + st.buildings.port);
+  }
+  for (const [id, ports] of hit) {
+    const n = s.nations[id];
+    if (!n) continue;
+    const ctl = seaControl(s, id, f.sea);
+    const drain = Math.min(0.0004 * Math.max(0, n.budget.output), 0.015 * f.ships.submarine * Math.min(3, ports)) * (1 - Math.min(0.8, ctl.own / Math.max(1, ctl.own + ctl.hostile)));
+    if (drain <= 0) continue;
+    n.treasury -= drain;
+    n.ledgerMonth.expense += drain;
+    if (s.day % 15 === 0 && (n.isPlayer || s.nations[f.owner]?.isPlayer)) addEvent(s, 'military', `${s.nations[f.owner].name} submarines in the ${WORLD.seas[f.sea].name} are sinking ${n.name}'s merchant ships: ${fmt(drain * 30)} lost a month.`, [id, f.owner]);
+  }
+}
+const coastCache = new Map<number, number[]>();
+function seaCoast(zone: number) {
+  let c = coastCache.get(zone);
+  if (!c) { c = PROV.filter((p) => p.seas.includes(zone)).map((p) => p.id); coastCache.set(zone, c); }
+  return c;
 }
 
 /** Price of a ship (hull and crew), with tech and factory discounts. */
@@ -278,7 +326,7 @@ export function shipyardDaily(s: GameState, n: Nation) {
     const zone = PROV[o.port].seas[0];
     let f = Object.values(s.fleets).find((x) => x.owner === n.id && x.sea === zone && !x.path.length);
     if (!f) {
-      f = { id: s.nextId++, owner: n.id, name: `${n.name} ${['Home', 'Second', 'Third', 'Fourth', 'Fifth'][Object.values(s.fleets).filter((x) => x.owner === n.id).length] ?? 'Reserve'} Fleet`, sea: zone, ships: { destroyer: 0, cruiser: 0, battlegroup: 0, transport: 0 }, path: [], moveProgress: 0, org: 0.7, homePort: o.port, mission: 'patrol' };
+      f = { id: s.nextId++, owner: n.id, name: `${n.name} ${['Home', 'Second', 'Third', 'Fourth', 'Fifth'][Object.values(s.fleets).filter((x) => x.owner === n.id).length] ?? 'Reserve'} Fleet`, sea: zone, ships: { destroyer: 0, cruiser: 0, battlegroup: 0, submarine: 0, transport: 0 }, path: [], moveProgress: 0, org: 0.7, homePort: o.port, mission: 'patrol' };
       s.fleets[f.id] = f;
     }
     f.ships[o.type] += 1;

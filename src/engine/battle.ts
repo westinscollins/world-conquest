@@ -8,8 +8,8 @@
  * defending against counter-attacks): hits beyond that value are far more damaging, so quality,
  * armour and positions matter more than raw numbers. Randomness is seeded and bounded (±12%/day).
  */
-import type { Army, Battle, BattleFactor, BattleSide, GameState, Posture, Unit, War } from './types';
-import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE, AIR, SHIPS } from './config';
+import type { Army, Battle, BattleCommand, BattleFactor, BattleSide, GameState, Posture, SupportKind, Tactic, Unit, War } from './types';
+import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE, AIR, SHIPS, TACTICS, TACTIC_EDGE, FLANK_TERRAIN, BATTLE_SUPPORT } from './config';
 import { PROV, isStrait, landLinks, distKm } from './geo';
 import { Stream } from './rng';
 import { armiesIn, atWar, isFriendly, warBetween, invalidateArmies, controlledBy, playerEdge } from './world';
@@ -18,7 +18,8 @@ import { provinceWeather } from './weather';
 import { addEvent } from './events';
 import { setController } from './territory';
 import { TRAITS, fleetPower } from './military';
-import { battleAirFor, battleSides, navalAir, airNear } from './air';
+import { battleAirFor, battleSides, navalAir, airNear, rangeOf } from './air';
+import { munitionCost } from './strikes';
 
 // ---------------------------------------------------------------- side evaluation
 interface SideEval {
@@ -57,7 +58,7 @@ function unitEff(u: Unit, q: number) {
   return (u.strength / sp.personnel) * (0.3 + 0.7 * u.equipment) * q * (1 + 0.25 * u.experience) * (0.55 + 0.45 * u.morale);
 }
 
-function evaluate(s: GameState, armies: Army[], b: Battle, isAttacker: boolean): SideEval {
+function evaluate(s: GameState, armies: Army[], b: Battle, isAttacker: boolean, widthMult = 1): SideEval {
   const owner = armies[0]?.owner;
   const n = owner ? s.nations[owner] : undefined;
   const t = TERRAIN[b.terrain];
@@ -78,7 +79,7 @@ function evaluate(s: GameState, armies: Army[], b: Battle, isAttacker: boolean):
   const [sa, sd] = battleSides(s, b);
   const nav = navalSupport(s, b.province, isAttacker ? b.attacker.nation : b.defender.nation, isAttacker ? sa : sd, isAttacker ? sd : sa);
   // a landing can only put so many troops ashore at once; holding the sea lets more land
-  const width = Math.round(t.width * (b.amphibious && isAttacker ? 0.6 + 0.3 * nav.control : 1));
+  const width = Math.round(t.width * widthMult * (b.amphibious && isAttacker ? 0.6 + 0.3 * nav.control : 1));
   const line = all.filter((u) => !UNITS[u.type].support && u.strength > 50).sort((x, y) => y.org - x.org);
   const support = all.filter((u) => UNITS[u.type].support && u.strength > 20);
   const front: Unit[] = [];
@@ -141,6 +142,7 @@ export function startBattle(s: GameState, attackers: Army[], province: number, f
     strait: isStrait(from, province), amphibious: false,
     timeline: [], factors: [], result: null, summary: '', seed: (s.seed ^ (id * 2654435761)) >>> 0, warId: war?.id ?? -1, fromProvince: from,
   };
+  ensureCmd(b);
   for (const a of [...attackers, ...defenders]) {
     if (a.battleId != null && s.battles[a.battleId] && s.battles[a.battleId].result == null) detachFromBattle(s, a, s.battles[a.battleId]);
     a.battleId = id;
@@ -312,6 +314,56 @@ export function battleDaily(s: GameState, b: Battle) {
     return;
   }
 
+  // ---- battle command: today's manoeuvres and the support each side called in
+  const C = ensureCmd(b);
+  const tA = C.a.plan, tD = C.d.plan;
+  const edge: 'a' | 'd' | null = TACTICS[tA].beats === tD ? 'a' : TACTICS[tD].beats === tA ? 'd' : null;
+  const used: { side: 'a' | 'd'; kind: SupportKind }[] = [];
+  let fireA = 1, fireD = 1, wideA = 1, wideD = 1;
+  const revealed = { a: false, d: false };
+  for (const side of ['a', 'd'] as const) {
+    const mine = side === 'a' ? aArm : dArm, theirs = side === 'a' ? dArm : aArm;
+    const ownSide = side === 'a' ? A : D, other = side === 'a' ? D : A;
+    for (const k of C[side].queued) {
+      let mult = 1;
+      if (k === 'barrage') {
+        mult = 1.2;
+        for (const x of theirs) x.entrench = Math.max(0, x.entrench - 0.2);
+        events.push(`${side === 'a' ? 'Attacker' : 'Defender'} artillery lays down a massive barrage.`);
+      } else if (k === 'drone') {
+        // enemy fighters overhead can shoot the drones down
+        const share = ownSide.air + other.air > 0.5 ? other.air / (ownSide.air + other.air) : 0;
+        if (rnd.next() < 0.35 * share) { events.push(`${side === 'a' ? 'Attacker' : 'Defender'} drones are shot down by enemy fighters.`); continue; }
+        mult = 1.1;
+        for (const u of other.front) u.org = Math.max(0, u.org - 0.03);
+        revealed[side] = true;
+        events.push(`${side === 'a' ? 'Attacker' : 'Defender'} drones strike the enemy line and spot their next move.`);
+      } else if (k === 'air') {
+        mult = 1.25;
+        events.push(`${side === 'a' ? 'Attacker' : 'Defender'} aircraft fly a concentrated strike.`);
+      } else if (k === 'reserves') {
+        if (side === 'a') wideA = 1.5; else wideD = 1.5;
+        events.push(`${side === 'a' ? 'Attacker' : 'Defender'} commits the reserve to the line.`);
+      } else if (k === 'rally') {
+        for (const x of mine) for (const u of x.units) { u.org = Math.min(1, u.org + 0.25); u.morale = Math.min(1, u.morale + 0.1); }
+        events.push(`${side === 'a' ? 'The attacking' : 'The defending'} general rallies the troops.`);
+      }
+      if (side === 'a') fireA *= mult; else fireD *= mult;
+      used.push({ side, kind: k });
+    }
+    C[side].queued = [];
+  }
+  if (wideA !== 1 || wideD !== 1) {
+    // the reserve goes into the line: a wider front for the day
+    Object.assign(A, evaluate(s, aArm, b, true, wideA));
+    Object.assign(D, evaluate(s, dArm, b, false, wideD));
+  }
+  const tacA = TACTICS[tA].dealt * TACTICS[tD].taken * (tA === 'flank' ? FLANK_TERRAIN[b.terrain] : 1) * (edge === 'a' ? TACTIC_EDGE.WIN : edge === 'd' ? TACTIC_EDGE.LOSE : 1) * fireA * (wideD > 1 ? 1.1 : 1);
+  const tacD = TACTICS[tD].dealt * TACTICS[tA].taken * (tD === 'flank' ? FLANK_TERRAIN[b.terrain] : 1) * (edge === 'd' ? TACTIC_EDGE.WIN : edge === 'a' ? TACTIC_EDGE.LOSE : 1) * fireD * (wideA > 1 ? 1.1 : 1);
+  events.push(edge === 'a' ? `The attackers' ${TACTICS[tA].label.toLowerCase()} beats the defenders' ${TACTICS[tD].label.toLowerCase()}.`
+    : edge === 'd' ? `The defenders' ${TACTICS[tD].label.toLowerCase()} beats the attackers' ${TACTICS[tA].label.toLowerCase()}.`
+    : `Both sides ${tA === 'assault' ? 'assault' : tA === 'hold' ? 'hold their lines' : 'try to flank'}: neither gains the upper hand.`);
+
   const probe = day === 1 ? 0.6 : 1;
   const spreadA = 1 + COMBAT.RANDOM_SPREAD * (rnd.next() * 2 - 1);
   const spreadD = 1 + COMBAT.RANDOM_SPREAD * (rnd.next() * 2 - 1);
@@ -329,8 +381,8 @@ export function battleDaily(s: GameState, b: Battle) {
   const defA = A.breakthrough * aDefMult + A.defense * 0.25 * aDefMult; // attackers rely on breakthrough
   // defence absorbs attacks up to its value; prepared positions also blunt what gets through
   const roeA = ROE[s.nations[atkOwner]?.regime?.roe ?? 'standard'].damage, roeD = ROE[s.nations[b.defender.nation]?.regime?.roe ?? 'standard'].damage;
-  const dmgToD = roeA * (Math.min(hitsA, defD) * 0.1 + Math.max(0, hitsA - defD) * 0.4) / Math.sqrt(Math.max(0.5, defMult));
-  const dmgToA = roeD * (Math.min(hitsD, defA) * 0.1 + Math.max(0, hitsD - defA) * 0.4) / Math.sqrt(Math.max(0.5, aDefMult));
+  const dmgToD = tacA * roeA * (Math.min(hitsA, defD) * 0.1 + Math.max(0, hitsA - defD) * 0.4) / Math.sqrt(Math.max(0.5, defMult));
+  const dmgToA = tacD * roeD * (Math.min(hitsD, defA) * 0.1 + Math.max(0, hitsD - defA) * 0.4) / Math.sqrt(Math.max(0.5, aDefMult));
   const nA = s.nations[atkOwner], nD = s.nations[b.defender.nation];
   const casA = pa.casualties * (A.trait === 'aggressive' ? 1.15 : A.trait === 'cautious' ? 0.8 : 1);
   const casD = pd.casualties * (D.trait === 'cautious' ? 0.8 : 1);
@@ -358,11 +410,13 @@ export function battleDaily(s: GameState, b: Battle) {
   // digging in during battle
   for (const a of dArm) a.entrench = Math.max(0, a.entrench - 0.02);
   for (const a of aArm) a.fatigue = Math.min(1, a.fatigue + 0.03);
-  b.timeline.push(dayRecord(day, phase, aArm, dArm, dmgToA, dmgToD, events));
+  b.timeline.push({ ...dayRecord(day, phase, aArm, dArm, dmgToA, dmgToD, events), aTactic: tA, dTactic: tD, edge, support: used });
   b.attacker.strength = aArm.reduce((t, a) => t + armyStrength(a), 0);
   b.defender.strength = dArm.reduce((t, a) => t + armyStrength(a), 0);
   b.attacker.org = aOrg; b.defender.org = dOrg; b.attacker.morale = aMor; b.defender.morale = dMor;
   b.factors = explain(s, b, A, D, m, strikeA, strikeD);
+  if (Math.abs(tacA / tacD - 1) >= 0.015) b.factors.unshift({ label: 'Battle command', side: tacA >= tacD ? 'attacker' : 'defender', value: +(Math.max(tacA, tacD) / Math.min(tacA, tacD) - 1).toFixed(3), detail: `Today: ${TACTICS[tA].label} vs ${TACTICS[tD].label}${used.length ? ' · ' + used.map((u) => `${u.side === 'a' ? 'attacker' : 'defender'} ${BATTLE_SUPPORT[u.kind].label.toLowerCase()}`).join(', ') : ''}` });
+  planTomorrow(s, b, rnd, A, D, revealed, aArm, dArm);
 
   // ---- decision checks
   const rout = (org: number, mor: number) => mor < 0.22 && org < 0.35 && rnd.next() < 0.5;
@@ -374,6 +428,116 @@ export function battleDaily(s: GameState, b: Battle) {
   if (day >= COMBAT.MAX_DAYS) { endBattle(s, b, 'stalemate', aArm, dArm, ''); return; }
 }
 
+// ---------------------------------------------------------------- battle command
+const newCmd = (plan: Tactic): BattleCommand => ({ order: 'auto', plan, queued: [], cooldown: {}, hint: null, hintSure: 0 });
+/** The command state of a battle (battles from older saves get one on first use). */
+export function ensureCmd(b: Battle) {
+  // the opening moves vary from battle to battle (attackers lean to assault, defenders to hold)
+  return (b.cmd ??= { a: newCmd((['assault', 'assault', 'flank', 'hold'] as Tactic[])[b.seed % 4]), d: newCmd((['hold', 'hold', 'assault', 'flank'] as Tactic[])[(b.seed >>> 4) % 4]) });
+}
+const TACTIC_LIST: Tactic[] = ['assault', 'hold', 'flank'];
+const counterTo = (t: Tactic) => TACTIC_LIST.find((x) => TACTICS[x].beats === t)!;
+/**
+ * The general's choice for tomorrow when nobody gives orders: usually the move that beats what the
+ * enemy did today, sometimes the same again, sometimes anything; aggressive generals like to
+ * assault and cautious ones to hold. Players who read the enemy's habits (and their scouts'
+ * reports) can stay a step ahead.
+ */
+function generalPick(rnd: Stream, mine: Tactic, theirs: Tactic, trait: string): Tactic {
+  const r = rnd.next();
+  if (trait === 'aggressive' && r < 0.15) return 'assault';
+  if (trait === 'cautious' && r < 0.15) return 'hold';
+  if (r < 0.5) return counterTo(theirs);
+  if (r < 0.7) return mine;
+  return TACTIC_LIST[Math.floor(rnd.next() * 3) % 3];
+}
+/** Where a commander's strike aircraft can reach: squadrons whose base is within range. */
+export function squadronsInRange(s: GameState, nation: string, p: number) {
+  let n = 0;
+  for (const w of Object.values(s.airWings ?? {})) {
+    if (w.owner !== nation || w.rebase) continue;
+    const km = distKm(w.base, p);
+    for (const u of w.units) if (km <= rangeOf(u.type) && u.strength > 0) n++;
+  }
+  return n;
+}
+
+function planTomorrow(s: GameState, b: Battle, rnd: Stream, A: SideEval, D: SideEval, revealed: { a: boolean; d: boolean }, aArm: Army[], dArm: Army[]) {
+  const C = ensureCmd(b);
+  const today = { a: C.a.plan, d: C.d.plan };
+  for (const side of ['a', 'd'] as const) {
+    const c = C[side];
+    const n = s.nations[side === 'a' ? b.attacker.nation : b.defender.nation];
+    const ev = side === 'a' ? A : D;
+    c.plan = c.order !== 'auto' ? c.order : generalPick(rnd, today[side], today[side === 'a' ? 'd' : 'a'], ev.trait);
+    if (!n) continue;
+    const org = avgOrg(side === 'a' ? aArm : dArm);
+    // generals on both sides call in support now and then on their own (a player can call it
+    // when it matters most instead); they rally a wavering army
+    if (org < 0.35 && canSupport(s, b, side, 'rally') == null && rnd.next() < 0.6) queueSupport(s, b, side, 'rally');
+    for (const k of ['barrage', 'air', 'drone', 'reserves'] as SupportKind[]) {
+      if (canSupport(s, b, side, k) != null || c.queued.length) continue;
+      if (rnd.next() < 0.2 && (k !== 'drone' || n.arsenal.drone > 0) && n.treasury > supportCost(s, b, side, k) * 10 + 1) queueSupport(s, b, side, k);
+    }
+  }
+  // scouts report what the enemy will do tomorrow: right more often with better reconnaissance,
+  // certain after a drone strike saw it
+  const rA = A.recon + 1, rD = D.recon + 1;
+  const adv = (rA - rD) / (rA + rD);
+  for (const side of ['a', 'd'] as const) {
+    const enemy = C[side === 'a' ? 'd' : 'a'].plan;
+    const n = s.nations[side === 'a' ? b.attacker.nation : b.defender.nation];
+    let sure = Math.max(0.45, Math.min(0.85, 0.62 + 0.25 * (side === 'a' ? adv : -adv) + ((n?.regime?.recon[b.province] ?? 0) > s.day ? 0.1 : 0)));
+    if (revealed[side]) sure = 1;
+    const right = rnd.next() < sure;
+    const others = TACTIC_LIST.filter((t) => t !== enemy);
+    C[side].hint = right ? enemy : others[Math.floor(rnd.next() * 2) % 2];
+    C[side].hintSure = +sure.toFixed(2);
+  }
+}
+
+/** Which side of a battle a nation commands ('a' attacker, 'd' defender), or null. */
+export function commandSide(s: GameState, b: Battle, nation: string): 'a' | 'd' | null {
+  if (b.attacker.nation === nation) return 'a';
+  if (b.defender.nation === nation) return 'd';
+  if (b.attacker.armyIds.some((id) => s.armies[id]?.owner === nation)) return 'a';
+  if (b.defender.armyIds.some((id) => s.armies[id]?.owner === nation)) return 'd';
+  return null;
+}
+/** Why a side cannot call in this support now (null = it can). */
+export function canSupport(s: GameState, b: Battle, side: 'a' | 'd', k: SupportKind): string | null {
+  const c = ensureCmd(b)[side];
+  const sp = BATTLE_SUPPORT[k];
+  const nation = side === 'a' ? b.attacker.nation : b.defender.nation;
+  const n = s.nations[nation];
+  if (!n) return 'No commander.';
+  if (b.result != null) return 'The battle is over.';
+  if (c.queued.includes(k)) return 'Already ordered for tomorrow.';
+  if ((c.cooldown[k] ?? 0) > s.day) return k === 'rally' ? 'The troops have already been rallied in this battle.' : `Ready again in ${(c.cooldown[k] ?? 0) - s.day} day${(c.cooldown[k] ?? 0) - s.day === 1 ? '' : 's'}.`;
+  const armies = (side === 'a' ? b.attacker : b.defender).armyIds.map((id) => s.armies[id]).filter(Boolean) as Army[];
+  if (k === 'barrage' && !armies.some((a) => a.units.some((u) => u.type === 'artillery' && u.strength > 50))) return 'Needs artillery in the battle.';
+  if (k === 'air' && squadronsInRange(s, nation, b.province) === 0) return 'No air wing within range of this battle.';
+  if (k === 'reserves' && armies.reduce((t, a) => t + a.units.filter((u) => !UNITS[u.type].support).length, 0) <= TERRAIN[b.terrain].width / 2) return 'No reserve: every formation is already in the line.';
+  if (supportCost(s, b, side, k) > n.treasury) return 'Not enough money.';
+  return null;
+}
+export function supportCost(s: GameState, b: Battle, side: 'a' | 'd', k: SupportKind) {
+  const n = s.nations[side === 'a' ? b.attacker.nation : b.defender.nation];
+  if (!n) return 0;
+  if (k === 'drone') return n.arsenal.drone > 0 ? 0 : munitionCost('drone', n);
+  return BATTLE_SUPPORT[k].cost * n.priceIndex;
+}
+/** Pay for and order a support action for tomorrow's fighting (checked with canSupport first). */
+export function queueSupport(s: GameState, b: Battle, side: 'a' | 'd', k: SupportKind) {
+  const n = s.nations[side === 'a' ? b.attacker.nation : b.defender.nation];
+  const c = ensureCmd(b)[side];
+  const cost = supportCost(s, b, side, k);
+  if (k === 'drone' && n.arsenal.drone > 0) n.arsenal.drone--;
+  n.treasury -= cost;
+  n.ledgerMonth.expense += cost;
+  c.queued.push(k);
+  c.cooldown[k] = k === 'rally' ? 1e9 : s.day + BATTLE_SUPPORT[k].cooldown;
+}
 function avgOrg(armies: Army[]) { const t = armies.reduce((x, a) => x + armyStrength(a), 0) || 1; return armies.reduce((x, a) => x + armyOrg(a) * armyStrength(a), 0) / t; }
 function avgMorale(armies: Army[]) { const t = armies.reduce((x, a) => x + armyStrength(a), 0) || 1; return armies.reduce((x, a) => x + armyMorale(a) * armyStrength(a), 0) / t; }
 function dayRecord(day: number, phase: string, aArm: Army[], dArm: Army[], aDamage: number, dDamage: number, events: string[]) {

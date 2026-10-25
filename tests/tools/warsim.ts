@@ -1,5 +1,6 @@
-// A player at war with a neighbour, playing simply: every army on "Attack", peace asked for each month.
-//   npx tsx tests/tools/warsim.ts [days]
+// A player at war with a neighbour, playing simply: every army on "Attack" (MODE=campaign: every army
+// ordered to invade, as the invasion planner does), peace asked for each month.
+//   [MODE=campaign] npx tsx tests/tools/warsim.ts [days] [pairs as JSON]
 import { newGame } from '../../src/engine/setup';
 import { runDays } from '../../src/engine/sim';
 import { runCommand } from '../../src/engine/commands';
@@ -13,17 +14,18 @@ for (const [me, them] of PAIRS) {
     const s = newGame('sandbox', { seed, nation: me });
     if (!s.nations[them]) { console.log('no', them); continue; }
     const strength0 = [militaryStrength(s, me), militaryStrength(s, them)];
-    const r = runCommand(s, me, 'doDeclareWar', [them]);
+    const campaign = process.env.MODE === 'campaign';
+    const r = campaign ? runCommand(s, me, 'doInvade', [them, Object.values(s.armies).filter((a) => a.owner === me).map((a) => a.id)]) : runCommand(s, me, 'doDeclareWar', [them]);
     if (!r.ok) { console.log(me, them, r.message); continue; }
     const w0 = s.wars.find((w) => w.attackers.includes(me))!;
     const joiners = w0.defenders.filter((x) => x !== them);
     const mine = () => Object.values(s.armies).filter((a) => a.owner === me);
-    for (const a of mine()) a.stance = 'advance';
+    if (!campaign) for (const a of mine()) a.stance = 'advance';
     let peace = '', d = 0;
     const provs0 = ownedBy(s, them).length;
     for (d = 30; d <= days && !peace; d += 30) {
       runDays(s, 30);
-      for (const a of mine()) a.stance = 'advance';
+      if (!campaign) for (const a of mine()) a.stance = 'advance';
       const w = s.wars.find((x) => x.id === w0.id);
       if (!w) { peace = `war ended (by them/capitulation) day ${d}`; break; }
       const occ = w.occupiedByA.filter((p) => s.provinces[p].controller === me || w.attackers.includes(s.provinces[p].controller));

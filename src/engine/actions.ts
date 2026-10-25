@@ -3,11 +3,11 @@
  * UI components call these instead of mutating game state directly.
  */
 import type { PolicyArea, ProvinceFocus } from './types';
-import type { GameState, Posture, Stance, UnitType, BuildingKind, EquipKind, PeaceTerms, ShipType, Army, AirMission } from './types';
+import type { GameState, Posture, Stance, UnitType, BuildingKind, EquipKind, PeaceTerms, ShipType, Army, AirMission, Tactic, SupportKind } from './types';
 import { setMission, rebaseWing } from './air';
 import { recruit, findPath, assignGeneral, createArmy, deleteArmy, pathDays, armyStrength } from './military';
 import { startConstruction, cancelConstruction, borrow, repay, fmt } from './economy';
-import { declareWar, proposeTreaty, cancelTreaty, diplomaticMission, ultimatum, evaluatePeace, makePeace, annexSubject, answerCallToArms, applyTreaty } from './diplomacy';
+import { bestPeaceTerms, declareWar, proposeTreaty, cancelTreaty, diplomaticMission, ultimatum, evaluatePeace, makePeace, annexSubject, answerCallToArms, applyTreaty } from './diplomacy';
 import { setProvinceStatus, releaseSubject } from './territory';
 import { embark, moveFleet, orderShip, orderInvasion } from './naval';
 import { PROV, WORLD } from './geo';
@@ -18,7 +18,9 @@ import { setSecurity, toggleCampaign, interiorAction, toggleMartialLaw, setWarEc
 import { createOperation, cancelOperation, attackNearest, digIn, scorchedEarth, fundPartisans, fortifyBorder, hireMercenaries, licenseTech } from './warplans';
 import { setServices, setPolicy, issueDecree, investFund, withdrawFund, setFocus, sendAid, toggleSanction, toggleGuarantee, buildSpyNetwork, spyOp, resolveEvent } from './policy';
 import { buyMunitions, launchStrike, startNuclearProgram, buildWarhead, type StrikeKind } from './strikes';
-import { invalidateArmies, warBetween } from './world';
+import { invalidateArmies, warBetween, atWar } from './world';
+import { commandSide, canSupport, queueSupport, ensureCmd } from './battle';
+import { TACTICS, BATTLE_SUPPORT } from './config';
 
 export interface Result { ok: boolean; message: string; }
 const ok = (message: string): Result => ({ ok: true, message });
@@ -119,13 +121,13 @@ export function setPosture(s: GameState, armyId: number, p: Posture): Result {
 export function setStance(s: GameState, armyId: number, st: Stance): Result {
   const a = s.armies[armyId];
   if (!a || a.owner !== s.player) return fail('Not your army.');
-  a.stance = st;
+  a.stance = st; a.campaign = null;
   return ok('Orders set.');
 }
 /** Give the same standing orders to every army (optionally only those at war's front). */
 export function setAllStances(s: GameState, st: Stance): Result {
   let k = 0;
-  for (const a of Object.values(s.armies)) if (a.owner === s.player) { a.stance = st; k++; }
+  for (const a of Object.values(s.armies)) if (a.owner === s.player) { a.stance = st; a.campaign = null; k++; }
   return ok(`${k} armies ordered to ${STANCE_TEXT[st]}.`);
 }
 const STANCE_TEXT: Record<Stance, string> = { hold: 'hold position', defend: 'defend the border', advance: 'advance and attack', withdraw: 'withdraw to home territory' };
@@ -136,7 +138,7 @@ export function retreatArmy(s: GameState, armyId: number): Result {
   const b = a.battleId != null ? s.battles[a.battleId] : undefined;
   if (!b || b.result != null) return fail('This army is not in a battle.');
   if (b.attacker.armyIds.includes(a.id) && b.attacker.nation === a.owner) {
-    a.battleId = null; a.path = []; a.moveProgress = 0; a.stance = 'hold'; a.seaDest = null;
+    a.battleId = null; a.path = []; a.moveProgress = 0; a.stance = 'hold'; a.seaDest = null; a.campaign = null;
     for (const u of a.units) u.org *= 0.85;
     invalidateArmies();
     return ok(`${a.name} breaks off the attack on ${PROV[b.province].name}.`);
@@ -387,7 +389,7 @@ export function haltArmy(s: GameState, armyId: number): Result {
   const a = s.armies[armyId];
   if (!a || a.owner !== s.player) return fail('Not your army.');
   if (a.battleId != null) return fail('The army is engaged in battle.');
-  a.path = []; a.moveProgress = 0; a.seaDest = null;
+  a.path = []; a.moveProgress = 0; a.seaDest = null; a.campaign = null;
   return ok(`${a.name} halted.`);
 }
 export function pauseProduction(s: GameState): Result {
@@ -407,7 +409,7 @@ export function setHumanControl(s: GameState, nation: string, human: boolean): R
 
 export function doBuyMunitions(s: GameState, kind: 'drone' | 'missile' | 'ballistic' | 'recon', count: number): Result {
   const e = buyMunitions(s, P(s), kind, count);
-  return e ? fail(e) : ok(`Bought ${count} ${STRIKES[kind].plural}. Launch them from the War Room or an enemy province's panel.`);
+  return e ? fail(e) : ok(`Bought ${count} ${STRIKES[kind].plural}. Launch them from Military → Build, a battle, or an enemy province's panel.`);
 }
 export function doStrike(s: GameState, kind: StrikeKind, province: number, count: number): Result {
   const r = launchStrike(s, P(s), kind, province, count);
@@ -482,15 +484,15 @@ export function doFortifyBorder(s: GameState): Result { return fortifyBorder(s, 
 export function doMercenaries(s: GameState, type: UnitType, p: number): Result { return rr(hireMercenaries(s, P(s), type, p), 'Mercenaries hired.'); }
 export function doLicenseTech(s: GameState, tech: string): Result { return rr(licenseTech(s, P(s), tech), 'Technology licensed.'); }
 /** Bulk orders for many armies at once. */
-export function doStances(s: GameState, ids: number[], st: Stance): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player) { a.stance = st; k++; } } return ok(`${k} armies: ${STANCE_TEXT[st]}.`); }
-export function doHaltMany(s: GameState, ids: number[]): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null) { a.path = []; a.moveProgress = 0; a.seaDest = null; k++; } } return ok(`${k} armies halted.`); }
+export function doStances(s: GameState, ids: number[], st: Stance): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player) { a.stance = st; a.campaign = null; k++; } } return ok(`${k} armies: ${STANCE_TEXT[st]}.`); }
+export function doHaltMany(s: GameState, ids: number[]): Result { let k = 0; for (const id of ids) { const a = s.armies[id]; if (a && a.owner === s.player && a.battleId == null) { a.path = []; a.moveProgress = 0; a.seaDest = null; a.campaign = null; k++; } } return ok(`${k} armies halted.`); }
 export function doRetreatMany(s: GameState, ids: number[]): Result {
   let k = 0;
   for (const id of ids) {
     const a = s.armies[id];
     if (!a || a.owner !== s.player) continue;
     if (a.battleId != null) { if (retreatArmy(s, id).ok) k++; continue; }
-    a.stance = 'withdraw'; a.path = []; a.seaDest = null; k++;
+    a.stance = 'withdraw'; a.path = []; a.seaDest = null; a.campaign = null; k++;
   }
   return ok(`${k} armies falling back to home territory.`);
 }
@@ -506,3 +508,63 @@ export function doMergeMany(s: GameState, ids: number[]): Result {
 export function peaceTermsFor(s: GameState, warId: number): { war: ReturnType<typeof warBetween> } { return { war: s.wars.find((w) => w.id === warId) }; }
 export type { Army };
 export { armyStrength };
+
+// ---------------------------------------------------------------- battle command
+/** Choose tomorrow's manoeuvre for your side of a battle ('auto' lets the general decide). */
+export function setBattleTactic(s: GameState, battleId: number, t: Tactic | 'auto'): Result {
+  const b = s.battles[battleId];
+  if (!b || b.result != null) return fail('That battle is over.');
+  const side = commandSide(s, b, s.player);
+  if (!side) return fail('You have no troops in this battle.');
+  if (t !== 'auto' && !TACTICS[t]) return fail('Unknown manoeuvre.');
+  const c = ensureCmd(b)[side];
+  c.order = t;
+  if (t !== 'auto') c.plan = t;
+  return ok(t === 'auto' ? 'Your general will choose the manoeuvres.' : `Tomorrow: ${TACTICS[t].label}.`);
+}
+/** Call artillery, drones, aircraft, the reserve or a rally into tomorrow's fighting. */
+export function useBattleSupport(s: GameState, battleId: number, k: SupportKind): Result {
+  const b = s.battles[battleId];
+  if (!b || b.result != null) return fail('That battle is over.');
+  const side = commandSide(s, b, s.player);
+  if (!side) return fail('You have no troops in this battle.');
+  if (!BATTLE_SUPPORT[k]) return fail('Unknown order.');
+  const why = canSupport(s, b, side, k);
+  if (why) return fail(why);
+  queueSupport(s, b, side, k);
+  return ok(`${BATTLE_SUPPORT[k].label} ordered for tomorrow.`);
+}
+
+// ---------------------------------------------------------------- campaigns
+/** Order armies to conquer a nation you are at war with (null: call the campaign off). */
+export function doCampaign(s: GameState, armyIds: number[], target: string | null): Result {
+  const mine = armyIds.map((id) => s.armies[id]).filter((a): a is Army => !!a && a.owner === s.player);
+  if (!mine.length) return fail('Choose armies first.');
+  if (target != null && !atWar(s, s.player, target)) return fail(`You are not at war with ${s.nations[target]?.name ?? 'them'}.`);
+  for (const a of mine) { a.campaign = target; if (target) a.stance = 'advance'; else a.stance = 'defend'; }
+  return ok(target ? `${mine.length} ${mine.length === 1 ? 'army' : 'armies'} will invade ${s.nations[target].name}: they take its provinces one after another (by sea if needed) until it gives up.` : `${mine.length} ${mine.length === 1 ? 'army stops' : 'armies stop'} the invasion and defend.`);
+}
+/** Declare war if needed, then send armies to conquer the nation. */
+export function doInvade(s: GameState, target: string, armyIds: number[]): Result {
+  if (!s.nations[target]?.alive) return fail('That nation no longer exists.');
+  let declared = '';
+  if (!atWar(s, s.player, target)) {
+    const r = declareWar(s, P(s), target);
+    if (!r.ok) return fail(r.reason ?? 'Cannot declare war.');
+    declared = `War declared on ${s.nations[target].name}. `;
+  }
+  const r = doCampaign(s, armyIds, target);
+  // the armies left at home guard the borders instead of standing still
+  let home = 0;
+  if (declared) for (const a of Object.values(s.armies)) if (a.owner === s.player && !a.campaign && a.stance === 'hold') { a.stance = 'defend'; home++; }
+  return { ok: r.ok || !!declared, message: declared + r.message + (home ? ` ${home} ${home === 1 ? 'army stays' : 'armies stay'} home to defend.` : '') };
+}
+/** End a war you lead on the best terms the enemy accepts now. */
+export function doBestPeace(s: GameState, warId: number): Result {
+  const w = s.wars.find((x) => x.id === warId);
+  if (!w) return fail('War not found.');
+  if (w.leaderA !== s.player && w.leaderD !== s.player) return fail('Only war leaders can negotiate.');
+  const t = bestPeaceTerms(s, w, s.player);
+  if (!t) return fail('The enemy refuses any peace right now. Take more of their land first.');
+  return proposePeace(s, warId, t);
+}

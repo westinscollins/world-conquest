@@ -7,7 +7,10 @@ export type UnitType = 'infantry' | 'mechanized' | 'armored' | 'artillery' | 'en
 /** Aircraft fly from air wings, never inside armies. */
 export type AirType = 'air' | 'bomber';
 export type AirMission = 'idle' | 'support' | 'defense' | 'bombing' | 'naval';
-export type ShipType = 'destroyer' | 'cruiser' | 'battlegroup' | 'transport';
+export type ShipType = 'destroyer' | 'cruiser' | 'battlegroup' | 'submarine' | 'transport';
+/** A battle's daily manoeuvre (see TACTICS). */
+export type Tactic = 'assault' | 'hold' | 'flank';
+export type SupportKind = 'barrage' | 'drone' | 'air' | 'reserves' | 'rally';
 export type Posture = 'aggressive' | 'balanced' | 'cautious' | 'defensive' | 'mobile' | 'withdrawal';
 export type Stance = 'hold' | 'defend' | 'advance' | 'withdraw';
 export type Personality = 'defensive' | 'expansionist' | 'industrial' | 'diplomatic' | 'opportunistic' | 'isolationist';
@@ -85,6 +88,7 @@ export interface Army {
   seaDest?: number | null;   // naval invasion: embark for this province on reaching the port
   sailDay?: number;          // ...but not before this day (so a group sails together)
   seaPort?: number;          // ...from this port
+  campaign?: string | null;  // conquer this nation: the army attacks its provinces one after another
   lastSupplyRatio: number;
   lastSupplyCause: string[];
 }
@@ -255,6 +259,17 @@ export interface BattleDay {
   day: number; phase: string;
   aStrength: number; dStrength: number; aOrg: number; dOrg: number; aMorale: number; dMorale: number;
   aDamage: number; dDamage: number; events: string[];
+  aTactic?: Tactic; dTactic?: Tactic; edge?: 'a' | 'd' | null; // the day's manoeuvres and whose won
+  support?: { side: 'a' | 'd'; kind: SupportKind }[];         // support actions used that day
+}
+/** One side's command of a battle: the manoeuvre ordered and support called in for the next day. */
+export interface BattleCommand {
+  order: Tactic | 'auto';     // 'auto' = the general decides
+  plan: Tactic;               // what this side will do tomorrow
+  queued: SupportKind[];      // support actions for tomorrow
+  cooldown: Partial<Record<SupportKind, number>>; // day each action can be used again
+  hint: Tactic | null;        // what scouts think the ENEMY will do tomorrow
+  hintSure: number;           // 0..1 how sure the scouts are
 }
 export interface BattleFactor { label: string; side: 'attacker' | 'defender'; value: number; detail: string; }
 export interface Battle {
@@ -266,6 +281,7 @@ export interface Battle {
   result: null | 'attacker' | 'defender' | 'stalemate';
   summary: string; seed: number; warId: number; fromProvince: number;
   intelEstimate?: { low: number; high: number };
+  cmd?: { a: BattleCommand; d: BattleCommand };
 }
 
 export interface GameEvent {

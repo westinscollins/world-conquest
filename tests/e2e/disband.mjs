@@ -1,5 +1,5 @@
 // Disbanding many units at once, through every place the player can do it: all or some formations
-// of an army, a whole army, a group selected on the map, ticked armies in the War Room and in the
+// of an army, a whole army, a group selected on the map, ticked armies in the Military roster and in the
 // Military panel, a whole air wing, a fleet.
 //   node tests/e2e/disband.mjs [url]
 import { chromium } from 'playwright';
@@ -61,27 +61,24 @@ await page.locator('.side-panel a').filter({ hasText: 'Disband all 3' }).click()
 await confirm('Disband');
 ok('a map selection of 3 armies disbanded at once', (await game((ids) => ids.filter((id) => window.__wc.game.armies[id]).length, grp)) === 0);
 
-// 5. War Room: tick armies in the roster, Disband
+// 5. Military → Forces: tick armies in the roster, Disband
 await page.keyboard.press('Escape');
-await page.click('.nav-btn:has-text("War Room")');
-await page.click('.tabs >> text=/^Armies/');
+await page.click('.nav-btn:has-text("Military")');
+await page.click('.tabs >> text=/^Forces/');
 const roster = page.locator('table.roster tbody tr');
 const before5 = (await mine()).length;
 await roster.nth(0).click(); await roster.nth(1).click();
 await page.locator('.bulk button').filter({ hasText: /^Disband$/ }).click();
 await confirm('Disband');
-ok(`War Room: 2 ticked armies disbanded (${before5} → ${(await mine()).length})`, (await mine()).length === before5 - 2);
+ok(`Military roster: 2 ticked armies disbanded (${before5} → ${(await mine()).length})`, (await mine()).length === before5 - 2);
 
-// 6. Military panel: tick armies, Disband selected
-await page.keyboard.press('Escape');
-await page.click('.nav-btn:has-text("Military")');
-await page.click('.tabs >> text=/^Armies/');
+// 6. ...and three more, picked by number
 const before6 = (await mine()).length;
-const mrows = page.locator('.panel-body table.tbl tbody tr');
-await mrows.nth(0).locator('td').first().click(); await mrows.nth(1).locator('td').first().click(); await mrows.nth(2).locator('td').first().click();
-await page.locator('.bulk button').filter({ hasText: 'Disband selected' }).click();
+await page.fill('.range-in', '1-3');
+await page.click('.roster-select button:has-text("Select")');
+await page.locator('.bulk button').filter({ hasText: /^Disband$/ }).click();
 await confirm('Disband');
-ok(`Military panel: 3 ticked armies disbanded (${before6} → ${(await mine()).length})`, (await mine()).length === before6 - 3);
+ok(`Military roster: armies 1-3 disbanded (${before6} → ${(await mine()).length})`, (await mine()).length === before6 - 3);
 
 // 7. a whole air wing
 await page.keyboard.press('Escape');

@@ -58,7 +58,7 @@ export function checkStrike(s: GameState, n: Nation, kind: StrikeKind, p: number
   const hostileArmies = armiesIn(s, p).some((a) => atWar(s, a.owner, n.id));
   if (!atWar(s, n.id, st.controller) && !hostileArmies) return 'You can only strike provinces held by, or occupied by, a nation you are at war with.';
   if (count < 1) return 'Choose how many to launch.';
-  if (n.arsenal[kind] < count) return kind === 'nuke' ? 'You have no nuclear weapons ready.' : `You only have ${n.arsenal[kind]} ${STRIKES[kind as Munition].plural}. Buy more in the War Room.`;
+  if (n.arsenal[kind] < count) return kind === 'nuke' ? 'You have no nuclear weapons ready.' : `You only have ${n.arsenal[kind]} ${STRIKES[kind as Munition].plural}. Buy more in the Military panel.`;
   if (!inRange(s, n.id, kind, p)) return `${PROV[p].name} is out of range (${STRIKES[kind as Munition].range.toLocaleString()} km from land you hold). Advance, or move a fleet off the coast.`;
   return null;
 }

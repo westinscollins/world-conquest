@@ -96,7 +96,7 @@ export function tick(s: GameState) {
   aiArmiesDaily(s);
   operationsDaily(s);
   partisansDaily(s);
-  for (const a of Object.values(s.armies)) if (s.nations[a.owner]?.isPlayer && a.stance !== 'hold') armyAutomation(s, a);
+  for (const a of Object.values(s.armies)) if (s.nations[a.owner]?.isPlayer && (a.stance !== 'hold' || a.campaign)) armyAutomation(s, a);
   if (s.day % 7 === 0) relationsWeekly(s);
   for (const n of nations) if (!n.isPlayer && n.alive && nationIndex(n.id) === s.day % 7) aiWeekly(s, n);
   // stale offers expire

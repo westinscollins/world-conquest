@@ -8,6 +8,8 @@ import { ArmyPanel, FleetPanel } from './ui/ArmyPanel';
 import { AirWingPanel } from './ui/AirWingPanel';
 import { IntelDialog } from './ui/IntelDialog';
 import { BattleReport } from './ui/BattleReport';
+import { BattleView } from './ui/BattleView';
+import { InvasionPlanner } from './ui/InvasionPlanner';
 
 export default function App() {
   const { g, ui } = useStore();
@@ -30,6 +32,8 @@ export default function App() {
       <Toasts />
       <IntelDialog />
       <BattleReport />
+      <BattleView />
+      <InvasionPlanner />
       <OutcomeModal />
       <ConfirmDialog />
     </div>

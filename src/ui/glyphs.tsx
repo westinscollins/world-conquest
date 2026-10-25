@@ -1,7 +1,7 @@
 // Silhouettes for the map's unit counters: soldiers, tanks, artillery, warships and aircraft.
 // Each glyph is drawn in its own box (viewBox numbers below) and scaled into place.
 
-export type Glyph = 'infantry' | 'armored' | 'mechanized' | 'artillery' | 'recon' | 'engineers' | 'warship' | 'carrier' | 'transport' | 'fighter' | 'bomber';
+export type Glyph = 'infantry' | 'armored' | 'mechanized' | 'artillery' | 'recon' | 'engineers' | 'warship' | 'carrier' | 'transport' | 'submarine' | 'fighter' | 'bomber';
 
 /** [width, height, paths] — paths are filled with the glyph colour. */
 const G: Record<Glyph, [number, number, string[]]> = {
@@ -59,6 +59,13 @@ const G: Record<Glyph, [number, number, string[]]> = {
     'M0.8 7.6h28.4l-3 5.2H4.2Z',
     'M5 7.6V3.6h4.8v4Zm5.4 0V3.6h4.8v4Zm5.4 0V3.6H21v4Z',
     'M23.4 7.6V2.4h3v5.2Z',
+  ]],
+  // submarine running on the surface: long hull, conning tower, periscope
+  submarine: [30, 12, [
+    'M1 8.2Q1 5.8 4.4 5.8h21.2q3.4 0 3.4 2.4 0 2.4-3.4 2.4H4.4Q1 10.6 1 8.2Z',
+    'M11.4 5.8 12.4 2.6h5.2l0.8 3.2Z',
+    'M15.6 2.6V0.4h0.9v2.2Z',
+    'M27.2 6.8 29.6 5.2v6l-2.4-1.6Z',
   ]],
   // fighter jet, top view
   fighter: [24, 24, [

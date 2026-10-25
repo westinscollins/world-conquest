@@ -1,228 +1,303 @@
+// Military: one place to run the armed forces — wars and battles (Command), every army, wing and
+// fleet (Forces), everything you can buy (Build), and generals.
 import { useState } from 'react';
 import { store, useGame } from '../store';
-import { Section, Btn, Tabs, Stat, Bar, Tip } from '../common';
-import { money, moneyIC, num, pct } from '../format';
-import { UNITS, SHIPS, ECON, MIL, AIR, AIR_MISSION_INFO } from '../../engine/config';
-import { wingsOf, wingPlanes } from '../../engine/air';
-import { armyStrength, armyOrg, unitUpkeep, recruitCost, TRAITS, unitUpkeepBreakdown, armyMaxStrength, militaryStrength, trainDays } from '../../engine/military';
-import { doRecruit, hireGeneral, doAssignGeneral, setMobilization, cancelTraining, doOrderShip } from '../../engine/actions';
-import { PROV, WORLD } from '../../engine/geo';
-import { ownedBy } from '../../engine/world';
-import { nationTransportCapacity, shipCost, merchantCapacity } from '../../engine/naval';
-import type { ShipType, UnitType } from '../../engine/types';
+import { Section, Btn, Bar, Stat, Tabs, Tip } from '../common';
+import { num, neg, money, pct, cls } from '../format';
+import { PROV } from '../../engine/geo';
+import { atWar, controlledBy, isFriendly, ownedBy, neighborsOf } from '../../engine/world';
+import { scoreFor, truePower, bestPeaceTerms } from '../../engine/diplomacy';
+import { armyStrength, armyOrg, militaryStrength, TRAITS } from '../../engine/military';
+import { ECON, WAR_ECONOMY, ROE, TACTICS } from '../../engine/config';
+import { ensureCmd, commandSide } from '../../engine/battle';
+import { fmtDate } from '../../engine/events';
+import type { Battle, GameState, Stance, War } from '../../engine/types';
 import { focusProvince } from '../commands';
+import { live } from '../live';
 import { audio } from '../../audio/music';
+import { openBattle } from '../BattleView';
+import { planInvasion } from '../InvasionPlanner';
+import { ArmyRoster, AirForce, Navy } from './MilitaryForces';
+import { BuildTab } from './MilitaryBuild';
+
+const ORDERS: [Stance, string, string][] = [
+  ['advance', 'Attack', 'Armies advance to the front and attack enemy provinces they can win'],
+  ['defend', 'Defend', 'Armies stay put and rush to help neighbouring provinces under attack'],
+  ['hold', 'Hold', 'Armies only move when you order them'],
+  ['withdraw', 'Withdraw', 'Armies pull back into your own supplied territory'],
+];
+const say = (r?: { ok: boolean; message: string }) => r && store.toast(r.message, r.ok ? 'info' : 'bad');
+type Tab = 'command' | 'forces' | 'build' | 'generals';
 
 export function MilitaryPanel() {
   const g = useGame();
-  const [tab, setTab] = useState<'armies' | 'recruit' | 'generals' | 'navy' | 'air'>('armies');
-  const [picked, setPicked] = useState<number[]>([]);
-  const n = g.nations[g.player];
-  const armies = Object.values(g.armies).filter((a) => a.owner === g.player);
-  const [where, setWhere] = useState<number>(n.capital);
-  const myProvs = ownedBy(g, g.player).filter((p) => g.provinces[p].controller === g.player && g.provinces[p].status !== 'occupied' && g.provinces[p].status !== 'autonomous');
+  const me = g.player;
+  const n = g.nations[me];
+  const [tab, setTab] = useState<Tab>('command');
+  const armies = Object.values(g.armies).filter((a) => a.owner === me);
+  const battles = myBattles(g);
   const upkeep = n.budget.expenses.find((l) => l.key === 'military')?.amount ?? 0;
   return (
     <div className="panel-body">
-      <div className="grid3">
-        <Stat label="Military strength" value={militaryStrength(g, g.player).toLocaleString()} tip="Fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12), squadron (fighter 25, bomber 30) and warship, including units in training. Changes only when you raise, disband or lose units." />
+      <div className="grid4">
+        <Stat label="Military strength" value={militaryStrength(g, me).toLocaleString()} tip="Fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12), squadron and warship, including units in training. Changes only when you raise, disband or lose units." />
         <Stat label="Soldiers" value={num(armies.reduce((t, a) => t + armyStrength(a), 0))} tip={`${armies.reduce((t, a) => t + a.units.length, 0)} formations in ${armies.length} armies`} />
+        <Stat label="Battles now" value={battles.length} tone={battles.length ? 'bad' : undefined} />
         <Stat label="Upkeep" value={`${money(upkeep)}/yr`} tip="Wages, equipment maintenance, garrison supply and standby fuel." />
       </div>
-      <div className="mob">
-        <Tip wide tip={`Mobilisation (${ECON.MOBILIZATION_DAYS} days to full): raises the organisation cap of all formations from 55% to 100%, more than doubles available manpower; costs +${Math.round((ECON.MOBILIZED_UPKEEP - 1) * 100)}% military upkeep and −${Math.round((1 - ECON.MOBILIZED_OUTPUT) * 100)}% output.`}>
-          <label className="check"><input type="checkbox" checked={n.mobilize} onChange={(e) => { const r = store.cmd('setMobilization', [e.target.checked]); r && store.toast(r.message, 'info'); }} /> National mobilisation</label>
-        </Tip>
-        <Bar value={n.mobilization} h={6} />
-        <span className="small">{pct(n.mobilization)}</span>
-      </div>
-      <Tabs tabs={[['armies', `Armies (${armies.length})`], ['recruit', `Recruit${n.training.length ? ` (${n.training.length})` : ''}`], ['air', `Air force (${wingsOf(g, g.player).length})`], ['navy', 'Navy'], ['generals', 'Generals']]} value={tab} onChange={setTab} />
-      {tab === 'armies' && (() => {
-        const live = picked.filter((id) => g.armies[id]?.owner === g.player);
-        const toggle = (id: number) => setPicked(live.includes(id) ? live.filter((x) => x !== id) : [...live, id]);
-        return (
-        <>
-        <div className="bulk">
-          <label className="check"><input type="checkbox" checked={armies.length > 0 && live.length === armies.length} onChange={() => setPicked(live.length === armies.length ? [] : armies.map((a) => a.id))} /> Select all</label>
-          <b style={{ marginLeft: 8 }}>{live.length} selected</b>
-          <Btn small kind="danger" disabled={!live.length} onClick={() => store.setUI({ confirm: { title: `Disband ${live.length} ${live.length === 1 ? 'army' : 'armies'}?`, body: `${num(Math.round(live.reduce((t, id) => t + armyStrength(g.armies[id]), 0) * 0.9))} soldiers return to the manpower pool and their equipment is scrapped. Armies in battle or at sea are skipped. This cannot be undone.`, danger: true, okLabel: 'Disband', onOk: () => { const r = store.cmd('disbandArmies', [live]); if (r) store.toast(r.message, r.ok ? 'info' : 'bad'); setPicked([]); } } })}>Disband selected</Btn>
-          <span className="small muted">Tick armies here (or in the War Room) to disband many at once.</span>
-        </div>
-        <table className="tbl clickable">
-          <thead><tr><th /><th>Army</th><th>Location</th><th>Soldiers</th><th>Org</th><th>Supply</th><th>Orders</th></tr></thead>
-          <tbody>
-            {armies.map((a) => (
-              <tr key={a.id} className={live.includes(a.id) ? 'sel' : ''} onClick={() => { store.setUI({ selectedArmy: a.id, selectedProvince: a.location }); focusProvince(a.location); }}>
-                <td onClick={(e) => { e.stopPropagation(); toggle(a.id); }}><input type="checkbox" readOnly checked={live.includes(a.id)} /></td>
-                <td>{a.name}{a.battleId != null ? <span className="bad"> ⚔</span> : a.path.length ? ' →' : ''}</td>
-                <td>{a.embarked ? 'At sea' : PROV[a.location].name}</td>
-                <td>{num(armyStrength(a))}<span className="muted small">/{num(armyMaxStrength(a))}</span></td>
-                <td><Bar value={armyOrg(a)} h={5} /></td>
-                <td className={a.lastSupplyRatio < 0.6 ? 'bad' : ''}>{pct(a.lastSupplyRatio)}</td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <select value={a.stance} onChange={(e) => store.cmd('setStance', [a.id, e.target.value])}>
-                    <option value="hold">Hold</option><option value="defend">Defend</option><option value="advance">Attack</option><option value="withdraw">Withdraw</option>
-                  </select>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </>
-        );
-      })()}
-      {tab === 'recruit' && (
-        <>
-          <div className="row gap">
-            <span>Recruit in</span>
-            <select value={where} onChange={(e) => setWhere(+e.target.value)}>
-              {myProvs.map((p) => <option key={p} value={p}>{PROV[p].name}</option>)}
-            </select>
-            <span className="muted small">Manpower {num(n.manpower)}</span>
-          </div>
-          <table className="tbl">
-            <thead><tr><th>Type</th><th>Price</th><th>Upkeep/yr</th><th>Train</th><th>Strength</th><th /></tr></thead>
-            <tbody>
-              {(Object.keys(UNITS) as UnitType[]).filter((t) => t !== 'air' && t !== 'bomber').map((t) => {
-                const u = UNITS[t];
-                const br = unitUpkeepBreakdown(t, n);
-                return (
-                  <tr key={t}>
-                    <td><Tip wide tip={<div><b>{u.label}</b><br />{u.desc}<br />{num(u.personnel)} personnel · speed {u.speed} km/day<br />Soft {u.soft} · Hard {u.hard} · Defence {u.defense} · Breakthrough {u.breakthrough} · Armour {pct(u.hardness)}<br />Supply {u.supply}/day · fuel {u.fuel}/day</div>}>{u.label}</Tip></td>
-                    <td>{money(recruitCost(t, n), { digits: 2 })}</td>
-                    <td><Tip tip={`Wages ${br.wages.toFixed(2)} + maintenance ${br.maint.toFixed(2)} + garrison supply ${br.supply.toFixed(2)} + fuel ${br.fuel.toFixed(2)}`}>{money(unitUpkeep(t, n), { digits: 2 })}</Tip></td>
-                    <td>{trainDays(t, n)}d</td>
-                    <td>+{u.points}</td>
-                    <td><Btn small kind="primary" onClick={() => { const r = store.cmd('doRecruit', [t, where]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); r.ok && audio.sfx('coins'); } }}>Recruit</Btn></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {n.training.length > 0 && <Section title="In training" icon="manpower">
-            {n.training.map((t) => (
-              <div key={t.id} className="queue-row"><span>{UNITS[t.type].short} — {PROV[t.province].name}</span><Bar value={1 - t.daysLeft / t.totalDays} /><span className="muted">{t.daysLeft}d</span>
-                <button className="iconbtn small" title="Cancel" onClick={() => store.setUI({ confirm: { title: 'Cancel training?', body: 'Recruits return to the manpower pool. The recruitment fee is not refunded.', danger: true, onOk: () => store.cmd('cancelTraining', [t.id]) } })}>✕</button></div>
-            ))}
-          </Section>}
-          <p className="small muted">The price includes full equipment. Formations train for a few weeks, then appear fully equipped in the province you chose. Factories make them cheaper and faster. Max {MIL.MAX_ARMY_UNITS} formations per army. Fighters and bombers: Air force tab; warships: Navy tab.</p>
-        </>
-      )}
-      {tab === 'generals' && (
-        <>
-          <Section title="Your generals" icon="star">
-            {Object.values(g.generals).filter((x) => x.owner === g.player && !x.available).map((x) => (
-              <div key={x.id} className="general-row">
-                <div><b>{x.name}</b> <span className="chip">{TRAITS[x.trait].label}</span><div className="small muted">Atk {x.attack} · Def {x.defense} · Log {x.logistics} — {TRAITS[x.trait].desc}</div></div>
-                <select value={x.armyId ?? ''} onChange={(e) => store.cmd('doAssignGeneral', [x.id, e.target.value === '' ? null : +e.target.value])}>
-                  <option value="">Reserve</option>
-                  {armies.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
-            ))}
-          </Section>
-          <Section title="Available for appointment" icon="people">
-            {Object.values(g.generals).filter((x) => x.owner === g.player && x.available).map((x) => (
-              <div key={x.id} className="general-row">
-                <div><b>{x.name}</b> <span className="chip">{TRAITS[x.trait].label}</span><div className="small muted">Atk {x.attack} · Def {x.defense} · Log {x.logistics} — {TRAITS[x.trait].desc}</div></div>
-                <Btn small kind="primary" disabled={n.treasury < x.hireCost} onClick={() => { const r = store.cmd('hireGeneral', [x.id]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Hire {moneyIC(x.hireCost)}</Btn>
-              </div>
-            ))}
-            <p className="small muted">Generals cost a one-time appointment fee and $250M/yr salary. They gain experience in battle and improve their skills.</p>
-          </Section>
-        </>
-      )}
-      {tab === 'navy' && <NavyTab />}
-      {tab === 'air' && <AirTab />}
+      <Briefing />
+      <Tabs tabs={[['command', `Command${battles.length ? ` (${battles.length}⚔)` : ''}`], ['forces', `Forces (${armies.length})`], ['build', `Build${n.training.length + n.shipyard.length ? ` (${n.training.length + n.shipyard.length})` : ''}`], ['generals', 'Generals']]} value={tab} onChange={setTab} />
+      {tab === 'command' && <CommandTab />}
+      {tab === 'forces' && <><ArmyRoster /><AirForce /><Navy /></>}
+      {tab === 'build' && <BuildTab />}
+      {tab === 'generals' && <GeneralsTab />}
     </div>
   );
 }
 
-function AirTab() {
+const myBattles = (g: GameState) => g.activeBattles.map((id) => g.battles[id]).filter((b): b is Battle => !!b && b.result == null && commandSide(g, b, g.player) != null);
+
+// ---------------------------------------------------------------- advisor
+interface Advice { text: string; act?: [string, () => void]; tone?: 'bad' | 'good' }
+/** The chief of staff's three most useful suggestions right now. */
+function advice(g: GameState): Advice[] {
+  const me = g.player;
+  const out: Advice[] = [];
+  const armies = Object.values(g.armies).filter((a) => a.owner === me);
+  const wars = g.wars.filter((w) => w.attackers.includes(me) || w.defenders.includes(me));
+  const battles = myBattles(g);
+  if (battles.length) {
+    const b = battles[0];
+    out.push({ text: `You are fighting ${battles.length === 1 ? 'a battle' : `${battles.length} battles`}${battles.length === 1 ? ` at ${PROV[b.province].name}` : ''}. Open it and pick each day's move: outguessing the enemy is the biggest edge you control.`, act: ['Command the battle', () => openBattle(b.id)], tone: 'bad' });
+  }
+  for (const w of wars) {
+    const leader = w.leaderA === me || w.leaderD === me;
+    const score = scoreFor(w, me);
+    const t = leader && score > 15 ? bestPeaceTerms(g, w, me) : null;
+    if (t && !t.white && (t.annex || t.provinces.length)) out.push({ text: `You are winning the ${w.name} (war score ${score.toFixed(0)}). They would accept peace now and give up ${t.annex ? 'everything' : `${t.provinces.length} province${t.provinces.length === 1 ? '' : 's'}`}.`, act: ['Make peace now', () => askBestPeace(g, w)], tone: 'good' });
+  }
+  if (wars.length) {
+    const enemy = wars[0].attackers.includes(me) ? wars[0].leaderD : wars[0].leaderA;
+    const idle = armies.filter((a) => !a.campaign && a.battleId == null && !a.path.length && !a.embarked && a.stance !== 'advance');
+    if (idle.length >= 2) out.push({ text: `${idle.length} of your armies are sitting still. Send them to invade ${g.nations[enemy]?.name}: they take its provinces one by one on their own.`, act: ['Plan the invasion', () => planInvasion(enemy)] });
+  } else {
+    const nb = neighborsOf(g, me).filter((x) => g.nations[x]?.alive && !isFriendly(g, me, x) && g.nations[x].overlord !== me);
+    // the biggest neighbour you can still clearly beat
+    const weakest = nb.filter((x) => truePower(g, x) < truePower(g, me) * 0.8).sort((a, b) => ownedBy(g, b).length - ownedBy(g, a).length || truePower(g, b) - truePower(g, a))[0];
+    if (weakest) out.push({ text: `At peace. ${g.nations[weakest].name} next door is weaker than you. To conquer a country, open the invasion planner: it shows both sides and declares war and invades in one go.`, act: [`Plan an invasion of ${g.nations[weakest].name}`, () => planInvasion(weakest)] });
+    else out.push({ text: 'At peace. Grow your economy and army first; when you are ready, select any foreign province and press “Plan an invasion”.' });
+  }
+  const hungry = armies.filter((a) => a.lastSupplyRatio < 0.5 && !a.embarked);
+  if (hungry.length) out.push({ text: `${hungry.length} ${hungry.length === 1 ? 'army is' : 'armies are'} short of supply and fight far worse. Pull them back, or build depots and railways behind the front.`, tone: 'bad' });
+  if (wars.length && !armies.some((a) => a.units.some((u) => u.type === 'artillery'))) out.push({ text: 'You have no artillery, so you cannot call barrages in battle. Recruit a few Artillery Regiments (Build tab).' });
+  return out.slice(0, 3);
+}
+function Briefing() {
   const g = useGame();
-  const n = g.nations[g.player];
-  const wings = wingsOf(g, g.player);
-  const bases = ownedBy(g, g.player).filter((p) => g.provinces[p].controller === g.player && g.provinces[p].status !== 'occupied' && g.provinces[p].status !== 'autonomous');
-  const [base, setBase] = useState<number>(n.capital);
-  const squads = wings.flatMap((w) => w.units);
+  const [open, setOpen] = useState(true);
+  const list = advice(g);
+  if (!list.length) return null;
   return (
-    <>
-      <div className="grid3">
-        <Stat label="Aircraft" value={wings.reduce((t, w) => t + wingPlanes(w), 0)} tip="Fighters and bombers in all your air wings." />
-        <Stat label="Squadrons" value={`${squads.filter((u) => u.type === 'air').length} fighter · ${squads.filter((u) => u.type === 'bomber').length} bomber`} />
-        <Stat label="Air wings" value={wings.length} />
-      </div>
-      {wings.map((w) => (
-        <div key={w.id} className="army-row" onClick={() => { store.setUI({ selectedWing: w.id, selectedArmy: null, selectedFleet: null }); focusProvince(w.base); }}>
-          <span className="chip">{w.units.filter((u) => u.type === 'bomber').length * 2 > w.units.length ? '✈ BMB' : '✈ FTR'}</span>
-          <b>{w.name}</b>
-          <span className="muted small">{PROV[w.base].name}{w.rebase ? ` → ${PROV[w.rebase.to].name}` : ''} · {wingPlanes(w)} aircraft · {AIR_MISSION_INFO[w.mission].label}{w.mission === 'bombing' && w.target != null ? `: ${PROV[w.target].name}` : w.mission === 'naval' && w.target != null ? `: ${WORLD.seas[w.target].name}` : ''}</span>
+    <div className={cls('briefing', !open && 'closed')}>
+      <div className="row gap" onClick={() => setOpen(!open)} style={{ cursor: 'pointer' }}><b>🎖 Chief of staff</b><span className="small muted">{open ? 'hide' : `${list.length} suggestion${list.length === 1 ? '' : 's'}`}</span></div>
+      {open && list.map((a, i) => (
+        <div key={i} className={cls('advice', a.tone)}>
+          <span>{a.text}</span>
+          {a.act && <Btn small kind="primary" onClick={() => { audio.sfx('click'); a.act![1](); }}>{a.act[0]}</Btn>}
         </div>
       ))}
-      {!wings.length && <p className="muted">You have no air force yet.</p>}
-      {wings.length > 0 && <p className="small muted">Click a wing to give it orders or retire it.</p>}
-      <Section title="Build aircraft" icon="factory">
-        <div className="row gap">
-          <span>Airbase</span>
-          <select value={base} onChange={(e) => setBase(+e.target.value)}>{bases.map((p) => <option key={p} value={p}>{PROV[p].name}</option>)}</select>
+    </div>
+  );
+}
+function askBestPeace(g: GameState, w: War) {
+  const t = bestPeaceTerms(g, w, g.player);
+  if (!t) { store.toast('The enemy refuses any peace right now.', 'bad'); return; }
+  const what = t.white ? 'a white peace (nobody gains anything)' : t.annex ? 'annexing them completely' : `${t.provinces.length} province${t.provinces.length === 1 ? '' : 's'}: ${t.provinces.slice(0, 12).map((p) => PROV[p].name).join(', ')}${t.provinces.length > 12 ? '…' : ''}`;
+  store.setUI({ confirm: { title: `End the ${w.name}?`, body: `The best terms they accept today: ${what}.\n\nYou can also keep fighting to take more, or negotiate other terms in Diplomacy.`, okLabel: 'Sign the peace', onOk: () => say(store.cmd('doBestPeace', [w.id])) } });
+}
+
+// ---------------------------------------------------------------- command
+function CommandTab() {
+  const g = useGame();
+  const me = g.player;
+  const n = g.nations[me];
+  const armies = Object.values(g.armies).filter((a) => a.owner === me);
+  const wars = g.wars.filter((w) => w.attackers.includes(me) || w.defenders.includes(me));
+  const battles = myBattles(g);
+  const [lost7, killed7] = live.recent(g, 7);
+  const count = (st: Stance) => armies.filter((a) => a.stance === st && !a.campaign).length;
+  const campaigning = armies.filter((a) => a.campaign).length;
+  return (
+    <>
+      {battles.length > 0 && (
+        <Section title={`Battles now (${battles.length})`} icon="sword">
+          {battles.map((b) => <BattleRow key={b.id} b={b} />)}
+        </Section>
+      )}
+      {wars.map((w) => <WarSummary key={w.id} w={w} />)}
+      {wars.length > 0 && <p className="small muted">Last 7 days: <b className="bad">{num(lost7)}</b> of your soldiers lost · <b>{num(killed7)}</b> enemy soldiers lost.</p>}
+      {!wars.length && <PeaceTargets />}
+      <Section title="Standing orders for all armies" icon="sword" right={campaigning ? <span className="small muted">{campaigning} invading</span> : undefined}>
+        <div className="orders">
+          {ORDERS.map(([st, label, tip]) => (
+            <button key={st} className="btn" title={tip} onClick={() => { audio.sfx('click'); say(store.cmd('setAllStances', [st])); }}>
+              {label}<small>{count(st)} armies</small>
+            </button>
+          ))}
         </div>
-        <table className="tbl">
-          <thead><tr><th>Type</th><th>Price</th><th>Upkeep/yr</th><th>Train</th><th>Reach</th><th /></tr></thead>
-          <tbody>
-            {(['air', 'bomber'] as const).map((t) => (
-              <tr key={t}>
-                <td><Tip wide tip={<div><b>{UNITS[t].label}</b><br />{UNITS[t].desc}<br />{AIR.PLANES[t]} aircraft · {num(UNITS[t].personnel)} crew</div>}>{UNITS[t].label}</Tip></td>
-                <td>{money(recruitCost(t, n), { digits: 2 })}</td>
-                <td>{money(unitUpkeep(t, n), { digits: 2 })}</td>
-                <td>{trainDays(t, n)}d</td>
-                <td>{num(AIR.RANGE[t])} km</td>
-                <td><Btn small kind="primary" onClick={() => { const r = store.cmd('doRecruit', [t, base]); if (r) { store.toast(r.message, r.ok ? 'good' : 'bad'); r.ok && audio.sfx('coins'); } }}>Build</Btn></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="small muted">New squadrons join an air wing at that airbase. Click a wing's jet on the map to give it a mission: support your battles, defend your airspace, bomb a province or strike ships. Air superiority over a battle gives up to +{Math.round(AIR.SUPERIORITY * 100)}% attack, and bombers hit the enemy hard.</p>
+        <p className="small muted">Standing orders replace any invasion orders. To pick armies one by one, use the Forces tab.</p>
+      </Section>
+      <Section title="War footing" icon="factory">
+        <div className="mob">
+          <Tip wide tip={`Mobilisation (${ECON.MOBILIZATION_DAYS} days to full): raises the organisation cap of all formations from 55% to 100% and more than doubles available manpower; costs +${Math.round((ECON.MOBILIZED_UPKEEP - 1) * 100)}% military upkeep and −${Math.round((1 - ECON.MOBILIZED_OUTPUT) * 100)}% output. Wars start it automatically.`}>
+            <label className="check"><input type="checkbox" checked={n.mobilize} onChange={(e) => say(store.cmd('setMobilization', [e.target.checked]))} /> Mobilised</label>
+          </Tip>
+          <Bar value={n.mobilization} h={6} />
+          <span className="small">{pct(n.mobilization)}</span>
+        </div>
+        <div className="policy-opts">
+          {(Object.keys(WAR_ECONOMY) as (keyof typeof WAR_ECONOMY)[]).map((k) => (
+            <button key={k} className={cls('posture', n.regime.warEconomy === k && 'on')} title={WAR_ECONOMY[k].desc} onClick={() => n.regime.warEconomy !== k && say(store.cmd('doWarEconomy', [k]))}>{WAR_ECONOMY[k].label}<span>{WAR_ECONOMY[k].desc}</span></button>
+          ))}
+        </div>
+        <div className="row gap small" style={{ marginTop: 6 }}>
+          <span>Rules of engagement</span>
+          <select value={n.regime.roe} onChange={(e) => say(store.cmd('doRoe', [e.target.value]))} title={ROE[n.regime.roe].desc}>
+            {(Object.keys(ROE) as (keyof typeof ROE)[]).map((k) => <option key={k} value={k}>{ROE[k].label}</option>)}
+          </select>
+          <span className="muted">{ROE[n.regime.roe].desc}</span>
+        </div>
       </Section>
     </>
   );
 }
 
-function NavyTab() {
+/** At peace: the neighbours you could take on, weakest first. */
+function PeaceTargets() {
+  const g = useGame();
+  const me = g.player;
+  const mine = truePower(g, me);
+  const nb = neighborsOf(g, me).filter((x) => g.nations[x]?.alive && !isFriendly(g, me, x) && g.nations[x].overlord !== me).sort((a, b) => truePower(g, a) - truePower(g, b)).slice(0, 6);
+  return (
+    <Section title="You are at peace" icon="crown">
+      <p className="small">To conquer a country, plan an invasion: you see both sides and their allies, choose the armies, and they declare war and take it province by province. Any country works — select one of its provinces on the map. Your neighbours:</p>
+      <div className="targets">
+        {nb.map((x) => {
+          const r = mine / Math.max(1, truePower(g, x));
+          return (
+            <div key={x} className="target">
+              <span className="swatch" style={{ background: g.nations[x].color }} /><b>{g.nations[x].name}</b>
+              <span className={cls('small', r > 1.5 ? 'good' : r < 0.8 ? 'bad' : 'warn')}>{r > 1.5 ? 'weaker' : r < 0.8 ? 'stronger' : 'similar'}</span>
+              <Btn small onClick={() => planInvasion(x)}>Invade…</Btn>
+            </div>
+          );
+        })}
+        {!nb.length && <span className="small muted">No hostile neighbours: select any foreign province to plan an invasion overseas.</span>}
+      </div>
+    </Section>
+  );
+}
+
+function WarSummary({ w }: { w: War }) {
+  const g = useGame();
+  const me = g.player;
+  const score = scoreFor(w, me);
+  const mySide = w.attackers.includes(me) ? 'A' : 'D';
+  let myCas = mySide === 'A' ? w.casualtiesA : w.casualtiesD;
+  let theirCas = mySide === 'A' ? w.casualtiesD : w.casualtiesA;
+  for (const id of g.activeBattles) {
+    const b = g.battles[id];
+    if (!b || b.warId !== w.id) continue;
+    const a = b.attacker.losses.killed + b.attacker.losses.wounded, d = b.defender.losses.killed + b.defender.losses.wounded;
+    const atkMine = mySide === 'A' ? w.attackers.includes(b.attacker.nation) : w.defenders.includes(b.attacker.nation);
+    if (atkMine) { myCas += a; theirCas += d; } else { myCas += d; theirCas += a; }
+  }
+  const enemies = mySide === 'A' ? w.defenders : w.attackers;
+  const enemyLeader = mySide === 'A' ? w.leaderD : w.leaderA;
+  const taken = enemies.flatMap((e) => ownedBy(g, e)).filter((p) => g.provinces[p].controller === me || isFriendly(g, me, g.provinces[p].controller));
+  const lost = ownedBy(g, me).filter((p) => atWar(g, me, g.provinces[p].controller));
+  const leader = w.leaderA === me || w.leaderD === me;
+  const invading = Object.values(g.armies).filter((a) => a.owner === me && a.campaign && enemies.includes(a.campaign)).length;
+  return (
+    <div className="war-card">
+      <h4>{w.name}<span className="small muted">since {fmtDate(g, w.startDay)}</span></h4>
+      <div className="score-bar"><div className="sb-neg" style={{ width: `${Math.max(0, -score) / 2}%` }} /><div className="sb-mid" /><div className="sb-pos" style={{ width: `${Math.max(0, score) / 2}%` }} /></div>
+      <div className="vs">
+        <b>You{(mySide === 'A' ? w.attackers : w.defenders).length > 1 ? ' & allies' : ''}</b><span className="c">war score {score.toFixed(0)}</span><b className="r">{enemies.map((x) => g.nations[x]?.name).join(', ')}</b>
+        <span className="big-num bad">{neg(myCas)}</span><span className="c">soldiers lost</span><span className="big-num r">{neg(theirCas)}</span>
+        <span className="big-num good">{taken.length}</span><span className="c">provinces taken</span><span className="big-num r bad">{lost.length}</span>
+      </div>
+      {lost.length > 0 && <p className="small">Held by the enemy: {lost.slice(0, 8).map((p) => <a key={p} className="link" onClick={() => { focusProvince(p); store.setUI({ selectedProvince: p }); }}>{PROV[p].name} </a>)}{lost.length > 8 ? `+${lost.length - 8} more` : ''}</p>}
+      <div className="row gap wrap">
+        <Btn small kind="primary" onClick={() => planInvasion(enemyLeader)}>{invading ? `Invading with ${invading} armies — add more…` : `Invade ${g.nations[enemyLeader]?.name}…`}</Btn>
+        {leader ? <>
+          <Btn small onClick={() => askBestPeace(g, w)}>Make peace now…</Btn>
+          <Btn small onClick={() => store.setUI({ panel: 'diplomacy', peaceWar: w.id })}>Other terms…</Btn>
+        </> : <span className="small muted">Peace is negotiated by the war leaders.</span>}
+        <Btn small onClick={() => { const f = lost[0] ?? taken[0] ?? controlledBy(g, me)[0]; if (f != null) focusProvince(f); store.setUI({ mapMode: 'military' }); }}>Show the front</Btn>
+      </div>
+    </div>
+  );
+}
+
+function BattleRow({ b }: { b: Battle }) {
+  const g = useGame();
+  const side = commandSide(g, b, g.player)!;
+  const attacking = side === 'a';
+  const ours = attacking ? b.attacker : b.defender, theirs = attacking ? b.defender : b.attacker;
+  const lost = (x: typeof ours) => x.losses.killed + x.losses.wounded;
+  const myArmies = ours.armyIds.map((id) => g.armies[id]).filter((a) => a && a.battleId === b.id);
+  const enemy = g.nations[theirs.nation];
+  const c = ensureCmd(b)[side];
+  const myOrg = myArmies.length ? myArmies.reduce((t, a) => t + armyOrg(a!), 0) / myArmies.length : 0;
+  const last = b.timeline[b.timeline.length - 1];
+  const res = last?.edge == null ? null : last.edge === side ? 'won' : 'lost';
+  return (
+    <div className="battle-row">
+      <div className="row gap">
+        <b className="link" onClick={() => openBattle(b.id)}>{attacking ? '⚔ Attacking' : '🛡 Defending'} {PROV[b.province].name}</b>
+        <span className="small muted">vs {enemy?.name} · day {b.timeline.length}{res ? ` · yesterday ${res === 'won' ? 'you won the day' : 'they won the day'}` : ''}</span>
+        <div style={{ flex: 1 }} />
+        <Btn small kind="primary" onClick={() => openBattle(b.id)}>Command ▸</Btn>
+      </div>
+      <div className="vs">
+        <span>You: {num(ours.strength)}</span><span className="c">losses</span><span className="r">{enemy?.name}: {num(theirs.strength)}</span>
+        <span className="big-num bad">{neg(lost(ours))}</span><span /><span className="big-num r">{neg(lost(theirs))}</span>
+        <Bar value={myOrg} h={5} title="Your organisation: at 0 your troops break" /><span className="c">order</span><Bar value={theirs.org} h={5} title="Enemy organisation" />
+      </div>
+      <div className="small muted">Tomorrow: {TACTICS[c.plan].icon} {TACTICS[c.plan].label}{c.order === 'auto' ? ' (general decides)' : ''}{c.hint ? ` · scouts: enemy will ${TACTICS[c.hint].label.toLowerCase()} (${Math.round(c.hintSure * 100)}%)` : ''}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- generals
+function GeneralsTab() {
   const g = useGame();
   const n = g.nations[g.player];
-  const fleets = Object.values(g.fleets).filter((f) => f.owner === g.player);
-  const ports = ownedBy(g, g.player).filter((p) => g.provinces[p].buildings.port > 0 && g.provinces[p].controller === g.player);
-  const [port, setPort] = useState<number | undefined>(ports[0]);
-  const tc = nationTransportCapacity(g, n);
+  const armies = Object.values(g.armies).filter((a) => a.owner === g.player);
   return (
     <>
-      <div className="grid3">
-        <Stat label="Fleets" value={fleets.length} />
-        <Stat label="Transport capacity" value={`${Math.max(0, tc.cap - tc.used)}/${tc.cap}`} tip={`Brigades that can be at sea at once: ${merchantCapacity(n)} from chartered merchant shipping (more for bigger economies) + 4 per Transport Flotilla.`} />
-        <Stat label="Warships" value={fleets.reduce((t, f) => t + Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup), 0)} />
-      </div>
-      {fleets.map((f) => (
-        <div key={f.id} className="army-row" onClick={() => store.setUI({ selectedFleet: f.id, selectedArmy: null })}>
-          <b>{f.name}</b><span className="muted small"> {WORLD.seas[f.sea].name}</span><div style={{ flex: 1 }} />
-          <span className="small">{(['destroyer', 'cruiser', 'battlegroup', 'transport'] as ShipType[]).map((k) => `${Math.round(f.ships[k])} ${k.slice(0, 3)}`).join(' · ')}</span>
-        </div>
-      ))}
-      {ports.length ? (
-        <Section title="Shipyards" icon="anchor">
-          <div className="row gap"><span>Build at</span><select value={port} onChange={(e) => setPort(+e.target.value)}>{ports.map((p) => <option key={p} value={p}>{PROV[p].name}</option>)}</select></div>
-          <table className="tbl">
-            <thead><tr><th>Ship</th><th>Price</th><th>Build</th><th>Upkeep/yr</th><th /></tr></thead>
-            <tbody>
-              {(Object.keys(SHIPS) as ShipType[]).map((k) => (
-                <tr key={k}><td>{SHIPS[k].label}</td><td>{money(shipCost(k, n), { digits: 1 })}</td><td>{SHIPS[k].days}d</td><td>{money(SHIPS[k].personnel * MIL.SOLDIER_WAGE + SHIPS[k].cost * 0.06, { digits: 2 })}</td>
-                  <td><Btn small kind="primary" disabled={port == null || n.treasury < shipCost(k, n)} onClick={() => { const r = store.cmd('doOrderShip', [k, port!]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Lay down</Btn></td></tr>
-              ))}
-            </tbody>
-          </table>
-          {n.shipyard.map((o) => <div key={o.id} className="queue-row"><span>{SHIPS[o.type].label} — {PROV[o.port].name}</span><Bar value={1 - o.daysLeft / o.totalDays} /><span className="muted">{o.daysLeft}d</span></div>)}
-        </Section>
-      ) : <p className="muted small">You have no ports. Build one in a coastal province to construct ships and embark armies.</p>}
-      <p className="small muted">To move an army by sea: select it in a friendly port and right-click a coastal province with no land route. Enemy fleets on the route can intercept transports.</p>
+      <Section title="Your generals" icon="star">
+        {Object.values(g.generals).filter((x) => x.owner === g.player && !x.available).map((x) => (
+          <div key={x.id} className="general-row">
+            <div><b>{x.name}</b> <span className="chip">{TRAITS[x.trait].label}</span><div className="small muted">Atk {x.attack} · Def {x.defense} · Log {x.logistics} — {TRAITS[x.trait].desc}</div></div>
+            <select value={x.armyId ?? ''} onChange={(e) => store.cmd('doAssignGeneral', [x.id, e.target.value === '' ? null : +e.target.value])}>
+              <option value="">Reserve</option>
+              {armies.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        ))}
+      </Section>
+      <Section title="Available for appointment" icon="people">
+        {Object.values(g.generals).filter((x) => x.owner === g.player && x.available).map((x) => (
+          <div key={x.id} className="general-row">
+            <div><b>{x.name}</b> <span className="chip">{TRAITS[x.trait].label}</span><div className="small muted">Atk {x.attack} · Def {x.defense} · Log {x.logistics} — {TRAITS[x.trait].desc}</div></div>
+            <Btn small kind="primary" disabled={n.treasury < x.hireCost} onClick={() => { const r = store.cmd('hireGeneral', [x.id]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Hire {money(x.hireCost)}</Btn>
+          </div>
+        ))}
+        <p className="small muted">Generals cost a one-time appointment fee and $250M/yr salary. They gain experience in battle and improve their skills. A general in a battle also picks its manoeuvres when you leave it to him; aggressive ones like to assault, cautious ones to hold.</p>
+      </Section>
     </>
   );
 }
+

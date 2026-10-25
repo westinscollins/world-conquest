@@ -299,7 +299,7 @@ export function setRoe(s: GameState, n: Nation, roe: 'restrained' | 'standard' |
   n.regime.roe = roe; touchGov();
   return null;
 }
-/** War Room shortcut: every air wing gets the same kind of mission. */
+/** Military panel shortcut: every air wing gets the same kind of mission. */
 export function setAirMission(s: GameState, n: Nation, mission: 'none' | 'cas' | 'bombing' | 'defense', target: string | null): string | null {
   if (!AIR_MISSIONS[mission]) return 'Invalid mission.';
   if (mission === 'bombing' && (!target || !atWar(s, n.id, target))) return 'Choose an enemy you are at war with to bomb.';

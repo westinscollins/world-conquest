@@ -72,6 +72,10 @@ export function migrate(raw: any): GameState {
     }
     for (const a of Object.values<any>(raw.armies)) if (!a.units.length) { const g = a.generalId != null ? raw.generals[a.generalId] : null; if (g) g.armyId = null; delete raw.armies[a.id]; }
   }
+  if (raw.version < 9) {
+    // submarines (battle command and campaign orders are optional fields, filled in when used)
+    for (const f of Object.values<any>(raw.fleets)) f.ships.submarine ??= 0;
+  }
   s.version = SAVE_VERSION;
   // derived data is recomputed rather than trusted
   for (const p of s.provinces) p.infra = infraOf(p);

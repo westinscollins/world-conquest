@@ -40,7 +40,7 @@ function zoneFleets(s: GameState) {
   if (zonePower.s !== s || zonePower.day !== s.day) {
     const byZone = new Map<number, { owner: string; p: number }[]>();
     for (const f of Object.values(s.fleets)) {
-      const pw = f.ships.destroyer * 8 + f.ships.cruiser * 19 + f.ships.battlegroup * 50;
+      const pw = f.ships.destroyer * 8 + f.ships.cruiser * 19 + f.ships.battlegroup * 50 + (f.ships.submarine ?? 0) * 10;
       (byZone.get(f.sea) || byZone.set(f.sea, []).get(f.sea)!).push({ owner: f.owner, p: pw });
     }
     zonePower = { s, day: s.day, byZone };

@@ -1,3 +1,4 @@
+import { openBattle } from './BattleView';
 import { live } from './live';
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { GameState, Army } from '../engine/types';
@@ -355,7 +356,7 @@ export function MapView() {
       if (sp != null) strikeAt(+sp);
       return;
     }
-    if (battleEl) { store.setUI({ battleReport: +battleEl.getAttribute('data-battle')! }); return; }
+    if (battleEl) { openBattle(+battleEl.getAttribute('data-battle')!); return; }
     if (armyEl && ui.moveMode != null) { onMapRightClick(+armyEl.getAttribute('data-loc')!, null); store.setUI({ moveMode: null }); return; }
     if (armyEl) {
       const id = +armyEl.getAttribute('data-army')!;
@@ -513,10 +514,12 @@ function Labels({ labels, k, px, g }: { labels: ReturnType<typeof nationLabels>;
 
 function fleetGlyph(f: GameState['fleets'][number]): Glyph {
   if (f.ships.battlegroup >= 0.5) return 'carrier';
+  const subs = f.ships.submarine ?? 0;
+  if (subs >= 0.5 && subs >= f.ships.destroyer + f.ships.cruiser) return 'submarine';
   if (f.ships.destroyer + f.ships.cruiser < 0.5) return 'transport';
   return 'warship';
 }
-const shipCount = (f: GameState['fleets'][number]) => Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup + f.ships.transport);
+const shipCount = (f: GameState['fleets'][number]) => Math.round(f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup + (f.ships.submarine ?? 0) + f.ships.transport);
 
 function SeaLayer({ g, k, px }: { g: GameState; k: number; px: number }) {
   const ui = store.ui;

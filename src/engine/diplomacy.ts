@@ -118,7 +118,7 @@ export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck 
     if (!jn?.alive || jn.isPlayer || atWar(s, j, targetId) || peekRel(s, j, targetId)?.alliance) continue;
     if (rel(s, j, a.id).value > 50 && rel(s, j, targetId).value < 0) joinWar(s, war, j, 'attackers');
   }
-  // both sides mobilise (players can stand down in the War Room)
+  // both sides mobilise (players can stand down in the Military panel)
   for (const x of [a, t]) mobiliseForWar(s, x);
   return c;
 }
@@ -127,7 +127,7 @@ export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck 
 function mobiliseForWar(s: GameState, n: Nation) {
   if (n.mobilize) return;
   n.mobilize = true;
-  if (n.isPlayer) addEvent(s, 'military', `${n.name} mobilises for war: your armies reach full organisation over ${ECON.MOBILIZATION_DAYS} days (unmobilised armies fight at no more than 55%). You can stand down in the War Room.`, [n.id], { important: true });
+  if (n.isPlayer) addEvent(s, 'military', `${n.name} mobilises for war: your armies reach full organisation over ${ECON.MOBILIZATION_DAYS} days (unmobilised armies fight at no more than 55%). You can stand down in the Military panel.`, [n.id], { important: true });
 }
 
 export function joinWar(s: GameState, war: War, nation: string, side: 'attackers' | 'defenders') {
@@ -216,6 +216,29 @@ export function evaluatePeace(s: GameState, w: War, from: string, t: PeaceTerms)
   return { accept: false, reason: `Terms cost ${cost.toFixed(0)} war score, but your war score is only ${score.toFixed(0)}${give > 1 ? ` (+${give.toFixed(0)} from enemy war-weariness)` : ''}.`, cost, score };
 }
 
+/**
+ * The most a war leader can take right now: every enemy province their side holds that the enemy
+ * will cede (most valuable first), annexation if they accept that, else a white peace if both
+ * sides are ready; null if the enemy refuses everything (or is a human player, who must answer).
+ */
+export function bestPeaceTerms(s: GameState, w: War, from: string): PeaceTerms | null {
+  const mine = w.attackers.includes(from) ? w.attackers : w.defenders;
+  const theirs = w.attackers.includes(from) ? w.defenders : w.attackers;
+  const base: PeaceTerms = { provinces: [], taker: from, reparations: 0, vassalize: false, annex: false, white: false };
+  const enemy = s.nations[w.attackers.includes(from) ? w.leaderD : w.leaderA];
+  if (enemy?.isPlayer) {
+    const held = s.provinces.filter((p) => theirs.includes(p.owner) && mine.includes(p.controller)).map((p) => p.id);
+    return held.length ? { ...base, provinces: held } : { ...base, white: true, taker: null };
+  }
+  if (evaluatePeace(s, w, from, { ...base, annex: true }).accept && theirs.length === 1) return { ...base, annex: true };
+  const held = s.provinces.filter((p) => theirs.includes(p.owner) && mine.includes(p.controller)).map((p) => p.id).sort((a, b) => provinceValue(s, b) - provinceValue(s, a));
+  const take: number[] = [];
+  for (const p of held) if (evaluatePeace(s, w, from, { ...base, provinces: [...take, p] }).accept) take.push(p);
+  if (take.length) return { ...base, provinces: take };
+  if (evaluatePeace(s, w, from, { ...base, white: true, taker: null }).accept) return { ...base, white: true, taker: null };
+  return null;
+}
+
 /** Apply a peace settlement. `taker` is the side that receives gains. */
 export function makePeace(s: GameState, w: War, taker: string, t: PeaceTerms) {
   const winners = w.attackers.includes(taker) ? w.attackers : w.defenders;
@@ -262,7 +285,7 @@ export function makePeace(s: GameState, w: War, taker: string, t: PeaceTerms) {
     const nn = s.nations[n];
     if (!nn || !nn.mobilize || isAtWar(s, n)) continue;
     nn.mobilize = false; // (like mobilisation on entering a war, standing down is automatic)
-    if (nn.isPlayer) addEvent(s, 'military', `${nn.name} stands down: with no war left, the armies demobilise to save upkeep. You can mobilise again in the War Room.`, [n]);
+    if (nn.isPlayer) addEvent(s, 'military', `${nn.name} stands down: with no war left, the armies demobilise to save upkeep. You can mobilise again in the Military panel.`, [n]);
   }
   addEvent(s, 'peace', `Peace: the ${w.name} ends${t.white ? ' in a white peace' : ''}. ${parts.length ? parts.join('; ') + '.' : ''}`, [...winners, ...losers], { important: true });
   for (const l of losers) checkNationAlive(s, l);

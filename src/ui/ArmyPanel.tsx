@@ -1,3 +1,4 @@
+import { openBattle } from './BattleView';
 import { useState } from 'react';
 import { store, useStore } from './store';
 import { PROV, WORLD } from '../engine/geo';
@@ -57,7 +58,7 @@ export function ArmyPanel() {
           ) : <div className="sp-title editable" title="Click to rename" onClick={() => setRenaming(true)}>{a.name}</div>}
           <div className="sp-sub">
             {a.embarked ? <>At sea → {PROV[a.embarked.dest].name}</> : <>in <a onClick={() => focusProvince(a.location)}>{PROV[a.location].name}</a></>}
-            {a.battleId != null && <> · <a className="bad" onClick={() => store.setUI({ battleReport: a.battleId })}>IN BATTLE</a></>}
+            {a.battleId != null && <> · <a className="bad" onClick={() => openBattle(a.battleId!)}>IN BATTLE — command it</a></>}
             {a.path.length > 0 && !a.battleId && <> · marching to {PROV[a.path[a.path.length - 1]].name} (~{Math.ceil(pathDays(g, a, a.path))}d)</>}
           </div>
         </div>
@@ -181,7 +182,7 @@ export function FleetPanel() {
       </div>
       <div className="sp-body">
         <table className="tbl"><tbody>
-          {(Object.keys(SHIPS) as ShipType[]).map((k) => <tr key={k}><td>{SHIPS[k].label}</td><td className="right">{f.ships[k].toFixed(1)}</td></tr>)}
+          {(Object.keys(SHIPS) as ShipType[]).map((k) => <tr key={k}><td>{SHIPS[k].label}</td><td className="right">{(f.ships[k] ?? 0).toFixed(1)}</td></tr>)}
         </tbody></table>
         <Stat label="Organisation" value={pct(f.org)} />
         {f.owner === g.player && <Btn small kind="danger" onClick={() => store.setUI({ confirm: { title: `Decommission ${f.name}?`, body: 'The sailors return to the manpower pool and the ships are scrapped. This cannot be undone.', danger: true, onOk: () => { const r = store.cmd('doDecommissionFleet', [f.id]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); } } })}>Decommission fleet</Btn>}

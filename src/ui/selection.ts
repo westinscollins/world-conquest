@@ -1,4 +1,4 @@
-// Army selection shared by the map, the army bar, the War Room roster and hotkeys.
+// Army selection shared by the map, the army bar, the Military roster and hotkeys.
 // Armies are numbered #1, #2… in the order they were raised, so "select 1-6" always means the same armies.
 import { store } from './store';
 import type { GameState } from '../engine/types';

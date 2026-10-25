@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { planInvasion } from './InvasionPlanner';
 import { store, useStore } from './store';
 import { PROV, COUNTRY_GEO } from '../engine/geo';
 import { BUILDINGS, TERRAIN, WEATHER, UNITS, ECON, FOCUS, FOCUS_CHANGE_COST } from '../engine/config';
 import { provinceOutput, buildCost, resourceYield, collectionEfficiency } from '../engine/economy';
 import type { GameState, Nation, ProvinceState } from '../engine/types';
 import { provinceWeather } from '../engine/weather';
-import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf, isAtWar } from '../engine/world';
+import { armiesIn, peekRel, atWar, ownedBy, controlledBy, alliesOf, isAtWar, isFriendly } from '../engine/world';
 import { supplyMap } from '../engine/supply';
 import { build, doProvinceStatus, doRecruit, doRelease } from '../engine/actions';
 import { checkRecruit, armyStrength, militaryStrength, industryBonus } from '../engine/military';
@@ -49,6 +50,9 @@ export function ProvincePanel() {
         {(tab === 'info' || !showTabs) && (
           <>
             {atWar(g, g.player, st.controller) && <WarActions p={p} />}
+            {st.controller !== g.player && g.nations[st.controller]?.alive && !isFriendly(g, g.player, st.controller) && (
+              <Btn small kind={atWar(g, g.player, st.controller) ? 'primary' : 'danger'} onClick={() => planInvasion(st.controller)}>⚔ {atWar(g, g.player, st.controller) ? 'Send armies to invade' : 'Plan an invasion of'} {g.nations[st.controller].name}…</Btn>
+            )}
             {st.owner === g.player && (
               <div className="war-actions calm">
                 {st.controller === g.player && st.status === 'core' && <span className={st.resistance >= 70 ? 'bad small' : 'small'}>Unrest {Math.round(st.resistance)}{st.resistance >= 70 ? ' — IN REVOLT' : ''}</span>}
@@ -261,7 +265,7 @@ function WarActions({ p }: { p: number }) {
       <Btn small kind="primary" disabled={!near.length} title={near.length ? near.map((a) => a.name).join(', ') : 'None of your armies are next to this province'} onClick={() => say(store.cmd('attackWithAll', [p]))}>⚔ Attack with all nearby armies ({near.length})</Btn>
       <Btn small disabled={n.arsenal.drone < 1} title={`${n.arsenal.drone} drones in stock`} onClick={() => strike('drone', Math.min(5, n.arsenal.drone))}>Drone strike ×{Math.min(5, n.arsenal.drone)}</Btn>
       <Btn small disabled={n.arsenal.missile < 1} title={`${n.arsenal.missile} missiles in stock`} onClick={() => strike('missile', Math.min(3, n.arsenal.missile))}>Missile strike ×{Math.min(3, n.arsenal.missile)}</Btn>
-      {n.arsenal.drone + n.arsenal.missile < 1 && <span className="small muted">Buy drones and missiles in the War Room.</span>}
+      {n.arsenal.drone + n.arsenal.missile < 1 && <span className="small muted">Buy drones and missiles in the Military panel.</span>}
     </div>
   );
 }

@@ -23,6 +23,14 @@ for (const [id, renames, capital] of [
   c.capital = cap;
 }
 
+// A few provinces absorbed far-away islands (Monaco/Nice, Cardiff, San Juan), which dragged their
+// centre out to sea and made every march from them thousands of kilometres long: use the city.
+for (const p of PROV) {
+  if (Math.hypot(p.x - p.lx, p.y - p.ly) <= 100) continue;
+  p.x = p.lx; p.y = p.ly;
+  p.lat = +(90 - (p.y / WORLD.meta.height) * 180).toFixed(1);
+}
+
 const KM_PER_UNIT = 40075 / WORLD.meta.width;
 
 export function lonLat(x: number, y: number): [number, number] {

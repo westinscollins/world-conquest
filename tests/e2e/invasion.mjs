@@ -78,11 +78,11 @@ if (wing) {
   ok(`right-click gives the wing a mission (${m.mission})`, m.mission === 'bombing' || m.mission === 'support');
   await page.screenshot({ path: `${out}/inv-wing.png` });
 }
-// the Air force tab
+// the air wings in Military → Forces
 await page.keyboard.press('Escape');
 await page.click('.nav-btn:has-text("Military")');
-await page.click('.tabs >> text=/Air force/');
-ok('Air force tab lists wings', (await page.locator('.army-row:has-text("Air Wing")').count()) > 0);
+await page.click('.tabs >> text=/Forces/');
+ok('Forces tab lists air wings', (await page.locator('.army-row:has-text("Air Wing")').count()) > 0);
 console.log(errs.length ? 'ERRORS ' + errs.slice(0, 5).join(' | ') : 'no errors');
 await b.close();
 process.exit(failed || errs.length ? 1 : 0);

@@ -200,7 +200,7 @@ export function newGame(campaignId: string, opts: Partial<GameSettings> & { seed
     if (ports.length && out > 300) {
       const home = ports.sort((a, b) => PROV[b].cityPop - PROV[a].cityPop)[0];
       const scale = Math.log10(out);
-      const f = { id: s.nextId++, owner: n.id, name: `${n.name} Home Fleet`, sea: PROV[home].seas[0], ships: { destroyer: Math.round(scale * 1.5), cruiser: Math.max(0, Math.round(scale - 2)), battlegroup: out > 4000 ? Math.round((out / 4000) ** 0.5) : 0, transport: Math.round(scale) }, path: [], moveProgress: 0, org: 0.8, homePort: home, mission: 'patrol' as const };
+      const f = { id: s.nextId++, owner: n.id, name: `${n.name} Home Fleet`, sea: PROV[home].seas[0], ships: { destroyer: Math.round(scale * 1.5), cruiser: Math.max(0, Math.round(scale - 2)), battlegroup: out > 4000 ? Math.round((out / 4000) ** 0.5) : 0, submarine: Math.max(0, Math.round(scale - 1.5)), transport: Math.round(scale) }, path: [], moveProgress: 0, org: 0.8, homePort: home, mission: 'patrol' as const };
       s.fleets[f.id] = f;
     }
   }

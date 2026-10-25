@@ -6,11 +6,11 @@
  */
 import type { AirWing, Army, BuildingKind, GameState, Nation, Unit, UnitType, War, PeaceTerms } from './types';
 import { BUILDINGS, ECON, PERSONALITY, UNITS, MIL } from './config';
-import { PROV, COUNTRY_GEO, landLinks, distKm } from './geo';
+import { PROV, COUNTRY_GEO, landLinks, distKm, isCoastal } from './geo';
 import { wingsOf, wingRange, setMission, rebaseWing, checkMission } from './air';
 import { ownedBy, controlledBy, neighborsOf, atWar, enemiesOf, armiesIn, isAtWar, rel, peekRel, alliesOf, isFriendly } from './world';
 import { buildCost, startConstruction, provinceOutput, borrow, repay } from './economy';
-import { recruit, findPath, armyStrength, armyOrg, unitUpkeep, armyPower, deleteArmy, recruitCost, armySupplyDemand, militaryStrength } from './military';
+import { landDijkstra, pathFrom, recruit, findPath, armyStrength, armyOrg, unitUpkeep, armyPower, deleteArmy, recruitCost, armySupplyDemand, militaryStrength } from './military';
 import { canResearch, TECHS } from './research';
 import { estimateBattle } from './battle';
 import { perceivedPower, coalitionPower, declareWar, checkDeclareWar, evaluatePeace, makePeace, scoreFor, termsCost, aiWouldAccept, applyTreaty, provinceValue, ultimatum, joinWar, changeRelation } from './diplomacy';
@@ -19,6 +19,7 @@ import { aiStrikes } from './strikes';
 import { addEvent } from './events';
 import { nationIndex } from './sim';
 import { fmt } from './economy';
+import { orderShip, orderInvasion } from './naval';
 
 // ---------------------------------------------------------------- weekly strategic pass
 export function aiWeekly(s: GameState, n: Nation) {
@@ -195,6 +196,11 @@ function aiMilitaryBuild(s: GameState, n: Nation) {
       budget -= up + r.cost * 0.2;
       k++;
     }
+    // a maritime nation at war lays down submarines now and then to raid enemy shipping
+    if (war && !n.shipyard.length && n.treasury > out * 0.12 && Math.floor(s.day / 7) % 4 === nationIndex(n.id) % 4) {
+      const port = ownedBy(s, n.id).find((p) => s.provinces[p].buildings.port > 0 && s.provinces[p].controller === n.id);
+      if (port != null && enemiesOf(s, n.id).some((e) => ownedBy(s, e).some((p) => s.provinces[p].buildings.port > 0))) orderShip(s, n, 'submarine', port);
+    }
   } else if (!war && mil > target * 1.4 && n.budget.net < 0) {
     // demobilise to save money: a squadron if the air force is a big part of the bill, else the weakest formation
     const armies = Object.values(s.armies).filter((a) => a.owner === n.id && !a.battleId && !a.path.length);
@@ -302,6 +308,7 @@ export function armyAutomation(s: GameState, a: Army, full = false) {
     a.path = []; a.moveProgress = 0;
   }
   if (a.path.length) return;
+  if (!full && a.campaign != null) { campaignStep(s, a); return; }
   const stance = full ? 'advance' : a.stance;
   const enemies = enemiesOf(s, n.id);
   const org = armyOrg(a);
@@ -356,6 +363,82 @@ export function armyAutomation(s: GameState, a: Army, full = false) {
   }
 }
 
+/**
+ * A player's invasion order: take the target nation's provinces one after another. Attacks
+ * whatever enemy province next door gives fair odds (the target's first), otherwise marches
+ * toward the nearest province the target still holds, and sails there when no land route
+ * exists. Ends when the target makes peace or is gone.
+ */
+function campaignStep(s: GameState, a: Army) {
+  const n = s.nations[a.owner];
+  const target = a.campaign!;
+  if (!s.nations[target]?.alive || !atWar(s, n.id, target)) {
+    a.campaign = null; a.stance = 'defend';
+    if (n.isPlayer) addEvent(s, 'military', `${a.name}: the invasion of ${s.nations[target]?.name ?? 'the enemy'} is over; the army now defends.`, [n.id], { province: a.location });
+    return;
+  }
+  // home comes first: help a neighbouring friendly province under attack
+  for (const l of landLinks(a.location)) {
+    const b = s.activeBattles.map((id) => s.battles[id]).find((x) => x && x.province === l.to && x.result == null && (x.defender.nation === n.id || isFriendly(s, x.defender.nation, n.id)));
+    if (b && armyOrg(a) > 0.3) { a.path = [l.to]; return; }
+  }
+  if (armyOrg(a) < 0.5 || a.lastSupplyRatio < 0.45 || armyStrength(a) < 1000) return; // recover first
+  const partners = armiesIn(s, a.location).filter((x) => x.owner === n.id && x.id !== a.id && (x.campaign === target || x.stance === 'advance') && !x.battleId && !x.path.length && !x.embarked && armyOrg(x) > 0.5);
+  let best: { p: number; score: number } | null = null;
+  for (const l of landLinks(a.location)) {
+    const st = s.provinces[l.to];
+    if (!atWar(s, n.id, st.controller)) continue;
+    const defenders = armiesIn(s, l.to).filter((x) => atWar(s, x.owner, n.id));
+    const est = estimateBattle(s, [a, ...partners], l.to, a.location, defenders, 0);
+    if (est.odds < 0.55) continue;
+    const score = est.odds * 2 + (st.controller === target ? 3 : 0) + (st.owner === n.id ? 4 : 0) + (PROV[l.to].capital ? 2 : 0) + provinceValue(s, l.to) * 0.05 + (defenders.length ? 0 : 1);
+    if (!best || score > best.score) best = { p: l.to, score };
+  }
+  if (best) {
+    a.path = [best.p];
+    for (const o of partners) o.path = [best.p];
+    return;
+  }
+  // take up a place on the target's border (spread out as far as supply allows), and wait there
+  // for odds good enough to attack
+  const border = controlledBy(s, n.id).filter((p) => landLinks(p).some((l) => s.provinces[l.to].controller === target));
+  if (border.length) {
+    const front = frontTarget(s, a, n, target);
+    const p = front != null ? findPath(s, a, front) : null;
+    if (p && p.length <= 12) {
+      const stop = p.findIndex((q) => armiesIn(s, q).some((x) => atWar(s, x.owner, n.id)));
+      const safe = stop >= 0 ? p.slice(0, stop) : p;
+      if (safe.length) { a.path = safe; return; }
+    }
+    if (border.includes(a.location)) return;
+  }
+  // march on the nearest province the target holds (stopping short of enemy armies)
+  const { dist, prev } = landDijkstra(s, a);
+  let goal = -1;
+  const lost = ownedBy(s, n.id).filter((p) => atWar(s, n.id, s.provinces[p].controller));
+  for (const p of lost.length ? lost : controlledBy(s, target)) if (isFinite(dist[p]) && (goal < 0 || dist[p] < dist[goal])) goal = p;
+  if (goal < 0 && lost.length) for (const p of controlledBy(s, target)) if (isFinite(dist[p]) && (goal < 0 || dist[p] < dist[goal])) goal = p;
+  if (goal >= 0) {
+    const path = pathFrom(prev, a.location, goal);
+    const stop = path.findIndex((q) => armiesIn(s, q).some((x) => atWar(s, x.owner, n.id)));
+    const safe = stop >= 0 ? path.slice(0, stop) : path;
+    if (safe.length) a.path = safe;
+    return;
+  }
+  // overseas: the armies here sail together for the target's least defended coast
+  if ((s.day + a.id) % 5 !== 0) return;
+  let dest = -1, ds = Infinity;
+  for (const p of controlledBy(s, target)) {
+    if (!isCoastal(p)) continue;
+    const def = armiesIn(s, p).filter((x) => atWar(s, x.owner, n.id)).reduce((t, x) => t + armyStrength(x), 0);
+    const sc = def / 1000 + distKm(a.location, p) / 400;
+    if (sc < ds) { ds = sc; dest = p; }
+  }
+  if (dest < 0) return;
+  const r = orderInvasion(s, [a, ...partners], dest);
+  if (n.isPlayer && (s.day + a.id) % 30 === 0 && !r.ok) addEvent(s, 'military', `${a.name} cannot reach ${s.nations[target].name}: ${r.reason}`, [n.id], { province: a.location });
+}
+
 function nearestOwn(s: GameState, a: Army): number | null {
   const n = s.nations[a.owner];
   // BFS through passable provinces to the nearest own, supplied province
@@ -374,7 +457,7 @@ function nearestOwn(s: GameState, a: Army): number | null {
   return null;
 }
 
-function frontTarget(s: GameState, a: Army, n: Nation): number | null {
+function frontTarget(s: GameState, a: Army, n: Nation, only?: string): number | null {
   const bound = new Map<number, number>();
   for (const x of Object.values(s.armies)) {
     if (x.owner !== n.id || x.id === a.id) continue;
@@ -386,7 +469,7 @@ function frontTarget(s: GameState, a: Army, n: Nation): number | null {
   for (const p of controlledBy(s, n.id)) {
     let enemyAdj = 0, enemyPow = 0;
     for (const l of landLinks(p)) {
-      if (!atWar(s, n.id, s.provinces[l.to].controller)) continue;
+      if (!atWar(s, n.id, s.provinces[l.to].controller) || (only && s.provinces[l.to].controller !== only)) continue;
       enemyAdj++;
       for (const x of armiesIn(s, l.to)) if (atWar(s, x.owner, n.id)) enemyPow += armyPower(s, x);
     }

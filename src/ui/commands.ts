@@ -123,7 +123,7 @@ function confirmInvasion(ids: number[], p: number) {
   // the landing waters, and the warships that could go there first
   const route = seaRoute(PROV[plan.port].seas, PROV[p].seas) ?? PROV[p].seas;
   const zone = route[route.length - 1];
-  const navy = Object.values(g.fleets).filter((f) => f.owner === g.player && f.sea !== zone && f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup >= 0.5);
+  const navy = Object.values(g.fleets).filter((f) => f.owner === g.player && f.sea !== zone && f.ships.destroyer + f.ships.cruiser + f.ships.battlegroup + (f.ships.submarine ?? 0) >= 0.5);
   const invade = () => { const r = store.cmd('moveArmies', [ids, p]); if (r) { store.toast(r.message, r.ok ? 'info' : 'bad'); if (r.ok) audio.sfx('click'); } };
   const lines = [
     `${armies.length === 1 ? armies[0].name : `${armies.length} armies`}: ${brigades} brigades, ${Math.round(soldiers / 1000)}k soldiers.${overland ? ` (${overland} more ${overland === 1 ? 'army has' : 'armies have'} a land route and march${overland === 1 ? 'es' : ''} there directly.)` : ''}`,

@@ -5,9 +5,9 @@
  * Currency: US dollars. All money values are in MILLIONS of dollars ($B).
  * These are fictional game-balance figures, not real-world procurement prices.
  */
-import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
+import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality, Tactic, SupportKind } from './types';
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
@@ -150,6 +150,7 @@ export const SHIPS: Record<ShipType, ShipSpec> = {
   destroyer: { points: 8, label: 'Destroyer Flotilla', personnel: 1200, cost: 14, days: 180, attack: 4, defense: 4, speed: 1.4, capacity: 0 },
   cruiser: { points: 18, label: 'Cruiser Squadron', personnel: 2600, cost: 36, days: 300, attack: 10, defense: 9, speed: 1.1, capacity: 0 },
   battlegroup: { points: 60, label: 'Carrier Battle Group', personnel: 6000, cost: 110, days: 540, attack: 28, defense: 22, speed: 1.0, capacity: 0 },
+  submarine: { points: 12, label: 'Submarine Flotilla', personnel: 900, cost: 20, days: 240, attack: 9, defense: 3, speed: 1.2, capacity: 0 },
   transport: { points: 1, label: 'Transport Flotilla', personnel: 700, cost: 7, days: 120, attack: 0, defense: 1, speed: 1.2, capacity: 4 },
 };
 export const SHIP_UPKEEP_SHARE = 0.06;
@@ -205,6 +206,28 @@ export const COMBAT = {
   NAVAL_FIRE: 0.15,         // gunfire ashore per point of warship attack off the coast
   OUT_OF_SUPPLY_ATTACK: 0.45, // multiplier at 0 supply
   GENERAL_PER_SKILL: 0.05,
+};
+
+/**
+ * Battle command: each day both sides fight with one manoeuvre. Assault beats Flank (it pins the
+ * flanking force), Flank beats Hold (it goes around the line), Hold beats Assault (the attack runs
+ * into prepared fire). The side whose manoeuvre wins the day deals ×WIN damage and takes ×LOSE.
+ */
+export const TACTICS: Record<Tactic, { label: string; beats: Tactic; dealt: number; taken: number; icon: string; desc: string }> = {
+  assault: { label: 'Assault', beats: 'flank', dealt: 1.1, taken: 1.1, icon: '⚔', desc: 'All-out push straight at the enemy line. Beats a flanking move, fails against a prepared defence. Bloody for both sides.' },
+  hold:    { label: 'Hold',    beats: 'assault', dealt: 0.9, taken: 0.85, icon: '🛡', desc: 'Dig in and fire from cover. Beats an assault, but a flanking move goes around you. Cheapest in lives.' },
+  flank:   { label: 'Flank',   beats: 'hold', dealt: 1, taken: 1, icon: '↷', desc: 'Swing around the side of the enemy line. Beats a static defence, but an assault catches you strung out. Better on open ground.' },
+};
+export const TACTIC_EDGE = { WIN: 1.3, LOSE: 0.8 };
+/** Flanking is easier on open ground. */
+export const FLANK_TERRAIN: Record<Terrain, number> = { plains: 1.1, desert: 1.1, hills: 1, forest: 0.95, taiga: 0.95, arctic: 0.95, jungle: 0.85, mountains: 0.85 };
+/** Support actions a commander can call into a battle (cost in $B, cooldown in days). */
+export const BATTLE_SUPPORT: Record<SupportKind, { label: string; icon: string; cost: number; cooldown: number; desc: string }> = {
+  barrage: { label: 'Artillery barrage', icon: '💥', cost: 0.15, cooldown: 3, desc: 'Every gun fires at once: +20% damage for the day and the enemy loses much of its dig-in. Needs artillery in the battle.' },
+  drone:   { label: 'Drone strike', icon: '🛸', cost: 0, cooldown: 1, desc: 'Uses an attack drone from your arsenal (bought if you have none): +10% damage, shakes the enemy front, and shows exactly what they will do tomorrow.' },
+  air:     { label: 'Air strike', icon: '✈', cost: 0.3, cooldown: 4, desc: 'Every squadron in range hits the enemy for one day (+25% damage). Needs an air wing within range.' },
+  reserves:{ label: 'Commit reserves', icon: '⬆', cost: 0, cooldown: 3, desc: 'Throw the reserve into the line for a day: 50% wider front, but more of your troops are exposed.' },
+  rally:   { label: 'Rally the troops', icon: '★', cost: 0, cooldown: 99, desc: 'Once per battle: the general rallies the men. Organisation +25%, morale +10%.' },
 };
 
 /**
@@ -474,7 +497,7 @@ export const ROE: Record<'restrained' | 'standard' | 'ruthless', { label: string
   standard: { label: 'Standard', desc: 'Normal rules of engagement.', damage: 1 },
   ruthless: { label: 'Ruthless', desc: 'No restraint: 12% more damage dealt, but occupied lands resist harder, infamy grows each month at war and youth disapprove.', damage: 1.12 },
 };
-/** War Room shortcut: give every air wing the same kind of mission. */
+/** Military panel shortcut: give every air wing the same kind of mission. */
 export const AIR_MISSIONS: Record<'none' | 'cas' | 'bombing' | 'defense', { label: string; desc: string }> = {
   none: { label: 'Stand down', desc: 'All air wings stay at their bases and refit.' },
   cas: { label: 'Support ground forces', desc: 'All air wings fly over your battles in range: air superiority and strikes on enemy troops.' },

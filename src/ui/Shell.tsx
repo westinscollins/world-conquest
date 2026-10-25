@@ -1,9 +1,9 @@
+import { openBattle } from './BattleView';
 import { useEffect, useState } from 'react';
 import { store, useStore, type MapMode, type Panel } from './store';
 import { Icon } from './icons';
 import { Modal, Btn } from './common';
 import { EconomyPanel } from './panels/EconomyPanel';
-import { WarPanel } from './panels/WarPanel';
 import { RegimePanel } from './panels/RegimePanel';
 import { selectedIds, setSelection, ctrlGroup, setCtrlGroup } from './selection';
 import { stageOf } from '../engine/regime';
@@ -22,9 +22,9 @@ import { cls } from './format';
 import { audio } from '../audio/music';
 
 const NAV: [Exclude<Panel, null>, string, string][] = [
-  ['war', 'War Room', 'battle'], ['regime', 'Regime', 'people'], ['economy', 'Economy', 'coin'], ['military', 'Military', 'manpower'], ['diplomacy', 'Diplomacy', 'handshake'], ['stats', 'Objectives', 'crown'], ['help', 'Help', 'book'],
+  ['military', 'Military', 'battle'], ['regime', 'Regime', 'people'], ['economy', 'Economy', 'coin'], ['diplomacy', 'Diplomacy', 'handshake'], ['stats', 'Objectives', 'crown'], ['help', 'Help', 'book'],
 ];
-const TITLES: Record<string, string> = { war: 'War Room', regime: 'Regime & Population', economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
+const TITLES: Record<string, string> = { regime: 'Regime & Population', economy: 'Economy & Budget', military: 'Military Command', diplomacy: 'Diplomacy', research: 'Research & Technology', stats: 'Objectives & History', help: 'Field Manual' };
 
 export function LeftNav() {
   const { g, ui } = useStore();
@@ -39,7 +39,7 @@ export function LeftNav() {
             <Icon name={i} size={20} />
             <span>{l}</span>
             {k === 'diplomacy' && offers > 0 && <span className="badge">{offers}</span>}
-            {k === 'war' && fights > 0 && <span className="badge">{fights}</span>}
+            {k === 'military' && fights > 0 && <span className="badge">{fights}</span>}
             {k === 'regime' && stageOf(g.nations[g.player].regime.opposition).index >= 2 && <span className="badge">!</span>}
           </button>
         ))}
@@ -47,7 +47,6 @@ export function LeftNav() {
       {ui.panel && (
         <div className="drawer">
           <div className="drawer-h"><span>{TITLES[ui.panel]}</span><button className="iconbtn" onClick={() => store.setUI({ panel: null })}><Icon name="close" /></button></div>
-          {ui.panel === 'war' && <WarPanel />}
           {ui.panel === 'regime' && <RegimePanel />}
           {ui.panel === 'economy' && <EconomyPanel />}
           {ui.panel === 'military' && <MilitaryPanel />}
@@ -87,7 +86,7 @@ export function EventLog() {
       {open && (
         <div className="el-list">
           {evs.map((e) => (
-            <div key={e.id} className={`el-ev k-${e.kind}${e.important ? ' imp' : ''}`} onClick={() => { if (e.battleId != null && g.battles[e.battleId]) store.setUI({ battleReport: e.battleId }); else if (e.province != null) { focusProvince(e.province); store.setUI({ selectedProvince: e.province }); } }}>
+            <div key={e.id} className={`el-ev k-${e.kind}${e.important ? ' imp' : ''}`} onClick={() => { if (e.battleId != null && g.battles[e.battleId]) openBattle(e.battleId); else if (e.province != null) { focusProvince(e.province); store.setUI({ selectedProvince: e.province }); } }}>
               <span className="el-date">{fmtDate(g, e.day)}</span>
               <span>{e.text}</span>
             </div>
@@ -164,7 +163,7 @@ export function LiveTicker() {
         <div key={t.id} className={cls('lt', t.kind)} onClick={() => { focusProvince(t.province); store.setUI({ selectedProvince: t.province }); }}>{t.kind === 'good' ? '⚑ ' : '✖ '}{t.text}</div>
       ))}
       {atWarNow && (
-        <div className="lt-sum" onClick={() => store.setUI({ panel: 'war' })} title="Open the War Room">
+        <div className="lt-sum" onClick={() => store.setUI({ panel: 'military' })} title="Open Military">
           ⚔ Last 7 days: <b className="bad">{neg(mine)}</b> yours · <b>{neg(theirs)}</b> enemy
         </div>
       )}
@@ -276,7 +275,7 @@ export function useHotkeys() {
       }
       else if (e.key === '+' || e.key === '=') store.setSpeed(Math.min(3, store.ui.speed + 1));
       else if (e.key === '-') store.setSpeed(Math.max(0, store.ui.speed - 1));
-      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, selectedWing: null, panel: null, intel: null, battleReport: null, moveMode: null, strike: null, pickOperation: false, group: [] });
+      else if (e.key === 'Escape') store.setUI({ selectedArmy: null, selectedFleet: null, selectedWing: null, panel: null, intel: null, battleReport: null, battleView: null, invade: null, moveMode: null, strike: null, pickOperation: false, group: [] });
       else if (e.key === 'Tab') { e.preventDefault(); cycleArmy(e.shiftKey ? -1 : 1); }
       else armyHotkey(e.key.toLowerCase());
     };
