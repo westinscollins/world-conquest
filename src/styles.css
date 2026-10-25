@@ -558,3 +558,38 @@ svg.map.moving { cursor: crosshair; }
 .target b { flex: 1; } .target .swatch { width: 10px; height: 10px; border-radius: 2px; }
 .battle-row .btn.primary { animation: cmdGlow 2s ease-in-out infinite; }
 @keyframes cmdGlow { 0%, 100% { box-shadow: 0 0 0 rgba(244, 210, 122, 0); } 50% { box-shadow: 0 0 10px rgba(244, 210, 122, .55); } }
+
+/* ---------------------------------------------------------------- close-up map: troops, battles, terrain */
+.troops { cursor: pointer; }
+.troop-ground { fill: rgba(10, 12, 8, .22); }
+.troops.sel .troop-ground { fill: rgba(255, 255, 255, .16); stroke: rgba(255, 255, 255, .7); stroke-width: .25; stroke-dasharray: 1 .8; }
+.troops:hover .troop-ground { fill: rgba(255, 255, 255, .12); }
+.troops.march .troop { animation: troopMarch .55s ease-in-out infinite alternate; transform-box: fill-box; }
+@keyframes troopMarch { from { transform: translateY(0); } to { transform: translateY(-6%); } }
+.troops.fight .troop { animation: troopFight 1.6s ease-in-out infinite; transform-box: fill-box; }
+@keyframes troopFight { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(4%); } }
+.mfx-flash { fill: #ffe9a0; opacity: 0; animation: bvFlash 1.1s infinite; }
+.mfx-smoke { fill: #6d6a63; opacity: .28; transform-box: fill-box; transform-origin: center; animation: mfxSmoke 6s ease-in-out infinite alternate; }
+@keyframes mfxSmoke { from { transform: scale(.8) translateY(0); opacity: .18; } to { transform: scale(1.25) translateY(-12%); opacity: .34; } }
+.mfx-blast { fill: url(#mfx-fire); opacity: 0; transform-box: fill-box; transform-origin: center; animation: bvBlast 2.2s ease-out infinite; }
+.mfx-tracer { stroke: #ffd77a; stroke-dasharray: 2 60; opacity: .9; animation: mfxTracer 1.1s linear infinite; }
+@keyframes mfxTracer { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -62; } }
+.mfx-orbit { animation: mfxOrbit 4s linear infinite; }
+.mfx-orbit.slow { animation-duration: 7s; }
+@keyframes mfxOrbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.mfx-barrage { fill: none; stroke: #ffcf6a; stroke-width: .6; stroke-dasharray: 2 2; opacity: .8; transform-box: fill-box; transform-origin: center; animation: mfxRing 1.4s ease-out infinite; }
+@keyframes mfxRing { from { transform: scale(.3); opacity: .9; } to { transform: scale(1.2); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .troop, .mfx *, .mfx-orbit { animation: none !important; } }
+
+/* ---------------------------------------------------------------- battle alert, what's new */
+.battle-alert { position: absolute; left: 50%; bottom: 272px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border-radius: 10px; background: linear-gradient(135deg, rgba(120, 30, 22, .96), rgba(40, 14, 12, .96)); border: 1px solid #e2675a; box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 0 rgba(226, 103, 90, .6); animation: baIn .35s ease-out, baPulse 2s ease-in-out infinite .35s; }
+.battle-alert b { font-family: var(--title); font-size: 16px; color: #ffd9cf; letter-spacing: .03em; }
+.battle-alert .ba-ic { font-size: 26px; animation: baShake 1.4s ease-in-out infinite; }
+@keyframes baIn { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes baPulse { 0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 0 rgba(226, 103, 90, .5); } 50% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 8px rgba(226, 103, 90, 0); } }
+@keyframes baShake { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-12deg); } 40% { transform: rotate(10deg); } 60% { transform: rotate(0); } }
+.whats-new .wn-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.wn-item { display: flex; gap: 12px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; background: rgba(255, 255, 255, .03); border: 1px solid var(--line2); }
+.wn-ic { font-size: 26px; width: 34px; text-align: center; }
+.wn-item b { color: var(--gold2); font-size: 14px; } .wn-item p { margin: 3px 0 0; color: var(--text); font-size: 12.5px; line-height: 1.45; }
+@media (max-width: 760px) { .battle-alert { bottom: 120px; width: calc(100vw - 32px); flex-wrap: wrap; } }

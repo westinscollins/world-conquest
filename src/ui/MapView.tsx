@@ -2,7 +2,8 @@ import { openBattle } from './BattleView';
 import { live } from './live';
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { GameState, Army } from '../engine/types';
-import { PROV, WORLD, seaRoute } from '../engine/geo';
+import { PROV, WORLD, seaRoute, distKm } from '../engine/geo';
+import { TerrainDecor } from './MapDecor';
 import { store, useStore, type MapMode } from './store';
 import { TERRAIN, UNITS, WEATHER, STRIKES, AIR, AIR_MISSION_INFO, MIL } from '../engine/config';
 import { wingPlanes } from '../engine/air';
@@ -426,6 +427,7 @@ export function MapView() {
             <stop offset="0.45" stopColor="#fff" stopOpacity="0" />
             <stop offset="1" stopColor="#000" stopOpacity="0.35" />
           </linearGradient>
+          <radialGradient id="mfx-fire"><stop offset="0" stopColor="#fff6c0" /><stop offset="0.35" stopColor="#ffb040" /><stop offset="0.7" stopColor="#d9481c" stopOpacity="0.8" /><stop offset="1" stopColor="#5a1a08" stopOpacity="0" /></radialGradient>
           <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="#f4d27a" />
           </marker>
@@ -441,6 +443,7 @@ export function MapView() {
         <FlashLayer />
         {decor && <path className="lakes" d={decor.lakes.join('')} />}
         {decor && k > 1.6 && <g className="rivers">{decor.rivers.map((r, i) => { const [d, rank] = r.split('|'); return <path key={i} d={d} strokeWidth={Math.max(0.15, 0.9 - +rank * 0.12)} />; })}</g>}
+        {k >= DECOR_ZOOM && <TerrainDecor x={cam.current.x} y={cam.current.y} w={cam.current.w} h={cam.current.h} px={px} k={k} />}
         <ProvinceBorders />
         {decor && <g className="cborders">{decor.borders.map((b) => <path key={b.id} d={b.d} />)}</g>}
         <g className="player-outline">{playerProv.map((p) => <path key={p} d={PROV[p].path} />)}</g>
@@ -454,7 +457,9 @@ export function MapView() {
         <ProvinceMarkers g={g} px={px} k={k} />
         <Battles g={g} px={px} />
         <Blasts px={px} />
+        <BattleFX g={g} px={px} k={k} view={cam.current} />
         <Armies g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} />
+        <Troops g={g} px={px} k={k} selected={ui.selectedArmy} group={ui.group} view={cam.current} />
         <AirLayer g={g} k={k} px={px} />
         <LiveLayer px={px} />
         <rect x={VX - 400} y={VY - 300} width={VW + 800} height={VH + 600} fill="url(#vignette)" pointerEvents="none" opacity={0.35} />
@@ -900,6 +905,124 @@ function Armies({ g, px, k, selected, group }: { g: GameState; px: number; k: nu
   }
   return <g className="armies">{els}</g>;
 }
+// ---------------------------------------------------------------- close-up: troops and fighting on the map
+/** Zoom levels from which the map shows terrain detail, and each army's actual formations. */
+const DECOR_ZOOM = 3.5, TROOP_ZOOM = 5;
+type View = { x: number; y: number; w: number; h: number };
+const inView = (v: View, x: number, y: number, m: number) => x > v.x - m && x < v.x + v.w + m && y > v.y - m && y < v.y + v.h + m;
+const FORMATION_ORDER: Record<string, number> = { armored: 0, mechanized: 1, recon: 2, infantry: 3, engineers: 4, artillery: 5 };
+const fxHash = (i: number, k: number) => { let h = (i * 374761393 + k * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+
+/**
+ * Close up, each army shows what it is made of: a block of soldiers, tanks and guns in the
+ * nation's colour below its counter — marching along its route when it moves, and drawn up
+ * facing the enemy, firing, when it is in a battle.
+ */
+function Troops({ g, px, k, selected, group, view }: { g: GameState; px: number; k: number; selected: number | null; group: number[]; view: View }) {
+  if (k < TROOP_ZOOM) return null;
+  const sc = pieceScale(k), ts = Math.min(2.6, Math.max(1, k / 6)); // troops grow as you zoom in
+  const els: JSX.Element[] = [];
+  const stack = new Map<string, number>();
+  for (const [, blk] of armyLayout(g, px, k, selected)) {
+    blk.vis.forEach((a, i) => {
+      let bx = blk.cx + blk.pieces[i][0], by = blk.cy + blk.pieces[i][1] + blk.pieces[i][3] / 2 + 20 * px * ts;
+      let facing = 1, state = '';
+      const b = a.battleId != null ? g.battles[a.battleId] : undefined;
+      if (b && b.result == null) {
+        // both sides drawn up facing each other across the line of contact
+        const P = PROV[b.province], F = PROV[b.fromProvince] ?? P;
+        let dx = P.lx - F.lx, dy = P.ly - F.ly;
+        const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
+        const cx = F.lx + (P.lx - F.lx) * 0.8, cy = F.ly + (P.ly - F.ly) * 0.8;
+        const atk = b.attacker.armyIds.includes(a.id);
+        const key = `${b.id}:${atk ? 'a' : 'd'}`;
+        const idx = stack.get(key) ?? 0; stack.set(key, idx + 1);
+        const half = (Math.min(4, a.units.length) * 21 * px * ts) / 2 + 10 * px * ts;
+        const perp = (idx % 2 ? -1 : 1) * Math.ceil(idx / 2) * 3 * 21 * px * ts * 0.85;
+        const s = atk ? -1 : 1;
+        bx = cx + dx * s * half - dy * perp; by = cy + dy * s * half + dx * perp;
+        facing = (atk ? dx : -dx) >= 0 ? 1 : -1;
+        state = 'fight';
+      } else if (a.path.length) {
+        const F = PROV[a.location], T = PROV[a.path[0]];
+        const t = Math.min(0.95, a.moveProgress / Math.max(1, distKm(a.location, a.path[0])));
+        bx = F.lx + (T.lx - F.lx) * t; by = F.ly + (T.ly - F.ly) * t + 20 * px * ts;
+        facing = T.lx >= F.lx ? 1 : -1;
+        state = 'march';
+      }
+      if (!inView(view, bx, by, 60 * px)) return;
+      const n = g.nations[a.owner];
+      const color = n?.color ?? '#777';
+      const units = a.units.slice().sort((x, y) => (FORMATION_ORDER[x.type] ?? 9) - (FORMATION_ORDER[y.type] ?? 9)).slice(0, 12);
+      const cols = Math.min(4, units.length), sp = 21 * px * ts;
+      const sel = a.id === selected || group.includes(a.id);
+      els.push(
+        <g key={a.id} data-army={a.id} data-loc={b && b.result == null ? b.province : a.location} className={`troops ${state}${sel ? ' sel' : ''}`} transform={`translate(${bx},${by})`}>
+          <ellipse cx={0} cy={(Math.ceil(units.length / 4) - 0.5) * sp * 0.4} rx={(cols * sp) / 2 + 4 * px} ry={(Math.ceil(units.length / 4) * sp) / 2.6 + 3 * px} className="troop-ground" />
+          {units.map((u, j) => {
+            // armour leads toward the enemy, guns stay at the back
+            const col = j % 4, row = Math.floor(j / 4);
+            const x = (facing * ((cols - 1) / 2 - col)) * sp, y = row * sp * 0.78 - sp * 0.2;
+            const glyph = GLYPH_OF[u.type] ?? 'infantry';
+            const h = (glyph === 'infantry' ? 19 : glyph === 'artillery' ? 16 : 13) * px * ts;
+            const op = 0.4 + 0.6 * Math.min(1, u.strength / UNITS[u.type].personnel);
+            const flip = facing < 0 ? `translate(${2 * x},0) scale(-1,1)` : undefined;
+            return (
+              <g key={u.id} className="troop" style={{ animationDelay: `${-(j * 0.13 + (a.id % 7) * 0.2)}s` }}>
+                <g transform={flip}>
+                  <GlyphShape g={glyph} cx={x + 1.2 * px} cy={y + 1.2 * px} h={h} fill="#000" opacity={0.6} />
+                  <GlyphShape g={glyph} cx={x} cy={y} h={h} fill={color} opacity={op} />
+                </g>
+                {state === 'fight' && u.org > 0.1 && <circle className="mfx-flash" cx={x + facing * h * 0.7} cy={y - h * 0.15} r={2.4 * px * ts} style={{ animationDelay: `${fxHash(u.id, 3) * 1.2}s` }} />}
+              </g>
+            );
+          })}
+        </g>,
+      );
+    });
+  }
+  return <g className="troop-layer">{els}</g>;
+}
+
+/**
+ * Battles on the map: smoke over the field, shells bursting, tracer fire between the lines, and —
+ * on days they were called in — drones circling and jets sweeping over.
+ */
+function BattleFX({ g, px, k, view }: { g: GameState; px: number; k: number; view: View }) {
+  if (k < 2.2) return null;
+  const els: JSX.Element[] = [];
+  for (const id of g.activeBattles) {
+    const b = g.battles[id];
+    if (!b || b.result != null) continue;
+    const P = PROV[b.province], F = PROV[b.fromProvince] ?? P;
+    if (!inView(view, P.lx, P.ly, 80 * px)) continue;
+    const mine = b.attacker.nation === g.player || b.defender.nation === g.player;
+    if (!mine && k < 4) continue;
+    const last = b.timeline[b.timeline.length - 1];
+    const used = (kind: string) => !!last?.support?.some((u) => u.kind === kind);
+    const intensity = Math.min(1, ((last?.aDamage ?? 4) + (last?.dDamage ?? 4)) / 30);
+    const r = (k >= TROOP_ZOOM ? 44 * Math.min(2.2, k / 6) : 20) * px;
+    const blasts = 3 + Math.round(intensity * 5);
+    // the line of contact runs between the attackers' start and the province
+    const mx = F.lx + (P.lx - F.lx) * 0.8, my = F.ly + (P.ly - F.ly) * 0.8;
+    els.push(
+      <g key={id} className="mfx" transform={`translate(${mx},${my})`}>
+        {[0, 1, 2, 3].map((i) => <circle key={`s${i}`} className="mfx-smoke" cx={(fxHash(id, i) - 0.5) * r * 1.6} cy={(fxHash(id, i + 9) - 0.5) * r} r={r * (0.5 + 0.4 * fxHash(id, i + 4))} style={{ animationDelay: `${-i * 1.7}s` }} />)}
+        {Array.from({ length: blasts }, (_, i) => <circle key={`b${i}`} className="mfx-blast" cx={(fxHash(id, i + 20) - 0.5) * r * 1.8} cy={(fxHash(id, i + 30) - 0.5) * r * 1.1} r={r * 0.22} style={{ animationDelay: `${fxHash(id, i + 40) * 2.2}s` }} />)}
+        {k >= TROOP_ZOOM && Array.from({ length: 5 }, (_, i) => {
+          const y = (i - 2) * r * 0.3;
+          const dx = (P.lx - F.lx) || 1, s = Math.sign(dx);
+          return <line key={`t${i}`} className="mfx-tracer" x1={-s * r * 0.7} y1={y} x2={s * r * 0.7} y2={y + (fxHash(id, i + 50) - 0.5) * r * 0.4} strokeWidth={0.8 * px} style={{ animationDelay: `${fxHash(id, i + 60)}s` }} />;
+        })}
+        {used('drone') && [0, 1].map((i) => <g key={`d${i}`} className="mfx-orbit" style={{ animationDelay: `${-i * 1.8}s` }}><g transform={`translate(${r * 1.1},0) scale(${px * 0.9})`}><path d="M-5,-2.5h10v5h-10Z M-10,-6L10,6 M-10,6L10,-6" stroke="#eef2f5" fill="#eef2f5" strokeWidth={1.4} /></g></g>)}
+        {(used('air') || b.factors.some((f) => f.label === 'Air superiority')) && <g className="mfx-orbit slow"><g transform={`translate(${r * 1.5},0) rotate(90)`}><GlyphShape g="fighter" cx={0} cy={0} h={12 * px} fill="#e8edf2" /></g></g>}
+        {used('barrage') && <circle className="mfx-barrage" r={r * 1.2} />}
+      </g>,
+    );
+  }
+  return <g className="battle-fx" pointerEvents="none">{els}</g>;
+}
+
 function dominantType(a: Army) {
   const c: Record<string, number> = {};
   for (const u of a.units) if (!UNITS[u.type].support) c[u.type] = (c[u.type] ?? 0) + 1;

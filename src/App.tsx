@@ -8,7 +8,7 @@ import { ArmyPanel, FleetPanel } from './ui/ArmyPanel';
 import { AirWingPanel } from './ui/AirWingPanel';
 import { IntelDialog } from './ui/IntelDialog';
 import { BattleReport } from './ui/BattleReport';
-import { BattleView } from './ui/BattleView';
+import { BattleView, BattleAlert, WhatsNew } from './ui/BattleView';
 import { InvasionPlanner } from './ui/InvasionPlanner';
 
 export default function App() {
@@ -32,7 +32,9 @@ export default function App() {
       <Toasts />
       <IntelDialog />
       <BattleReport />
+      <BattleAlert />
       <BattleView />
+      <WhatsNew />
       <InvasionPlanner />
       <OutcomeModal />
       <ConfirmDialog />

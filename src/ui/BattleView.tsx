@@ -1,8 +1,8 @@
 // The battlefield up close: both armies drawn on the ground, the day's fighting animated, and the
 // commander's deck — tomorrow's manoeuvre, the scouts' report and support to call in.
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { store, useStore } from './store';
-import { Btn, Bar } from './common';
+import { Btn, Bar, Modal } from './common';
 import { GlyphShape, type Glyph } from './glyphs';
 import { num, neg, money, cls } from './format';
 import { PROV, distKm } from '../engine/geo';
@@ -384,4 +384,55 @@ function shade(hex: string, amt: number) {
   const f = (v: number) => Math.round(Math.max(0, Math.min(255, amt >= 0 ? v + (255 - v) * amt : v * (1 + amt))));
   const r = f(n >> 16), gg = f((n >> 8) & 255), bb = f(n & 255);
   return `#${((1 << 24) | (r << 16) | (gg << 8) | bb).toString(16).slice(1)}`;
+}
+
+/** A card that announces your battles the moment they start, with a button straight into the battlefield. */
+export function BattleAlert() {
+  const { g, ui } = useStore();
+  const [gone, setGone] = useState<Set<number>>(() => new Set());
+  const battles = g ? g.activeBattles.map((id) => g.battles[id]).filter((b): b is Battle => !!b && b.result == null && commandSide(g, b, g.player) != null) : [];
+  const fresh = battles.filter((b) => !gone.has(b.id)).sort((a, b) => b.id - a.id);
+  if (!g || !fresh.length || ui.battleView != null) return null;
+  const b = fresh[0];
+  const side = commandSide(g, b, g.player)!;
+  const enemy = g.nations[(side === 'a' ? b.defender : b.attacker).nation];
+  return (
+    <div className="battle-alert" role="alert">
+      <span className="ba-ic">⚔</span>
+      <div>
+        <b>Battle of {PROV[b.province].name}</b>
+        <div className="small">You are {side === 'a' ? 'attacking' : 'defending against'} {enemy?.name} · day {Math.max(1, b.timeline.length)}{fresh.length > 1 ? ` · ${fresh.length - 1} more battle${fresh.length > 2 ? 's' : ''}` : ''}</div>
+      </div>
+      <Btn kind="primary" onClick={() => { audio.sfx('battle'); openBattle(b.id); }}>Command it ▸</Btn>
+      <button className="iconbtn" title="Dismiss" onClick={() => setGone(new Set([...gone, ...fresh.map((x) => x.id)]))}>✕</button>
+    </div>
+  );
+}
+
+/** Once per version: what changed, for players coming back. */
+const NEWS_KEY = 'wc-news-military-2';
+export function WhatsNew() {
+  const { ui } = useStore();
+  // (not during automated browser tests, where it would sit over everything)
+  const [open, setOpen] = useState(() => { try { return !navigator.webdriver && localStorage.getItem(NEWS_KEY) !== '1'; } catch { return false; } });
+  if (!open || ui.screen !== 'game') return null;
+  const close = () => { try { localStorage.setItem(NEWS_KEY, '1'); } catch { /* private window */ } setOpen(false); };
+  const items: [string, string, string][] = [
+    ['🔍', 'Zoom in to see your troops', 'Scroll in on the map: every army breaks out into its soldiers, tanks and guns, marching along its route. Battles play out right on the map — smoke, explosions, tracer fire, drones and jets.'],
+    ['⚔', 'Command your battles', 'Click any ⚔ marker (or “Command it” when a battle starts). Each day pick Assault, Hold or Flank: Assault beats Flank, Flank beats Hold, Hold beats Assault. Your scouts tell you what the enemy will probably do. Call in barrages, drone strikes, air strikes, the reserve or a rally.'],
+    ['🗺', 'Invade in one click', 'Click any foreign province → “Plan an invasion”. See both sides and their allies, pick armies, press “Declare war & invade”. The armies take the country province by province, by sea if needed. “Make peace now” takes the best deal on offer.'],
+    ['🎖', 'New Military panel', 'The War Room and its extra tabs are gone. Military now has a chief-of-staff with your next best move, then Command, Forces, Build and Generals.'],
+    ['🌊', 'Submarines', 'Sink troopships and drain enemy treasuries by raiding their trade. Only destroyers hunt them well.'],
+  ];
+  return (
+    <Modal title="What's new: the military update" onClose={close} wide className="whats-new">
+      <div className="wn-list">
+        {items.map(([ic, t, d]) => <div key={t} className="wn-item"><span className="wn-ic">{ic}</span><div><b>{t}</b><p>{d}</p></div></div>)}
+      </div>
+      <div className="row gap" style={{ justifyContent: 'flex-end' }}>
+        <Btn onClick={() => { close(); store.setUI({ panel: 'military' }); }}>Open Military</Btn>
+        <Btn kind="primary" onClick={close}>Let's go</Btn>
+      </div>
+    </Modal>
+  );
 }

@@ -1,5 +1,6 @@
 // The big military update as a player meets it: the chief of staff's briefing, the invasion
-// planner (declare war & invade in one go), commanding a battle on the zoomed-in battlefield
+// planner (declare war & invade in one go), the battle alert, troops and fighting on the zoomed-in
+// map, commanding a battle on the zoomed-in battlefield
 // (manoeuvre, support, "fight next day"), the Forces and Build tabs, and submarines.
 //   node tests/e2e/battle-command.mjs [url] [screenshot dir]
 import { chromium } from 'playwright';
@@ -53,6 +54,16 @@ await game(() => window.__wc.setSpeed(3));
 const fought = await page.waitForFunction(() => { const g = window.__wc.game; return g.activeBattles.some((id) => { const x = g.battles[id]; return x && x.result == null && (x.attacker.nation === 'FRA' || x.defender.nation === 'FRA') && x.timeline.length >= 1; }); }, null, { timeout: 120000 }).then(() => true, () => false);
 await game(() => window.__wc.setSpeed(0));
 ok('a battle starts', fought);
+ok('a battle alert offers to command it', await page.locator('.battle-alert button:has-text("Command it")').isVisible());
+// zoom in on the battle: the troops of both sides show on the map, and the fighting
+const bprov = await game(() => { const g = window.__wc.game; return g.activeBattles.map((id) => g.battles[id]).find((x) => x && x.result == null && (x.attacker.nation === 'FRA' || x.defender.nation === 'FRA')).province; });
+await page.evaluate((p) => window.dispatchEvent(new CustomEvent('wc-focus', { detail: p })), bprov);
+await page.waitForSelector('.troops.fight', { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+const troops = await page.locator('.troops').count(), fighting = await page.locator('.troops.fight').count();
+ok(`zoomed in: troops on the map (${troops}, ${fighting} fighting) and battle effects`, troops > 0 && fighting > 0 && (await page.locator('.mfx').count()) > 0);
+ok('zoomed in: terrain drawn', (await page.locator('.terrain-decor path').count()) > 0);
+await page.screenshot({ path: `${out}/map-closeup.png` });
 await page.click('.nav-btn:has-text("Military")').catch(() => {});
 if (!(await page.locator('.drawer').isVisible())) await page.click('.nav-btn:has-text("Military")');
 await page.click('.drawer .tab:has-text("Command")');
