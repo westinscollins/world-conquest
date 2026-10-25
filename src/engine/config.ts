@@ -2,7 +2,7 @@
  * CENTRAL BALANCE CONFIGURATION
  *
  * Every price, rate and modifier in the game derives from the values in this file.
- * Currency: Imperial Credits (IC). All money values are in MILLIONS of IC (M IC).
+ * Currency: US dollars. All money values are in MILLIONS of dollars ($M).
  * These are fictional game-balance figures, not real-world procurement prices.
  */
 import type { BuildingKind, EquipKind, Posture, ResourceKind, ShipType, Terrain, UnitType, Weather, Personality } from './types';
@@ -12,7 +12,7 @@ export const DAYS_PER_YEAR = 365;
 
 // ---------------------------------------------------------------- economy
 export const ECON = {
-  /** National output (M IC / yr) = OUTPUT_K * GDP^OUTPUT_EXP * popFactor. Calibrated so a 51 bn-GDP nation ≈ 140 M IC. */
+  /** National output ($M / yr) = OUTPUT_K * GDP^OUTPUT_EXP * popFactor. Calibrated so a 51 bn-GDP nation ≈ $140M. */
   OUTPUT_K: 0.0586,
   OUTPUT_EXP: 0.72,
   BASE_TAX: 0.25,
@@ -23,7 +23,7 @@ export const ECON = {
   /** Administration = ADMIN_SHARE * output * (1 + provinces/25)^ADMIN_EXP — larger realms cost more to run. */
   ADMIN_SHARE: 0.012,
   ADMIN_EXP: 0.6,
-  /** Per non-core province flat administration (M IC / yr) plus share of its output. */
+  /** Per non-core province flat administration ($M / yr) plus share of its output. */
   OCCUPATION_FLAT: 0.6,
   OCCUPATION_SHARE: 0.08,
   AUTONOMY_SHARE: 0.02,
@@ -54,10 +54,10 @@ export const ECON = {
   TRADE_MAX_PARTNER: 0.02, // cap per agreement as share of own output
   WAR_TRADE_PENALTY: 0.5,
   BLOCKADE_PENALTY: 0.35,
-  /** Equipment capacity per factory (M IC of equipment per year) and baseline civilian industry share. */
+  /** Equipment capacity per factory ($M of equipment per year) and baseline civilian industry share. */
   FACTORY_CAPACITY: 3.2,
   BASE_INDUSTRY_SHARE: 0.035,
-  /** Research: research points per M IC funded, base pts from labs. */
+  /** Research: research points per $M funded, base pts from labs. */
   RP_PER_MIC: 5.0, // RP/yr = RP_PER_MIC * funding^0.6
   LAB_RP: 4,
   LAB_BONUS: 0.08,
@@ -70,7 +70,7 @@ export const ECON = {
 };
 
 export const RESOURCE: Record<ResourceKind, { label: string; basePrice: number; perLevel: number }> = {
-  // basePrice: M IC per unit. perLevel: units/yr per resource level, scaled by sqrt(province area / 100,000 km²).
+  // basePrice: $M per unit. perLevel: units/yr per resource level, scaled by sqrt(province area / 100,000 km²).
   food: { label: 'Food', basePrice: 1.0, perLevel: 2.0 },
   steel: { label: 'Steel', basePrice: 1.6, perLevel: 1.6 },
   oil: { label: 'Oil', basePrice: 2.2, perLevel: 2.0 },
@@ -81,18 +81,18 @@ export const RESOURCE_DEMAND = {
   foodPerMillionPop: 0.32,
   steelPerFactory: 0.25,
   oilPerFuel: 0.22,       // per unit fuel rating of deployed formations (doubled on campaign)
-  oilPerOutput: 0.0012,   // civilian demand per M IC output
+  oilPerOutput: 0.0012,   // civilian demand per $M output
 };
 
 // ---------------------------------------------------------------- buildings
 export interface BuildingSpec {
   label: string; cost: number; days: number; upkeep: number; max: number;
-  output: number;  // flat output M IC / yr added to province
+  output: number;  // flat output $M / yr added to province
   desc: string; needsCoast?: boolean; steel?: number;
 }
 export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
-  factory: { label: 'Factory', cost: 14, days: 240, upkeep: 0.35, max: 12, output: 3, steel: 2, desc: '+3 M IC output. Each factory also makes new formations 2.5% cheaper and 3% faster to train (up to 35% / 40%). Consumes steel.' },
-  farm: { label: 'Agricultural Estate', cost: 5, days: 120, upkeep: 0.1, max: 6, output: 1.6, desc: '+1 food level, +1.6 M IC output. Food surplus raises stability.' },
+  factory: { label: 'Factory', cost: 14, days: 240, upkeep: 0.35, max: 12, output: 3, steel: 2, desc: '+$3M output. Each factory also makes new formations 2.5% cheaper and 3% faster to train (up to 35% / 40%). Consumes steel.' },
+  farm: { label: 'Agricultural Estate', cost: 5, days: 120, upkeep: 0.1, max: 6, output: 1.6, desc: '+1 food level, +$1.6M output. Food surplus raises stability.' },
   mine: { label: 'Extraction Site', cost: 9, days: 200, upkeep: 0.25, max: 4, output: 1.2, desc: '+50% of province steel/oil/rare yield per level (needs a resource).' },
   port: { label: 'Port', cost: 10, days: 210, upkeep: 0.3, max: 5, output: 1.5, needsCoast: true, desc: 'Sea supply hub, naval base, +trade. Required for naval transport.' },
   railway: { label: 'Railway', cost: 12, days: 240, upkeep: 0.3, max: 3, output: 1.0, steel: 1.5, desc: '+2 infrastructure, +60% supply throughput along the line.' },
@@ -102,19 +102,19 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
   fort: { label: 'Fortifications', cost: 6, days: 150, upkeep: 0.15, max: 5, output: 0, desc: '+12% defence per level for defenders in this province.' },
   depot: { label: 'Supply Depot', cost: 5, days: 90, upkeep: 0.2, max: 1, output: 0, desc: 'Regional supply hub; extends supply into the front.' },
 };
-export const REPAIR_COST_PER_DAMAGE = 30; // M IC to repair 100% damage scaled by province output share
+export const REPAIR_COST_PER_DAMAGE = 30; // $M to repair 100% damage scaled by province output share
 export const DEVELOP = { cost: 8, days: 180, boost: 0.04 };
 export const INTEGRATE = { costPerOutput: 0.6, minCost: 3, days: 270 };
 
 // ---------------------------------------------------------------- military
 export const MIL = {
-  SOLDIER_WAGE: 0.00028,   // M IC per soldier per year
+  SOLDIER_WAGE: 0.00028,   // $M per soldier per year
   RECRUIT_PER_SOLDIER: 0.00032, // induction and training per soldier
   EQUIP_MAINT: 0.07,       // share of equipment value per year
-  SUPPLY_PRICE: 0.0011,    // M IC per supply unit (food, ammo, spares)
-  FUEL_PRICE_PER_OIL: 0.0012, // M IC per fuel unit at oil base price
+  SUPPLY_PRICE: 0.0011,    // $M per supply unit (food, ammo, spares)
+  FUEL_PRICE_PER_OIL: 0.0012, // $M per fuel unit at oil base price
   PEACE_SUPPLY_FACTOR: 0.45, // garrison consumption share at peace (paid in upkeep)
-  TRANSPORT_COST_PER_ZONE: 0.1, // M IC per brigade per sea zone
+  TRANSPORT_COST_PER_ZONE: 0.1, // $M per brigade per sea zone
   OPS_COST_SHARE: 0.65,  // share of full campaign fuel/ammunition cost charged while moving or fighting
   TRANSPORT_DAYS_PER_ZONE: 3,
   INVASION_WAIT: 10,       // days an invasion group in port waits past its sailing day for late armies
@@ -205,6 +205,20 @@ export const COMBAT = {
   NAVAL_FIRE: 0.15,         // gunfire ashore per point of warship attack off the coast
   OUT_OF_SUPPLY_ATTACK: 0.45, // multiplier at 0 supply
   GENERAL_PER_SKILL: 0.05,
+};
+
+/**
+ * How much the game favours human players, by difficulty: their armies fight better (attack and
+ * defence ×combat), AI enemies accept their peace terms more readily (+peace war score), an AI
+ * country losing to them surrenders what they hold once it keeps less than `surrender` of its land
+ * (or has lost its capital and keeps under half), and only allies that border the fighting join
+ * a war they start (farAllies: allies from anywhere join). Their armies always get at least
+ * `supply` of what they need and recover organisation `recovery` times as fast.
+ */
+export const PLAYER_HELP: Record<'tutorial' | 'standard' | 'hard', { combat: number; peace: number; surrender: number; farAllies: boolean; supply: number; recovery: number }> = {
+  tutorial: { combat: 1.8, peace: 35, surrender: 0.5, farAllies: false, supply: 0.6, recovery: 2.5 },
+  standard: { combat: 1.5, peace: 20, surrender: 0.35, farAllies: false, supply: 0.5, recovery: 2 },
+  hard: { combat: 1, peace: 0, surrender: 0, farAllies: true, supply: 0, recovery: 1 },
 };
 
 // ---------------------------------------------------------------- diplomacy
@@ -377,7 +391,7 @@ export const FOCUS: Record<'industry' | 'agriculture' | 'commerce' | 'military',
   commerce: { label: 'Commerce', desc: 'Markets and services: +6% output and +10% taxes here.' },
   military: { label: 'Military', desc: 'Garrison region: 2× manpower from here, +40% supply throughput, units recruited here 15% cheaper.' },
 };
-export const FOCUS_CHANGE_COST = 2;  // M IC
+export const FOCUS_CHANGE_COST = 2;  // $M
 
 export const SPY = {
   NETWORK_COST: 3, NETWORK_GAIN: 0.2, DECAY_PER_MONTH: 0.01,

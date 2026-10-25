@@ -28,7 +28,7 @@ export function NationPicker({ value, onChange, taken = {} }: { value: string | 
         })}
         {!list.length && <p className="muted small">No nation matches “{q}”.</p>}
       </div>
-      <p className="small muted">Ranked by starting economy (yearly output in IC). Smaller economies are harder starts.</p>
+      <p className="small muted">Ranked by starting economy (yearly output in dollars). Smaller economies are harder starts.</p>
     </div>
   );
 }

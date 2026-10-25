@@ -145,6 +145,10 @@ export function MapView() {
   const { g, ui } = useStore();
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  // the map's size on screen, kept up to date (reading it while animating would force a costly layout)
+  const screen = useRef({ left: 0, top: 0, width: 1, height: 1 });
+  const measure = () => { const r = wrapRef.current?.getBoundingClientRect(); if (r) screen.current = { left: r.left, top: r.top, width: Math.max(1, r.width), height: Math.max(1, r.height) }; };
   const cam = useRef({ x: VX, y: VY, w: VW, h: VH });
   const [zoom, setZoom] = useState(1);
   const [decor, setDecor] = useState<Decor | null>(null);
@@ -155,46 +159,92 @@ export function MapView() {
 
   useEffect(() => { fetch('geo/decor.json').then((r) => r.json()).then(setDecor).catch(() => setDecor({ rivers: [], lakes: [], borders: [] })); }, []);
 
-  const applyCam = useCallback(() => {
-    const c = cam.current;
-    svgRef.current?.setAttribute('viewBox', `${c.x} ${c.y} ${c.w} ${c.h}`);
-  }, []);
-  const zoomRaf = useRef(0);
-  const scheduleZoomState = useCallback(() => {
-    cancelAnimationFrame(zoomRaf.current);
-    zoomRaf.current = requestAnimationFrame(() => setZoom(VW / cam.current.w));
-  }, []);
-
-  const fitAspect = useCallback(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ar = el.clientWidth / Math.max(1, el.clientHeight);
-    const c = cam.current;
-    c.h = c.w / ar;
-    clamp();
-    applyCam();
-  }, [applyCam]);
-  function clamp() {
-    const c = cam.current;
+  // Two cameras: `cam` is what the map was last drawn for (its viewBox), `view` is what you see.
+  // While you zoom or drag, the drawn picture is just moved and scaled to `view` (cheap for the
+  // browser); the map is redrawn for `view` when the motion stops, or early if the moved picture
+  // would leave too much empty space.
+  const view = useRef({ x: VX, y: VY, w: VW, h: VH });
+  const aspect = () => screen.current.width / screen.current.height;
+  function clamp(c = view.current) {
     c.w = Math.max(60, Math.min(VW * 1.0, c.w));
-    const el = wrapRef.current;
-    const ar = el ? el.clientWidth / Math.max(1, el.clientHeight) : 2;
+    const ar = aspect();
     c.h = c.w / ar;
     if (c.h > VH * 1.15) { c.h = VH * 1.15; c.w = c.h * ar; }
     c.x = Math.max(VX - c.w * 0.1, Math.min(VX + VW - c.w * 0.9, c.x));
     c.y = Math.max(VY - c.h * 0.08, Math.min(VY + VH - c.h * 0.92, c.y));
   }
+  /** Show `view` by moving/scaling the picture drawn for `cam`. */
+  const applyView = useCallback(() => {
+    const layer = layerRef.current;
+    if (!layer) return;
+    const c = cam.current, v = view.current;
+    const k = c.w / v.w, S = screen.current.width / c.w;
+    if (Math.abs(k - 1) < 1e-6 && Math.abs(c.x - v.x) * S < 0.05 && Math.abs(c.y - v.y) * S < 0.05) { layer.style.transform = ''; return; }
+    layer.style.transform = `translate(${(c.x - v.x) * S * k}px, ${(c.y - v.y) * S * k}px) scale(${k})`;
+  }, []);
+  /** Redraw the map for `view`. */
+  const commit = useCallback(() => {
+    const v = view.current;
+    cam.current = { ...v };
+    svgRef.current?.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    if (layerRef.current) layerRef.current.style.transform = '';
+    setZoom(VW / v.w);
+  }, []);
+  /** The picture has been moved/scaled so far that a redraw is due (empty edges would show). */
+  const stale = () => { const c = cam.current, v = view.current; return v.w > c.w * 1.3 || Math.abs(v.x - c.x) > c.w * 0.35 || Math.abs(v.y - c.y) > c.h * 0.35; };
+  const zoomRaf = useRef(0);
+  const scheduleZoomState = useCallback(() => {
+    cancelAnimationFrame(zoomRaf.current);
+    zoomRaf.current = requestAnimationFrame(commit);
+  }, [commit]);
+  // The view glides to where the wheel (or a focus request) sends it.
+  const glide = useRef<null | { w: number; anchor?: { x: number; y: number; fx: number; fy: number }; fly?: { x: number; y: number; vx: number; vy: number } }>(null);
+  const glideRaf = useRef(0);
+  const stopGlide = useCallback(() => { cancelAnimationFrame(glideRaf.current); glide.current = null; }, []);
+  const startGlide = useCallback(() => {
+    cancelAnimationFrame(glideRaf.current);
+    const step = () => {
+      const t = glide.current, v = view.current;
+      if (!t) return;
+      v.w += (t.w - v.w) * 0.22;
+      let done = Math.abs(t.w - v.w) < t.w * 0.002;
+      if (t.anchor) { clamp(); v.x = t.anchor.x - t.anchor.fx * v.w; v.y = t.anchor.y - t.anchor.fy * v.h; } // (the point under the cursor stays put)
+      if (t.fly) {
+        // (eased on its own coordinates: the edge of the map may stop the view short of them)
+        const f = t.fly;
+        f.vx += (f.x - f.vx) * 0.22; f.vy += (f.y - f.vy) * 0.22;
+        done = done && Math.hypot(f.x - f.vx, f.y - f.vy) < Math.max(0.3, t.w * 0.002);
+        if (done) { f.vx = f.x; f.vy = f.y; }
+        v.x = f.vx; v.y = f.vy;
+      }
+      if (done) v.w = t.w;
+      clamp();
+      if (done || stale()) commit(); else applyView();
+      if (done) glide.current = null;
+      else glideRaf.current = requestAnimationFrame(step);
+    };
+    glideRaf.current = requestAnimationFrame(step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyView, commit]);
+
+  const fitAspect = useCallback(() => {
+    measure();
+    clamp();
+    commit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commit]);
 
   // initial focus on the player's capital
   useEffect(() => {
     if (!g) return;
     const cap = PROV[g.nations[g.player].capital];
-    const c = cam.current;
-    c.w = 420;
-    fitAspect();
-    c.x = cap.x - c.w / 2; c.y = cap.y - c.h / 2;
-    clamp(); applyCam(); scheduleZoomState();
-    const ro = new ResizeObserver(() => { fitAspect(); scheduleZoomState(); });
+    const v = view.current;
+    measure();
+    v.w = 420;
+    clamp();
+    v.x = cap.x - v.w / 2; v.y = cap.y - v.h / 2;
+    clamp(); commit();
+    const ro = new ResizeObserver(() => fitAspect());
     if (wrapRef.current) ro.observe(wrapRef.current);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,28 +254,29 @@ export function MapView() {
   useEffect(() => {
     const h = (e: Event) => {
       const p = (e as CustomEvent<number>).detail;
-      const c = cam.current;
-      c.w = Math.min(c.w, 360); clamp();
-      c.x = PROV[p].x - c.w / 2; c.y = PROV[p].y - c.h / 2;
-      clamp(); applyCam(); scheduleZoomState();
+      const v = view.current;
+      const w = Math.min(glide.current?.w ?? v.w, 360);
+      glide.current = { w, fly: { x: PROV[p].x - w / 2, y: PROV[p].y - w / aspect() / 2, vx: v.x, vy: v.y } };
+      startGlide();
     };
     window.addEventListener('wc-focus', h);
     return () => window.removeEventListener('wc-focus', h);
-  }, [applyCam, scheduleZoomState]);
+  }, [startGlide]);
 
+  /** Map coordinates under a point on the screen (of what you see, even mid-glide). */
   const toMap = (clientX: number, clientY: number) => {
-    const r = svgRef.current!.getBoundingClientRect();
-    const c = cam.current;
-    return { x: c.x + ((clientX - r.left) / r.width) * c.w, y: c.y + ((clientY - r.top) / r.height) * c.h };
+    const r = screen.current;
+    const v = view.current;
+    return { x: v.x + ((clientX - r.left) / r.width) * v.w, y: v.y + ((clientY - r.top) / r.height) * v.h };
   };
   const onWheel = (e: React.WheelEvent) => {
-    const c = cam.current;
+    const r = screen.current;
     const m = toMap(e.clientX, e.clientY);
-    const f = Math.exp(e.deltaY * 0.0015);
-    const nw = Math.max(60, Math.min(VW, c.w * f));
-    const k = nw / c.w;
-    c.x = m.x - (m.x - c.x) * k; c.y = m.y - (m.y - c.y) * k; c.w = nw;
-    clamp(); applyCam(); scheduleZoomState();
+    // (a mouse notch is ~100, a trackpad sends many small steps; pages/lines are scaled up)
+    const dy = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
+    const from = glide.current?.w ?? view.current.w;
+    glide.current = { w: Math.max(60, Math.min(VW, from * Math.exp(dy * 0.0015))), anchor: { x: m.x, y: m.y, fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height } };
+    startGlide();
   };
   // wheel / pinch must be a non-passive listener so it zooms the map rather than the whole page
   const wheelRef = useRef(onWheel);
@@ -250,7 +301,8 @@ export function MapView() {
       setBox({ ...boxRef.current });
       return;
     }
-    drag.current = { x: e.clientX, y: e.clientY, cx: cam.current.x, cy: cam.current.y, moved: false };
+    stopGlide();
+    drag.current = { x: e.clientX, y: e.clientY, cx: view.current.x, cy: view.current.y, moved: false };
   };
   const onMove = (e: React.PointerEvent) => {
     if (boxRef.current) { boxRef.current.x1 = e.clientX; boxRef.current.y1 = e.clientY; setBox({ ...boxRef.current }); return; }
@@ -259,10 +311,11 @@ export function MapView() {
       const dx = e.clientX - d.x, dy = e.clientY - d.y;
       if (!d.moved && Math.hypot(dx, dy) > 4) { d.moved = true; (e.target as Element).setPointerCapture?.(e.pointerId); }
       if (d.moved) {
-        const r = svgRef.current!.getBoundingClientRect();
-        cam.current.x = d.cx - (dx / r.width) * cam.current.w;
-        cam.current.y = d.cy - (dy / r.height) * cam.current.h;
-        clamp(); applyCam();
+        const r = screen.current;
+        view.current.x = d.cx - (dx / r.width) * view.current.w;
+        view.current.y = d.cy - (dy / r.height) * view.current.h;
+        clamp();
+        if (stale()) commit(); else applyView();
         return;
       }
     }
@@ -284,7 +337,7 @@ export function MapView() {
     }
     const d = drag.current;
     drag.current = null;
-    if (d?.moved) return;
+    if (d?.moved) { commit(); return; }
     if (e.button !== 0) return;
     const t = e.target as Element;
     const armyEl = t.closest?.('[data-army]');
@@ -352,6 +405,7 @@ export function MapView() {
   return (
     <div className="map-wrap" ref={wrapRef}>
       {ui.moveMode != null && <div className="move-hint">Click a province to send {g.armies[ui.moveMode]?.name ?? 'the army'} there · <a onClick={() => store.setUI({ moveMode: null })}>cancel</a></div>}
+      <div className="map-layer" ref={layerRef}>
       <svg ref={svgRef} className={`map mode-${ui.mapMode}${ui.moveMode != null ? ' moving' : ''}`} viewBox={`${VX} ${VY} ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice"
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenu={onContext} onPointerLeave={() => setHover(null)}>
         <defs>
@@ -404,6 +458,7 @@ export function MapView() {
         <LiveLayer px={px} />
         <rect x={VX - 400} y={VY - 300} width={VW + 800} height={VH + 600} fill="url(#vignette)" pointerEvents="none" opacity={0.35} />
       </svg>
+      </div>
       {hover && <MapTooltip g={g} p={hover.p} x={hover.x} y={hover.y} mode={ui.mapMode} />}
       {box && <div className="select-box" style={{ left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }} />}
       {ui.pickOperation && <div className="strike-banner">Coordinated operation: click the enemy province {selectedIds().length} armies should attack together · right-click or Esc to cancel</div>}
@@ -872,7 +927,7 @@ function MapTooltip({ g, p, x, y, mode }: { g: GameState; p: number; x: number; 
         <span>Terrain</span><b>{TERRAIN[geo.terrain].label}{geo.river ? ' · river' : ''}</b>
         <span>Weather</span><b>{WEATHER[w].label}</b>
         <span>Population</span><b>{num(st.pop)}</b>
-        <span>Output</span><b>{money(provinceOutput(g, st, owner))} IC/yr</b>
+        <span>Output</span><b>{money(provinceOutput(g, st, owner))}/yr</b>
         {armies.length > 0 && <><span>Armies</span><b>{armies.map((a) => `${g.nations[a.owner]?.name ?? a.owner} ${num(armyStrength(a))}`).join(', ')}</b></>}
       </div>
       {extra && <div className="tt-extra">{extra}</div>}

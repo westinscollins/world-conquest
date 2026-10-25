@@ -12,7 +12,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'expansion', name: 'Expansion', desc: 'Own 10 provinces.', check: (s) => ownedBy(s, s.player).length >= 10 },
   { id: 'empire', name: 'Empire', desc: 'Own 50 provinces.', check: (s) => ownedBy(s, s.player).length >= 50 },
   { id: 'conqueror', name: 'Conqueror', desc: 'Annex an entire nation.', check: (s) => s.stats.annexations > 0 && P(s).stats.provincesCaptured > 0 },
-  { id: 'banker', name: 'Central Banker', desc: 'Hold 1,000 M IC in the treasury.', check: (s) => P(s).treasury >= 1000 },
+  { id: 'banker', name: 'Central Banker', desc: 'Hold $1,000M in the treasury.', check: (s) => P(s).treasury >= 1000 },
   { id: 'debtfree', name: 'Balanced Books', desc: 'Run a surplus for a full year with no debt.', check: (s) => P(s).debt === 0 && s.day > 365 && P(s).history.slice(-12).length >= 12 && P(s).history.slice(-12).every((h, i, a) => i === 0 || h.treasury >= a[i - 1].treasury) },
   { id: 'industrialist', name: 'Industrialist', desc: 'Own 30 factories.', check: (s) => ownedBy(s, s.player).reduce((t, p) => t + s.provinces[p].buildings.factory, 0) >= 30 },
   { id: 'scholar', name: 'Scholar', desc: 'Research 12 technologies.', check: (s) => P(s).research.done.length >= 12 },
@@ -52,7 +52,7 @@ export function victoryProgress(s: GameState): VictoryProgress[] {
   if (v.kind === 'survival') add('Years survived', s.day / 365, v.years ?? 10);
   if (v.kind === 'custom') {
     if (v.customProvinces) add('Provinces owned', owned, v.customProvinces);
-    if (v.customOutput) add('Annual output (M IC)', out, v.customOutput);
+    if (v.customOutput) add('Annual output ($M)', out, v.customOutput);
     if (v.customYears) add('Deadline (years remaining)', Math.max(0, v.customYears - s.day / 365), v.customYears);
   }
   return res;

@@ -87,16 +87,16 @@ export function attackNearest(s: GameState, n: Nation, armyIds: number[]): { ok:
   }
   return sent ? { ok: true, message: `${sent} ${sent === 1 ? 'army attacks' : 'armies attack'} the nearest enemy positions.` } : { ok: false, message: 'None of the selected armies is next to an enemy province.' };
 }
-/** Engineers dig field fortifications at once (0.3 M IC per formation). */
+/** Engineers dig field fortifications at once ($0.3M per formation). */
 export function digIn(s: GameState, n: Nation, armyIds: number[]): { ok: boolean; message: string } {
   const list = own(s, n, armyIds).filter((a) => a.battleId == null && !a.path.length && !a.embarked && a.entrench < 0.8);
   const units = list.reduce((t, a) => t + a.units.length, 0);
   const cost = units * 0.3 * n.priceIndex;
   if (!list.length) return { ok: false, message: 'Select halted armies that are not already dug in.' };
-  if (n.treasury < cost) return { ok: false, message: `Digging in costs ${cost.toFixed(1)} M IC.` };
+  if (n.treasury < cost) return { ok: false, message: `Digging in costs $${cost.toFixed(1)}M.` };
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   for (const a of list) { a.entrench = 0.8; a.stance = 'hold'; }
-  return { ok: true, message: `${list.length} armies dug in (trenches and minefields, 80% entrenchment) for ${cost.toFixed(1)} M IC.` };
+  return { ok: true, message: `${list.length} armies dug in (trenches and minefields, 80% entrenchment) for $${cost.toFixed(1)}M.` };
 }
 
 // ---------------------------------------------------------------- scorched earth & partisans
@@ -142,7 +142,7 @@ export function hireMercenaries(s: GameState, n: Nation, t: UnitType, p: number)
   const st = s.provinces[p];
   if (st.owner !== n.id || st.controller !== n.id) return 'Mercenaries muster in a province you own and hold.';
   const cost = mercenaryCost(t, n);
-  if (n.treasury < cost) return `Mercenaries cost ${cost.toFixed(1)} M IC up front.`;
+  if (n.treasury < cost) return `Mercenaries cost $${cost.toFixed(1)}M up front.`;
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   const u = newUnit(s, t, 1, 0.45); u.org = 0.7; u.morale = 0.6;
   let army = armiesIn(s, p).find((a) => a.owner === n.id && !a.battleId && !a.path.length && a.units.length < 24);
@@ -167,7 +167,7 @@ export function fortifyBorder(s: GameState, n: Nation): { ok: boolean; message: 
     const r = startConstruction(s, n, p, 'fort');
     if (r.ok) { k++; spent += r.cost; }
   }
-  return k ? { ok: true, message: `Fortifications under construction in ${k} border provinces (${spent.toFixed(1)} M IC, ${BUILDINGS.fort.days} days).` } : { ok: false, message: list.length ? 'No border province can take another fort level (or funds are short).' : 'You have no threatened border.' };
+  return k ? { ok: true, message: `Fortifications under construction in ${k} border provinces ($${spent.toFixed(1)}M, ${BUILDINGS.fort.days} days).` } : { ok: false, message: list.length ? 'No border province can take another fort level (or funds are short).' : 'You have no threatened border.' };
 }
 
 // ---------------------------------------------------------------- technology licensing
@@ -189,7 +189,7 @@ export function licenseTech(s: GameState, n: Nation, tech: string): string | nul
   const from = licensors(s, n, tech);
   if (!from.length) return 'No ally or trade partner has this technology to license.';
   const cost = licenseCost(n, tech);
-  if (n.treasury < cost) return `A licence costs ${cost.toFixed(0)} M IC.`;
+  if (n.treasury < cost) return `A licence costs $${cost.toFixed(0)}M.`;
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   s.nations[from[0]].treasury += cost * 0.5;
   n.research.done.push(tech);

@@ -337,8 +337,8 @@ export function armyAutomation(s: GameState, a: Army, full = false) {
   }
   if (best) {
     a.path = [best.p];
-    // coordinated attack: idle healthy armies in the same province join
-    if (full) for (const o of armiesIn(s, a.location)) if (o.owner === n.id && o.id !== a.id && !o.battleId && !o.path.length && armyOrg(o) > 0.5 && o.lastSupplyRatio > 0.5) o.path = [best.p];
+    // coordinated attack: idle healthy armies in the same province join (a player's: those also on Attack)
+    for (const o of armiesIn(s, a.location)) if (o.owner === n.id && o.id !== a.id && !o.battleId && !o.path.length && (full || o.stance === 'advance') && armyOrg(o) > 0.5 && o.lastSupplyRatio > 0.5) o.path = [best.p];
     return;
   }
   if (!full && stance !== 'advance') return;
@@ -558,7 +558,7 @@ export function describeTerms(s: GameState, t: PeaceTerms) {
   const parts: string[] = [];
   if (t.annex) parts.push('full annexation');
   else if (t.provinces.length) parts.push(`cession of ${t.provinces.slice(0, 4).map((p) => PROV[p].name).join(', ')}${t.provinces.length > 4 ? ` and ${t.provinces.length - 4} more` : ''}`);
-  if (t.reparations) parts.push(`reparations of ${t.reparations.toFixed(1)} M IC/yr`);
+  if (t.reparations) parts.push(`reparations of $${t.reparations.toFixed(1)}M/yr`);
   if (t.vassalize) parts.push('subject status');
   return parts.join(', ') || 'no terms';
 }

@@ -99,7 +99,7 @@ export function ArmyPanel() {
                 {a.units.map((u) => (
                   <tr key={u.id} className={sel.includes(u.id) ? 'sel' : ''} onClick={() => setSel(sel.includes(u.id) ? sel.filter((x) => x !== u.id) : [...sel, u.id])}>
                     <td><input type="checkbox" readOnly checked={sel.includes(u.id)} /></td>
-                    <td><Tip tip={<div><b>{UNITS[u.type].label}</b><br />{UNITS[u.type].desc}<br />Upkeep {money(unitUpkeep(u.type, n), { digits: 2 })} IC/yr · quality ×{qualityOf(n, u.type).toFixed(2)}<br />Speed {UNITS[u.type].speed} km/day · supply {UNITS[u.type].supply}/day · fuel {UNITS[u.type].fuel}</div>}>{UNITS[u.type].short}</Tip></td>
+                    <td><Tip tip={<div><b>{UNITS[u.type].label}</b><br />{UNITS[u.type].desc}<br />Upkeep {money(unitUpkeep(u.type, n), { digits: 2 })}/yr · quality ×{qualityOf(n, u.type).toFixed(2)}<br />Speed {UNITS[u.type].speed} km/day · supply {UNITS[u.type].supply}/day · fuel {UNITS[u.type].fuel}</div>}>{UNITS[u.type].short}</Tip></td>
                     <td>{num(u.strength)}</td>
                     <td><Bar value={u.equipment} h={5} title={pct(u.equipment)} /></td>
                     <td><Bar value={u.org} h={5} title={pct(u.org)} /></td>

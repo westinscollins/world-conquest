@@ -101,7 +101,7 @@ function SideCard({ side, role, posture, color, name, cur, max }: { side: Battle
       <div className="kv"><span>Morale</span><b>{pct(side.startMorale)} → {pct(cur?.mor ?? side.morale)}</b></div>
       <div className="kv"><span>Readiness · supply</span><b>{pct(side.startEquip)} equipped · {pct(side.startSupply)} supplied</b></div>
       <div className="kv"><span>Casualties</span><b className="bad">{num(lost)}{side.losses.wounded ? <span className="muted small"> ({num(side.losses.killed)} killed, {num(side.losses.wounded)} wounded)</span> : null}</b></div>
-      <div className="kv"><span>Equipment lost</span><b className="bad">{money(side.losses.equipmentValue)} IC</b></div>
+      <div className="kv"><span>Equipment lost</span><b className="bad">{money(side.losses.equipmentValue)}</b></div>
     </div>
   );
 }

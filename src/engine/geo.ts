@@ -6,6 +6,23 @@ export const PROV: ProvinceGeo[] = WORLD.provinces;
 export const NPROV = PROV.length;
 export const COUNTRY_GEO = Object.fromEntries(WORLD.countries.map((c) => [c.id, c]));
 
+// Microstates the map merged into their neighbours left those countries with the wrong capital
+// (France's was Monaco, Switzerland's Vaduz, Italy's the Vatican): rename those provinces after
+// the city they really hold, and give the countries their real capitals.
+for (const [id, renames, capital] of [
+  ['FRA', { Monaco: ['Nice', 940000] }, 'Paris'],
+  ['CHE', { Vaduz: ['St. Gallen', 170000] }, 'Bern'],
+  ['ITA', { 'Vatican City': ['Rome', 3330000], 'San Marino': ['Rimini', 150000] }, 'Rome'],
+] as [string, Record<string, [string, number]>, string][]) {
+  const c = COUNTRY_GEO[id];
+  if (!c) continue;
+  for (const p of c.provinces) { const r = renames[PROV[p].name]; if (r) [PROV[p].name, PROV[p].cityPop] = r; }
+  const cap = c.provinces.find((p) => PROV[p].name === capital);
+  if (cap == null) continue;
+  for (const p of c.provinces) PROV[p].capital = p === cap;
+  c.capital = cap;
+}
+
 const KM_PER_UNIT = 40075 / WORLD.meta.width;
 
 export function lonLat(x: number, y: number): [number, number] {

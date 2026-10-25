@@ -217,7 +217,7 @@ class Store {
       const deficit = pn.budget.net < 0;
       if (deficit && !this.wasDeficit) {
         const top = pn.budget.expenses.slice().sort((a, b) => b.amount - a.amount).slice(0, 2).map((l) => l.label.toLowerCase()).join(' and ');
-        this.toast(`Budget deficit: losing ${Math.abs(pn.budget.net).toFixed(1)} M IC a year (largest costs: ${top}). Open Economy for fixes.`, 'bad');
+        this.toast(`Budget deficit: losing $${Math.abs(pn.budget.net).toFixed(1)}M a year (largest costs: ${top}). Open Economy for fixes.`, 'bad');
       }
       this.wasDeficit = deficit;
     }

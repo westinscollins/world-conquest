@@ -2,6 +2,7 @@
 // and never saved; they are invalidated whenever ownership/control changes.
 import type { Army, GameState, Nation, Relation, War } from './types';
 import { NPROV, PROV } from './geo';
+import { PLAYER_HELP } from './config';
 
 let cacheFor: GameState | null = null;
 let cacheVersion = -1;
@@ -83,6 +84,10 @@ function allyMap(s: GameState) {
 export function alliesOf(s: GameState, a: string): string[] {
   return [...(allyMap(s).get(a) ?? [])].filter((id) => s.nations[id]?.alive);
 }
+/** How much the game favours human players at this game's difficulty (see PLAYER_HELP). */
+export const playerHelp = (s: GameState) => PLAYER_HELP[s.settings?.difficulty] ?? PLAYER_HELP.standard;
+/** A human player's combat edge (1 for AI nations). */
+export const playerEdge = (s: GameState, id: string) => (s.nations[id]?.isPlayer ? playerHelp(s).combat : 1);
 export function isFriendly(s: GameState, a: string, b: string) {
   if (a === b) return true;
   if (allyMap(s).get(a)?.has(b)) return true;

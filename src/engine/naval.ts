@@ -261,7 +261,7 @@ export function orderShip(s: GameState, n: Nation, type: ShipType, port: number)
   if (st.owner !== n.id || st.controller !== n.id || st.buildings.port <= 0) return 'Ships are built in your own ports.';
   const spec = SHIPS[type];
   const cost = shipCost(type, n);
-  if (n.treasury < cost) return `Insufficient funds: this costs ${cost.toFixed(1)} M IC.`;
+  if (n.treasury < cost) return `Insufficient funds: this costs $${cost.toFixed(1)}M.`;
   if (n.manpower < spec.personnel) return 'Insufficient manpower.';
   n.treasury -= cost;
   n.ledgerMonth.expense += cost;

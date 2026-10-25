@@ -24,6 +24,7 @@ const budgetOf = (s: GameState, id: string) => {
 /** Two isolated armies fighting on a chosen province with controlled conditions. */
 function duel(opts: { atk: UnitType[]; def: UnitType[]; terrainProv?: number; atkSupply?: number; defEntrench?: number; seed?: number }) {
   const s = newGame('serbia', { seed: opts.seed ?? 7 });
+  s.settings.difficulty = 'hard'; // (the bare rules: no help for the player's side)
   // clear the world's armies to isolate the battle
   s.armies = {}; invalidateArmies();
   const prov = opts.terrainProv ?? s.nations.SRB.capital;
@@ -226,6 +227,7 @@ describe('battles', () => {
 describe('supply', () => {
   it('armies deep in friendly territory are supplied; cut-off armies are not', () => {
     const s = newGame('poland', { seed: 3 });
+    s.settings.difficulty = 'hard'; // (the bare rules: no minimum supply for the player)
     const n = s.nations.POL;
     const a = Object.values(s.armies).find((x) => x.owner === 'POL')!;
     supplyDaily(s, n, [a], true);

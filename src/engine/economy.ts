@@ -9,7 +9,7 @@ import { regimeCosts, regimeMonthly } from './regime';
 
 export const RES_KINDS: ResourceKind[] = ['food', 'steel', 'oil', 'rare'];
 
-/** Annual output of a province in M IC. */
+/** Annual output of a province in $M. */
 export function provinceOutput(s: GameState, p: ProvinceState, n?: Nation): number {
   const b = p.buildings;
   let flat = 0;
@@ -255,8 +255,8 @@ export function computeBudget(s: GameState, n: Nation, agg: NationAgg, idx: DayI
 export function fmt(v: number, digits = 1) {
   const a = Math.abs(v);
   const sign = v < 0 ? '−' : '';
-  if (a >= 1000) return `${sign}${(a / 1000).toFixed(2)} bn IC`;
-  return `${sign}${a.toFixed(a < 10 ? digits : 0)} M IC`;
+  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(2)}B`;
+  return `${sign}$${a.toFixed(a < 10 ? digits : 0)}M`;
 }
 
 // ---------------------------------------------------------------- daily & monthly economy

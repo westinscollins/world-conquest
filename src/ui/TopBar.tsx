@@ -34,7 +34,7 @@ export function TopBar() {
         </div>
       </div>
       <div className="tb-stats">
-        <Tip wide tip={<div><b>Treasury</b><br />Cash on hand. Daily change = annual net ÷ 365.<br />Debt: {money(n.debt)} IC at {pct(n.interestRate, 1)}{n.bankrupt ? <><br /><span className="bad">BANKRUPT: production and construction halted.</span></> : null}</div>}>
+        <Tip wide tip={<div><b>Treasury</b><br />Cash on hand. Daily change = annual net ÷ 365.<br />Debt: {money(n.debt)} at {pct(n.interestRate, 1)}{n.bankrupt ? <><br /><span className="bad">BANKRUPT: production and construction halted.</span></> : null}</div>}>
           <div className={cls('tb-stat', n.treasury < 0 && 'bad')}><Icon name="coin" color="#e8c36a" /><div><b>{money(n.treasury)}</b><span>Treasury</span></div></div>
         </Tip>
         <Tip wide tip={<div className="tt-ledger"><b>Annual budget</b>
@@ -47,7 +47,7 @@ export function TopBar() {
           <i>Open Economy for the full breakdown.</i></div>}>
           <div className="tb-stat" onClick={() => store.setUI({ panel: 'economy' })}><Icon name="chart" color={b.net >= 0 ? '#7fd17f' : '#e86a5a'} /><div><b className={b.net >= 0 ? 'good' : 'bad'}>{money(b.net, { sign: true })}</b><span>Net / year</span></div></div>
         </Tip>
-        <Tip tip={<div><b>Income {money(b.totalIncome)} IC/yr</b><br />Expenses {money(b.totalExpense)} IC/yr<br />National output {money(b.output)} IC/yr</div>}>
+        <Tip tip={<div><b>Income {money(b.totalIncome)}/yr</b><br />Expenses {money(b.totalExpense)}/yr<br />National output {money(b.output)}/yr</div>}>
           <div className="tb-stat small"><div><b>{money(b.totalIncome)}</b><span>Income</span></div><div><b>{money(b.totalExpense)}</b><span>Expenses</span></div></div>
         </Tip>
         <Tip wide tip={<div><b>Stability {n.stability.toFixed(0)}%</b><br />Raises tax collection and output. Lowered by high taxes (base {pct(ECON.BASE_TAX)}), war exhaustion ({n.warExhaustion.toFixed(0)}), deficits, food shortages, inflation and occupied land.</div>}>

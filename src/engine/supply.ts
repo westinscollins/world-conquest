@@ -7,7 +7,7 @@
 import { focusOf } from './policy';
 import type { Army, GameState, Nation } from './types';
 import { PROV, WORLD, distKm, landLinks } from './geo';
-import { controlledBy, isFriendly, atWar } from './world';
+import { controlledBy, isFriendly, atWar, playerHelp } from './world';
 import { MIL, WEATHER } from './config';
 import { armySupplyDemand, armyFuelShare } from './military';
 import { provinceWeather } from './weather';
@@ -233,6 +233,8 @@ export function supplyDaily(s: GameState, n: Nation, armies: Army[], atWarNow = 
     a.supply = Math.max(0, Math.min(maxStock, a.supply + deliveredDays - usedDays));
     const flowRatio = Math.min(1, avail / Math.max(1e-6, d));
     a.lastSupplyRatio = a.supply > 0.5 ? Math.max(flowRatio, Math.min(1, 0.6 + a.supply / maxStock)) : flowRatio;
+    const floor = n.isPlayer ? playerHelp(s).supply : 0; // (difficulty)
+    if (a.lastSupplyRatio < floor) { a.lastSupplyRatio = floor; causes.push(`Difficulty: your armies always get at least ${Math.round(floor * 100)}% of their supply`); }
     a.lastSupplyCause = causes;
   }
 }

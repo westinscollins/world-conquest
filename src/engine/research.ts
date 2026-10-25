@@ -11,7 +11,7 @@ export interface Tech {
 
 export const BRANCHES = ['Civilian Industry', 'Military Production', 'Logistics', 'Communications & Recon', 'Armor & Vehicles', 'Aviation & Naval', 'Medicine', 'Administration'];
 
-// Research points (RP)/yr = 5 * funding^0.6 + labs: 2 M IC/yr ≈ 7.6 RP, 20 M ≈ 30 RP. Diminishing returns stop rich nations finishing the tree instantly.
+// Research points (RP)/yr = 5 * funding^0.6 + labs: $2M/yr ≈ 7.6 RP, 20 M ≈ 30 RP. Diminishing returns stop rich nations finishing the tree instantly.
 export const TECHS: Tech[] = [
   // Civilian industry
   { id: 'assembly', name: 'Assembly Line Methods', branch: 'Civilian Industry', tier: 1, cost: 8, requires: [], effect: '+8% factory capacity', apply: (m) => { m.industry += 0.08; } },

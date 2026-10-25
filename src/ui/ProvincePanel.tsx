@@ -70,7 +70,7 @@ export function ProvincePanel() {
               <Stat label="Terrain" value={<>{TERRAIN[geo.terrain].label}{geo.river ? ' · river' : ''}</>} tip={`Movement ×${TERRAIN[geo.terrain].move}, attacker ×${TERRAIN[geo.terrain].attack}, defender ×${TERRAIN[geo.terrain].defense}, combat width ${TERRAIN[geo.terrain].width}${geo.river ? '. Major river: −15% to attackers.' : ''}`} />
               <Stat label="Weather" value={WEATHER[w].label} tip={`Attack ×${WEATHER[w].attack}, movement ×${WEATHER[w].move}, air ×${WEATHER[w].air}, supply use ×${WEATHER[w].supply}`} />
               <Stat label="Population" value={num(st.pop)} />
-              <Stat label="Output" value={`${money(out)} IC/yr`} tip={<div>Population {num(st.pop)} × productivity {st.dev.toFixed(1)} M IC per million{st.buildings.power ? ` × power plants +${st.buildings.power * 12}%` : ''}<br />+ buildings · × status {st.status} ({pct(ECON.STATUS_OUTPUT[st.status])}) · damage −{pct(st.damage * 0.75)} · resistance −{pct(st.resistance / 250)}</div>} />
+              <Stat label="Output" value={`${money(out)}/yr`} tip={<div>Population {num(st.pop)} × productivity ${st.dev.toFixed(1)}M per million{st.buildings.power ? ` × power plants +${st.buildings.power * 12}%` : ''}<br />+ buildings · × status {st.status} ({pct(ECON.STATUS_OUTPUT[st.status])}) · damage −{pct(st.damage * 0.75)} · resistance −{pct(st.resistance / 250)}</div>} />
               <Stat label="Infrastructure" value={st.infra} tip="1 + roads + 2×railways (+1 with a port). Speeds movement and supply throughput." />
               <Stat label="Supply here" value={sm[p] < 0 ? '—' : `${sm[p].toFixed(0)}/day`} tip="Supply your armies could draw in this province (from your network)." tone={sm[p] < 5 ? 'bad' : undefined} />
               <Stat label="Status" value={st.status} tone={st.status === 'core' ? undefined : 'warn'} tip={{ core: 'Fully integrated: full output, taxes and recruitment.', occupied: `Military occupation: ${pct(ECON.STATUS_OUTPUT.occupied)} output, high resistance, admin costs.`, integrating: 'Integration under way.', autonomous: 'Autonomous: lower resistance, tribute instead of full tax; cannot recruit.' }[st.status]} />
@@ -139,8 +139,8 @@ function NationSummary({ id }: { id: string }) {
       <div className="grid2">
         <Stat label="Provinces" value={ownedBy(g, id).length} />
         <Stat label="Population" value={num(ownedBy(g, id).reduce((t, p) => t + g.provinces[p].pop, 0))} />
-        <Stat label="Output" value={`${money(n.budget.output)} IC`} />
-        <Stat label="Treasury" value={isMe ? `${money(n.treasury)} IC` : `~${money(Math.round(n.treasury / 25) * 25)} IC`} tip={isMe ? undefined : 'Estimated by your intelligence services.'} />
+        <Stat label="Output" value={`${money(n.budget.output)}`} />
+        <Stat label="Treasury" value={isMe ? `${money(n.treasury)}` : `~${money(Math.round(n.treasury / 25) * 25)}`} tip={isMe ? undefined : 'Estimated by your intelligence services.'} />
         <Stat label="Stability" value={`${n.stability.toFixed(0)}%`} />
         <Stat label="Military strength" value={pp.toLocaleString()} tip={`Military strength: fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12, air 25…) and warship, including units still in training. It only changes when forces are raised, disbanded or destroyed.${isMe ? '' : ` Yours: ${my.toLocaleString()}.`}`} tone={!isMe && pp > my * 1.3 ? 'bad' : undefined} />
         <Stat label="Personality" value={isMe ? '—' : n.personality} />

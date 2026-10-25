@@ -78,7 +78,7 @@ export function StatsPanel() {
               <Stat label="Provinces" value={`${ownedBy(g, g.player).length} (peak ${n.stats.peakProvinces})`} />
               <Stat label="Casualties inflicted" value={num(n.stats.casualtiesInflicted)} />
               <Stat label="Casualties suffered" value={num(n.stats.casualtiesSuffered)} />
-              <Stat label="Peak output" value={`${money(n.stats.peakOutput)} IC`} />
+              <Stat label="Peak output" value={`${money(n.stats.peakOutput)}`} />
               <Stat label="Days elapsed" value={g.day} />
               <Stat label="World wars fought" value={g.stats.wars} />
               <Stat label="Nations annexed (world)" value={g.stats.annexations} />

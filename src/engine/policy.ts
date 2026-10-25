@@ -166,7 +166,7 @@ export function sendAid(s: GameState, n: Nation, to: string, amount: number): st
   const r = rel(s, n.id, to);
   r.value = Math.min(100, r.value + gain);
   invalidateDiplo();
-  addEvent(s, 'diplomacy', `${n.name} sent ${amount} M IC of aid to ${t.name} (relations +${gain.toFixed(0)}).`, [n.id, to]);
+  addEvent(s, 'diplomacy', `${n.name} sent $${amount}M of aid to ${t.name} (relations +${gain.toFixed(0)}).`, [n.id, to]);
   return null;
 }
 export function toggleSanction(s: GameState, n: Nation, to: string): string | null {
@@ -291,7 +291,7 @@ const out = (n: Nation) => Math.max(1, n.budget.output);
 const pay = (n: Nation, share: number) => { const c = share * out(n); n.treasury -= c; n.ledgerMonth.expense += c; };
 const gain = (n: Nation, share: number) => { n.treasury += share * out(n); };
 const stab = (n: Nation, d: number) => { n.stability = Math.max(0, Math.min(100, n.stability + d)); };
-const fmtShare = (n: Nation, share: number) => `${(share * out(n)).toFixed(1)} M IC`;
+const fmtShare = (n: Nation, share: number) => `$${(share * out(n)).toFixed(1)}M`;
 
 export const EVENTS: Record<string, EventSpec> = {
   strike: {

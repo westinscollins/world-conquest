@@ -12,7 +12,7 @@ import type { Army, Battle, BattleFactor, BattleSide, GameState, Posture, Unit, 
 import { COMBAT, POSTURES, TERRAIN, UNITS, WEATHER, MIL, ROE, AIR, SHIPS } from './config';
 import { PROV, isStrait, landLinks, distKm } from './geo';
 import { Stream } from './rng';
-import { armiesIn, atWar, isFriendly, warBetween, invalidateArmies, controlledBy } from './world';
+import { armiesIn, atWar, isFriendly, warBetween, invalidateArmies, controlledBy, playerEdge } from './world';
 import { armyStrength, armyOrg, armyMorale, armyEquip, qualityOf, setArmyLocation, deleteArmy, armyPower } from './military';
 import { provinceWeather } from './weather';
 import { addEvent } from './events';
@@ -250,6 +250,10 @@ function modifiers(s: GameState, b: Battle, A: SideEval, D: SideEval, aArm: Army
   // fatigue
   const fat = aArm.reduce((m, a) => Math.max(m, a.fatigue), 0);
   if (fat > 0.05) atk['Fatigue'] = 1 - 0.3 * fat;
+  // difficulty: human players' armies fight better
+  const ea = playerEdge(s, b.attacker.nation), ed = playerEdge(s, b.defender.nation);
+  if (ea !== 1) { atk['Difficulty'] = ea; aDefMods['Difficulty'] = ea; }
+  if (ed !== 1) { def['Difficulty'] = ed; dAtkMods['Difficulty'] = ed; }
   return { atk, def, aDefMods, dAtkMods };
 }
 const prod = (m: Record<string, number>) => Object.values(m).reduce((a, b) => a * b, 1);
@@ -409,6 +413,8 @@ function explain(s: GameState, b: Battle, A: SideEval, D: SideEval, m: Mods, cas
   if (D.naval > 0.3) push('Naval gunfire', 'defender', fire(D, { soft: 0, hard: 0 }), 'Warships offshore firing on the attackers');
   if (m.atk['Manoeuvre']) push('Mobile manoeuvre', 'attacker', m.atk['Manoeuvre'], 'Speed and recon exploited for flanking');
   if (m.atk['Fatigue']) push('Fatigue', 'attacker', m.atk['Fatigue'], 'Exhausted from marching and fighting');
+  if (m.atk['Difficulty']) push('Difficulty', 'attacker', m.atk['Difficulty'], 'Player bonus for this difficulty');
+  if (m.def['Difficulty']) push('Difficulty', 'defender', m.def['Difficulty'], 'Player bonus for this difficulty');
   // equipment & quality
   push('Equipment', 'attacker', 0.3 + 0.7 * A.equipment, `Front-line formations ${Math.round(A.equipment * 100)}% equipped`);
   push('Equipment', 'defender', 0.3 + 0.7 * D.equipment, `Front-line formations ${Math.round(D.equipment * 100)}% equipped`);
@@ -561,6 +567,8 @@ export function estimateBattle(s: GameState, attackers: Army[], province: number
   if (w.attack < 0.95) notes.push(`${w.label}: attack ×${w.attack}.`);
   const sup = attackers.reduce((m, a) => Math.min(m, a.lastSupplyRatio), 1);
   if (sup < 0.8) notes.push(`Your supply is at ${Math.round(sup * 100)}% — combat effectiveness reduced.`);
+  aP *= playerEdge(s, atkOwner);
+  dP *= playerEdge(s, defs[0].owner);
   const r = aP / Math.max(0.01, dP);
   const odds = 1 / (1 + Math.exp(-3.2 * Math.log(r)));
   return { odds, aPower: aP, dPower: dP, notes };

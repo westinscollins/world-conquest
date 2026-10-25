@@ -308,3 +308,37 @@ describe('disbanding', () => {
     expect(n.manpower).toBeGreaterThan(mp2);
   });
 });
+
+describe('difficulty', () => {
+  it('below Hard, the player fights better, gets a supply minimum, and a beaten AI enemy surrenders early', () => {
+    const run = (difficulty: 'standard' | 'hard') => {
+      const s = newGame('sandbox', { seed: 7, nation: 'FRA' });
+      s.settings.difficulty = difficulty;
+      declareWar(s, s.nations.FRA, 'BEL');
+      for (let d = 0; d < 6 && s.wars.some((w) => w.attackers.includes('FRA')); d++) {
+        for (const a of Object.values(s.armies)) if (a.owner === 'FRA') a.stance = 'advance';
+        runDays(s, 30);
+      }
+      return s;
+    };
+    const easy = run('standard');
+    // the war is over: Belgium surrendered what France took (France held on to it)
+    expect(easy.wars.some((w) => w.attackers.includes('FRA') && w.defenders.includes('BEL'))).toBe(false);
+    expect(COUNTRY_GEO.BEL.provinces.some((p) => easy.provinces[p].owner === 'FRA')).toBe(true);
+    // battles show the bonus
+    const b = Object.values(easy.battles).find((x) => x.attacker.nation === 'FRA' || x.defender.nation === 'FRA')!;
+    expect(b.factors.map((f) => f.label)).toContain('Difficulty');
+    // Hard: no bonus
+    const hard = run('hard');
+    const hb = Object.values(hard.battles).find((x) => x.attacker.nation === 'FRA' || x.defender.nation === 'FRA');
+    if (hb) expect(hb.factors.map((f) => f.label)).not.toContain('Difficulty');
+  });
+
+  it("France's capital is Paris (not Monaco), Italy's Rome, Switzerland's Bern", () => {
+    expect(PROV[COUNTRY_GEO.FRA.capital].name).toBe('Paris');
+    expect(PROV[COUNTRY_GEO.ITA.capital].name).toBe('Rome');
+    expect(PROV[COUNTRY_GEO.CHE.capital].name).toBe('Bern');
+    const s = newGame('sandbox', { seed: 7, nation: 'FRA' });
+    expect(PROV[s.nations.FRA.capital].name).toBe('Paris');
+  });
+});

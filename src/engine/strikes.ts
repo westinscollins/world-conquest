@@ -229,7 +229,7 @@ export function buyMunitions(s: GameState, n: Nation, kind: Munition, count: num
   void s;
   if (count < 1 || count > 100) return 'Order between 1 and 100.';
   const cost = munitionCost(kind, n) * count;
-  if (n.treasury < cost) return `Insufficient funds: ${count} ${STRIKES[kind].plural} cost ${cost.toFixed(1)} M IC.`;
+  if (n.treasury < cost) return `Insufficient funds: ${count} ${STRIKES[kind].plural} cost $${cost.toFixed(1)}M.`;
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   n.arsenal[kind] += count;
   return null;
@@ -237,7 +237,7 @@ export function buyMunitions(s: GameState, n: Nation, kind: Munition, count: num
 export function startNuclearProgram(s: GameState, n: Nation): string | null {
   if (n.nukeProgram >= 0) return n.nukeProgram === 0 ? 'You are already a nuclear power.' : 'The programme is already running.';
   const cost = nukeProgramCost(n);
-  if (n.treasury < cost) return `A nuclear programme costs ${cost.toFixed(0)} M IC.`;
+  if (n.treasury < cost) return `A nuclear programme costs $${cost.toFixed(0)}M.`;
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   n.nukeProgram = NUKE.programDays;
   // the world notices
@@ -249,7 +249,7 @@ export function buildWarhead(s: GameState, n: Nation): string | null {
   void s;
   if (n.nukeProgram !== 0) return 'You need a completed nuclear programme first.';
   const cost = warheadCost(n);
-  if (n.treasury < cost) return `An ICBM costs ${cost.toFixed(0)} M IC.`;
+  if (n.treasury < cost) return `An ICBM costs $${cost.toFixed(0)}M.`;
   n.treasury -= cost; n.ledgerMonth.expense += cost;
   n.warheads.push(NUKE.warheadDays);
   return null;

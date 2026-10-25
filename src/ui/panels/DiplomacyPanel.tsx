@@ -102,7 +102,7 @@ function NationDetail({ id }: { id: string }) {
       <div className="grid2">
         <Stat label="Relations" value={(r?.value ?? 0).toFixed(0)} tone={(r?.value ?? 0) < -20 ? 'bad' : (r?.value ?? 0) > 20 ? 'good' : undefined} />
         <Stat label="Military strength" value={`${theirP.toLocaleString()} (you ${myP.toLocaleString()})`} tone={theirP > myP ? 'bad' : 'good'} tip="Military strength: fixed points per formation (infantry 10, mechanized 18, armored 30, artillery 12, air 25…) and warship, including units still in training. It only changes when forces are raised, disbanded or destroyed." />
-        <Stat label="Output" value={`${money(n.budget.output)} IC`} />
+        <Stat label="Output" value={`${money(n.budget.output)}`} />
         <Stat label="Provinces" value={ownedBy(g, id).length} />
         <Stat label="Stability" value={pct(n.stability / 100)} />
         <Stat label="Allies" value={alliesOf(g, id).map((a) => g.nations[a]?.name).join(', ') || 'none'} />
@@ -236,7 +236,7 @@ function PeaceDialog({ warId }: { warId: number }) {
               </label>
             )) : <span className="muted small">None.</span>}
           </div>
-          <h4>Reparations ({money(rep)} IC/yr for 5 years)</h4>
+          <h4>Reparations ({money(rep)}/yr for 5 years)</h4>
           <input type="range" min={0} max={Math.round((mode === 'demand' ? enemyOut : g.nations[g.player].budget.output) * 0.15)} value={rep} onChange={(e) => setRep(+e.target.value)} />
           {mode === 'demand' && <label className="check"><input type="checkbox" checked={vassal} onChange={(e) => setVassal(e.target.checked)} /> Demand they become your subject state (cost 55)</label>}
         </div>

@@ -1,6 +1,6 @@
 import type { GameState, Nation, PeaceTerms, War } from './types';
 import { DIPLO, ECON } from './config';
-import { invalidateDiplo, rel, peekRel, warBetween, atWar, alliesOf, enemiesOf, ownedBy, controlledBy, neighborsOf, isAtWar } from './world';
+import { invalidateDiplo, rel, peekRel, warBetween, atWar, alliesOf, enemiesOf, ownedBy, controlledBy, neighborsOf, isAtWar, playerEdge, playerHelp } from './world';
 import { addEvent } from './events';
 import { provinceOutput, fmt } from './economy';
 import { armyPower } from './military';
@@ -14,7 +14,7 @@ export function truePower(s: GameState, id: string): number {
   if (powerCache.s !== s || powerCache.day !== s.day) {
     const map = new Map<string, number>();
     for (const a of Object.values(s.armies)) map.set(a.owner, (map.get(a.owner) || 0) + armyPower(s, a));
-    for (const n of Object.values(s.nations)) map.set(n.id, (map.get(n.id) || 0) + n.training.length * 4);
+    for (const n of Object.values(s.nations)) map.set(n.id, ((map.get(n.id) || 0) + n.training.length * 4) * playerEdge(s, n.id));
     powerCache = { s, day: s.day, map };
   }
   return powerCache.map.get(id) || 0;
@@ -57,9 +57,15 @@ export function checkDeclareWar(s: GameState, a: Nation, targetId: string): WarC
   if ((r?.truceUntil ?? 0) > s.day) return { ...res, ok: false, reason: `Truce in force until day ${r!.truceUntil} (peace treaty).` };
   res.stabilityCost = res.justified ? DIPLO.WAR_STABILITY_JUSTIFIED : DIPLO.WAR_STABILITY_UNJUSTIFIED;
   res.infamy = (res.justified ? DIPLO.WAR_INFAMY_JUSTIFIED : DIPLO.WAR_INFAMY_UNJUSTIFIED) + (res.breaksNap ? DIPLO.NAP_BREAK_INFAMY : 0);
-  res.joiners = alliesOf(s, targetId).filter((x) => x !== a.id);
+  res.joiners = alliesOf(s, targetId).filter((x) => x !== a.id && nearFight(s, a, targetId, x));
   for (const sub of Object.values(s.nations)) if (sub.alive && sub.overlord === targetId) res.joiners.push(sub.id);
   return res;
+}
+/** Does ally `x` come to the defence? Against a player (below Hard) only if it borders one side. */
+function nearFight(s: GameState, a: Nation, targetId: string, x: string) {
+  if (!a.isPlayer || playerHelp(s).farAllies) return true;
+  const nb = neighborsOf(s, x);
+  return nb.includes(targetId) || nb.includes(a.id);
 }
 
 export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck {
@@ -100,7 +106,7 @@ export function declareWar(s: GameState, a: Nation, targetId: string): WarCheck 
   }
   // nations that guaranteed the target's independence
   for (const g of Object.values(s.nations)) {
-    if (!g.alive || g.id === a.id || !g.gov?.guarantees.includes(targetId) || atWar(s, g.id, a.id)) continue;
+    if (!g.alive || g.id === a.id || !g.gov?.guarantees.includes(targetId) || atWar(s, g.id, a.id) || !nearFight(s, a, targetId, g.id)) continue;
     if (g.isPlayer) {
       s.proposals.push({ id: s.nextId++, from: targetId, to: g.id, kind: 'callToArms', day: s.day, warId: war.id });
       addEvent(s, 'diplomacy', `${a.name} attacked ${t.name}, whose independence you guaranteed. Honour the guarantee?`, [g.id, targetId], { important: true });
@@ -199,10 +205,11 @@ export function evaluatePeace(s: GameState, w: War, from: string, t: PeaceTerms)
   const cost = termsCost(s, w, from, t);
   const yearsAtWar = (s.day - w.startDay) / 365;
   // the receiver's willingness: exhaustion, hopelessness and time make them accept more
-  const give = (target?.warExhaustion ?? 0) * 0.35 + Math.max(0, yearsAtWar - 1) * 6 + (target && controlledBy(s, to).length === 0 ? 100 : 0);
+  const help = s.nations[from]?.isPlayer && !target?.isPlayer ? playerHelp(s).peace : 0; // (difficulty)
+  const give = (target?.warExhaustion ?? 0) * 0.35 + Math.max(0, yearsAtWar - 1) * 6 + (target && controlledBy(s, to).length === 0 ? 100 : 0) + help;
   if (t.white) {
     const myScore = scoreFor(w, to);
-    if (myScore > 25 && (target?.warExhaustion ?? 0) < 50) return { accept: false, reason: `${target.name} believes it is winning (war score ${myScore.toFixed(0)}).`, cost, score };
+    if (myScore > 25 + help && (target?.warExhaustion ?? 0) < 50) return { accept: false, reason: `${target.name} believes it is winning (war score ${myScore.toFixed(0)}).`, cost, score };
     return { accept: true, reason: 'Both sides are ready to end the war.', cost, score };
   }
   if (cost <= score + give + 2) return { accept: true, reason: `Terms cost ${cost.toFixed(0)} vs war score ${score.toFixed(0)}${give > 1 ? ` + ${give.toFixed(0)} war-weariness` : ''}.`, cost, score };
@@ -277,6 +284,7 @@ export function expelArmies(s: GameState, nations: string[]) {
 
 /** Nation with no controlled provinces left capitulates: occupied land is ceded to occupiers. */
 export function checkCapitulation(s: GameState) {
+  surrenderToPlayers(s);
   for (const w of [...s.wars]) {
     for (const side of ['attackers', 'defenders'] as const) {
       for (const n of [...w[side]]) {
@@ -303,6 +311,33 @@ export function checkCapitulation(s: GameState) {
           addEvent(s, 'war', `${s.nations[n].name} has capitulated.`, [n], { important: true });
         }
       }
+    }
+  }
+}
+
+/**
+ * An AI war leader losing to a human player (below Hard) surrenders before it has lost everything:
+ * once it keeps less than `surrender` of its provinces, or has lost its capital and keeps under
+ * half. The winners keep what they hold.
+ */
+function surrenderToPlayers(s: GameState) {
+  const share = playerHelp(s).surrender;
+  if (!share) return;
+  for (const w of [...s.wars]) {
+    for (const [leader, other] of [[w.leaderA, w.leaderD], [w.leaderD, w.leaderA]]) {
+      const n = s.nations[leader], winner = s.nations[other];
+      if (!n?.alive || n.isPlayer || !winner?.isPlayer) continue;
+      const own = ownedBy(s, leader);
+      const held = own.filter((p) => s.provinces[p].controller === leader).length;
+      if (!own.length || !held) continue; // (losing everything is handled as a capitulation)
+      const capitalLost = s.provinces[n.capital]?.controller !== leader;
+      if (held / own.length >= share && !(capitalLost && held / own.length < 0.5)) continue;
+      const side = w.attackers.includes(other) ? w.attackers : w.defenders;
+      const taken = own.filter((p) => side.includes(s.provinces[p].controller));
+      if (!taken.length) continue;
+      makePeace(s, w, other, { provinces: taken, taker: other, reparations: 0, vassalize: false, annex: false, white: false });
+      addEvent(s, 'war', `${n.name} surrenders to ${winner.name} and gives up the ${taken.length} province${taken.length > 1 ? 's' : ''} it lost.`, [leader, other], { important: true });
+      break;
     }
   }
 }

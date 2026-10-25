@@ -27,9 +27,9 @@ export function EconomyPanel() {
         <>
           <BudgetAdvisor />
           <div className="grid3">
-            <Stat label="National output" value={`${money(b.output)} IC/yr`} tip="Sum of province output (population × productivity + buildings), reduced by damage, occupation, resistance and instability." />
-            <Stat label="Treasury" value={`${money(n.treasury)} IC`} tone={n.treasury < 0 ? 'bad' : undefined} />
-            <Stat label="Net balance" value={`${money(b.net, { sign: true })} IC/yr`} tone={b.net >= 0 ? 'good' : 'bad'} />
+            <Stat label="National output" value={`${money(b.output)}/yr`} tip="Sum of province output (population × productivity + buildings), reduced by damage, occupation, resistance and instability." />
+            <Stat label="Treasury" value={`${money(n.treasury)}`} tone={n.treasury < 0 ? 'bad' : undefined} />
+            <Stat label="Net balance" value={`${money(b.net, { sign: true })}/yr`} tone={b.net >= 0 ? 'good' : 'bad'} />
           </div>
           <div className="ledger">
             <div className="ledger-col">
@@ -41,7 +41,7 @@ export function EconomyPanel() {
               {b.expenses.map((l) => <LedgerRow key={l.key} label={l.label} amount={l.amount} detail={l.detail} total={b.totalExpense} />)}
             </div>
           </div>
-          <p className="small muted">All figures are annual rates in millions of Imperial Credits (fictional game currency). Income − expenses = {money(b.totalIncome)} − {money(b.totalExpense)} = <b>{money(b.net, { sign: true })}</b>. The treasury changes by net ÷ 365 each day. One-time purchases (recruitment, construction) are paid immediately. This month so far: +{money(n.ledgerMonth.income)} / −{money(n.ledgerMonth.expense)}.</p>
+          <p className="small muted">All figures are annual rates in millions of US dollars (game-scale amounts, not real budgets). Income − expenses = {money(b.totalIncome)} − {money(b.totalExpense)} = <b>{money(b.net, { sign: true })}</b>. The treasury changes by net ÷ 365 each day. One-time purchases (recruitment, construction) are paid immediately. This month so far: +{money(n.ledgerMonth.income)} / −{money(n.ledgerMonth.expense)}.</p>
           <Section title="Taxation" icon="coin">
             <div className="slider-row">
               <input type="range" min={ECON.MIN_TAX * 100} max={ECON.MAX_TAX * 100} value={Math.round(n.taxRate * 100)} onChange={(e) => store.cmd('setTax', [+e.target.value / 100])} />
@@ -58,9 +58,9 @@ export function EconomyPanel() {
           </Section>
           <Section title="Debt" icon="stab">
             <div className="grid3">
-              <Stat label="Outstanding" value={`${money(n.debt)} IC`} />
+              <Stat label="Outstanding" value={`${money(n.debt)}`} />
               <Stat label="Rate (new loans)" value={pct(interestFor(n), 1)} tip="Rises with debt-to-output, war exhaustion and instability." />
-              <Stat label="Ceiling" value={`${money(maxDebt(n))} IC`} tip="150% of annual output. Beyond it, deficits mean default." />
+              <Stat label="Ceiling" value={`${money(maxDebt(n))}`} tip="150% of annual output. Beyond it, deficits mean default." />
             </div>
             <div className="row gap wrap">
               {[ECON.LOAN_STEP, ECON.LOAN_STEP * 4].map((v) => <Btn key={v} small onClick={() => { const r = store.cmd('takeLoan', [v]); r && store.toast(r.message, r.ok ? 'info' : 'bad'); }}>Borrow {money(v)}</Btn>)}
@@ -100,7 +100,7 @@ export function EconomyPanel() {
                 <tr key={r}>
                   <td>{RESOURCE[r].label}</td>
                   <td className={n.resourceNet[r] >= 0 ? 'good' : 'bad'}>{n.resourceNet[r] >= 0 ? '+' : ''}{n.resourceNet[r].toFixed(1)}</td>
-                  <td>{g.market[r].price.toFixed(2)} M IC</td>
+                  <td>{money(g.market[r].price, { digits: 2 })}</td>
                   <td>{n.shortages[r] > 0 ? <span className="bad">Shortage {pct(n.shortages[r])}</span> : n.resourceNet[r] >= 0 ? <span className="good">Exporting</span> : <span className="warn">Importing</span>}</td>
                 </tr>
               ))}
@@ -184,7 +184,7 @@ function BudgetAdvisor() {
   if (n.taxRate < 0.29) fixes.push({ label: 'Raise tax by 2 points', gain: `≈ +${money((b.income.find((l) => l.key === 'tax')?.amount ?? 0) * (0.02 / n.taxRate))}/yr, −2.6 stability`, run: () => store.cmd('setTax', [n.taxRate + 0.02]) });
   return (
     <div className="advisor">
-      <b className="bad">You are losing {money(-b.net)} IC a year.</b>
+      <b className="bad">You are losing {money(-b.net)} a year.</b>
       <span className="small"> Largest costs: {top.map((l) => `${l.label} (${money(l.amount)})`).join(', ')}.{atWar ? ' War halves trade income and adds field costs.' : ''}</span>
       {fixes.length > 0 && <div className="row gap wrap" style={{ marginTop: 6 }}>{fixes.map((f) => <Btn key={f.label} small onClick={() => { f.run(); store.toast(`${f.label}: ${f.gain}`, 'good'); }}>{f.label} <span className="muted">{f.gain}</span></Btn>)}</div>}
       <div className="small muted" style={{ marginTop: 4 }}>To shrink the army, open an army → Formations → tick one → Disband.</div>

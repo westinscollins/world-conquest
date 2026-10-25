@@ -46,7 +46,7 @@ export function GovernmentTab() {
       <div className="grid3">
         <Stat label="Stability" value={`${n.stability.toFixed(0)}%`} tip="Moves toward a target each month. Policies, services, taxes, war and deficits push the target." />
         <Stat label="Policy effects" value={`${m.stability >= 0 ? '+' : ''}${m.stability.toFixed(0)} stab`} tip={`Net from policies, decrees and services: growth ${(m.growth * 100).toFixed(1)}%/yr, output ×${m.output.toFixed(2)}, services ×${m.services.toFixed(2)}`} />
-        <Stat label="Wealth fund" value={`${money(gov.fund)} IC`} />
+        <Stat label="Wealth fund" value={`${money(gov.fund)}`} />
       </div>
 
       <Section title="Public services" icon="people">

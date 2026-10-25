@@ -1,7 +1,7 @@
 import type { Army, AirWing, EquipKind, GameState, Nation, ShipType, Unit, UnitType, Fleet, General, GeneralTrait } from './types';
 import { MIL, UNITS, SHIPS, SHIP_UPKEEP_SHARE, TERRAIN, WEATHER, ECON, RESOURCE, WAR_ECONOMY, REVOLT_AT, AIR } from './config';
 import { PROV, distKm, isStrait, landLinks } from './geo';
-import { atWar, isFriendly, invalidateArmies, armiesIn } from './world';
+import { atWar, isFriendly, invalidateArmies, armiesIn, playerHelp } from './world';
 import { addEvent } from './events';
 import { provinceWeather } from './weather';
 import { govMods, focusOf } from './policy';
@@ -15,13 +15,13 @@ export function industryBonus(n?: Nation) {
   const f = n?.lastFactories ?? 0;
   return { discount: Math.min(MIL.FACTORY_DISCOUNT_MAX, f * MIL.FACTORY_DISCOUNT), speed: Math.min(MIL.FACTORY_SPEED_MAX, f * MIL.FACTORY_SPEED) };
 }
-/** Price of a unit's full equipment set (M IC), after tech and factory discounts. */
+/** Price of a unit's full equipment set ($M), after tech and factory discounts. */
 export function unitEquipCost(type: UnitType, n?: Nation): number {
   let c = 0;
   for (const k in UNITS[type].equip) c += UNITS[type].equip[k as EquipKind]! * (n?.techMods.equipCost[k as EquipKind] ?? 1);
   return c * (1 - industryBonus(n).discount) * (n?.priceIndex ?? 1);
 }
-/** One-time cost to raise a formation (M IC): induction, training and its full equipment. */
+/** One-time cost to raise a formation ($M): induction, training and its full equipment. */
 export function recruitCost(type: UnitType, n?: Nation): number {
   return UNITS[type].personnel * MIL.RECRUIT_PER_SOLDIER * (n?.priceIndex ?? 1) + unitEquipCost(type, n);
 }
@@ -286,7 +286,7 @@ export function reinforceDaily(s: GameState, a: Army, n: Nation) {
     const sp = UNITS[u.type];
     // organisation & morale recovery
     const orgMax = (0.55 + 0.45 * n.mobilization) * Math.min(1, 0.4 + 0.6 * supplied) * n.techMods.organisation;
-    u.org = Math.min(Math.min(1, orgMax), u.org + MIL.ORG_REGEN * (0.5 + 0.5 * supplied));
+    u.org = Math.min(Math.min(1, orgMax), u.org + MIL.ORG_REGEN * (0.5 + 0.5 * supplied) * (n.isPlayer ? playerHelp(s).recovery : 1));
     if (u.org > orgMax) u.org = Math.max(orgMax, u.org - 0.02);
     const moraleTarget = 0.35 + 0.35 * (n.stability / 100) + 0.2 * supplied + 0.1 * (n.warSupport / 100) + (n.gov ? govMods(s, n).morale : 0);
     u.morale += (moraleTarget - u.morale) * 0.03;
@@ -351,7 +351,7 @@ export function assignGeneral(s: GameState, generalId: number, armyId: number | 
   }
   g.armyId = armyId;
 }
-export const GENERAL_SALARY = 0.25; // M IC / yr per hired general
+export const GENERAL_SALARY = 0.25; // $M / yr per hired general
 
 // ---------------------------------------------------------------- fleets
 export function fleetPower(f: Fleet, n?: Nation) {
