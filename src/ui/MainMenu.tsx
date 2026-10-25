@@ -122,8 +122,8 @@ function CustomSetup({ camp, nation, onClose, onStart }: { camp: string; nation?
         {(kind === 'domination' || kind === 'economic' || kind === 'hegemony') && <label>Target share<input type="number" min={5} max={100} value={share} onChange={(e) => setShare(+e.target.value)} />%</label>}
         {kind === 'hegemony' && <label>Region<select value={region} onChange={(e) => setRegion(e.target.value)}>{SUBREGIONS.map((s) => <option key={s}>{s}</option>)}</select></label>}
         {(kind === 'survival' || kind === 'custom') && <label>{kind === 'custom' ? 'Deadline (years)' : 'Years'}<input type="number" min={1} max={100} value={years} onChange={(e) => setYears(+e.target.value)} /></label>}
-        {kind === 'custom' && <><label>Provinces to own<input type="number" min={1} value={cp} onChange={(e) => setCp(+e.target.value)} /></label><label>Annual output ($M)<input type="number" min={1} value={co} onChange={(e) => setCo(+e.target.value)} /></label></>}
-        <label>Starting treasury (0 = default)<input type="number" min={0} value={treasury} onChange={(e) => setTreasury(+e.target.value)} />$M</label>
+        {kind === 'custom' && <><label>Provinces to own<input type="number" min={1} value={cp} onChange={(e) => setCp(+e.target.value)} /></label><label>Annual output ($B)<input type="number" min={1} value={co} onChange={(e) => setCo(+e.target.value)} /></label></>}
+        <label>Starting treasury (0 = default)<input type="number" min={0} value={treasury} onChange={(e) => setTreasury(+e.target.value)} />$B</label>
         <label>World seed (blank = random)<input value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))} /></label>
       </div>
       <div className="row gap end">

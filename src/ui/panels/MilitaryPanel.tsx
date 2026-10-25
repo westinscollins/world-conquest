@@ -128,7 +128,7 @@ export function MilitaryPanel() {
                 <Btn small kind="primary" disabled={n.treasury < x.hireCost} onClick={() => { const r = store.cmd('hireGeneral', [x.id]); r && store.toast(r.message, r.ok ? 'good' : 'bad'); }}>Hire {moneyIC(x.hireCost)}</Btn>
               </div>
             ))}
-            <p className="small muted">Generals cost a one-time appointment fee and $0.25M/yr salary. They gain experience in battle and improve their skills.</p>
+            <p className="small muted">Generals cost a one-time appointment fee and $250M/yr salary. They gain experience in battle and improve their skills.</p>
           </Section>
         </>
       )}

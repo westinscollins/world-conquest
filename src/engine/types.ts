@@ -40,7 +40,7 @@ export interface ProvinceState {
   status: ProvinceStatus; // relationship to owner
   formerOwner: string;    // original national identity (for resistance / release)
   pop: number;
-  dev: number;            // productivity: $M output per million inhabitants per year
+  dev: number;            // productivity: $B output per million inhabitants per year
   dev0: number;           // starting productivity (growth ceiling reference)
   infra: number;          // derived: 1 + roads + railways*2 (cached)
   buildings: Buildings;
@@ -150,11 +150,11 @@ export interface Nation {
   alive: boolean;
   personality: Personality;
   capital: number;
-  treasury: number;          // $M
-  debt: number;              // $M outstanding
+  treasury: number;          // $B
+  debt: number;              // $B outstanding
   interestRate: number;
   taxRate: number;           // 0.10..0.50
-  researchFunding: number;   // $M per year
+  researchFunding: number;   // $B per year
   stability: number;         // 0..100
   warSupport: number;        // 0..100
   warExhaustion: number;     // 0..100
@@ -163,7 +163,7 @@ export interface Nation {
   mobilization: number;      // 0..1 current; target set by mobilize flag
   mobilize: boolean;
   priceIndex: number;        // inflation index (1 = base)
-  stockpile: Record<EquipKind, number>; // $M of finished equipment
+  stockpile: Record<EquipKind, number>; // $B of finished equipment
   production: ProductionLine[];
   training: TrainingOrder[];
   shipyard: { id: number; type: ShipType; port: number; daysLeft: number; totalDays: number }[];
@@ -200,7 +200,7 @@ export interface Government {
   policyChanged: Partial<Record<PolicyArea, number>>; // day each area was last changed
   decrees: Record<string, number>;         // active decree -> expiry day
   cooldowns: Record<string, number>;       // decree -> day it can be used again
-  fund: number;                            // sovereign wealth fund ($M)
+  fund: number;                            // sovereign wealth fund ($B)
   spies: Record<string, number>;           // spy network strength in other nations (0..1)
   sanctions: string[];                     // nations this one sanctions
   guarantees: string[];                    // nations whose independence this one guarantees
@@ -280,7 +280,7 @@ export interface Proposal { id: number; from: string; to: string; kind: 'allianc
 export interface PeaceTerms {
   provinces: number[];   // provinces ceded to the side of `from` ... (taker given by `taker`)
   taker: string | null;
-  reparations: number;   // $M per year for 5 years, paid to taker
+  reparations: number;   // $B per year for 5 years, paid to taker
   vassalize: boolean;
   annex: boolean;
   white: boolean;

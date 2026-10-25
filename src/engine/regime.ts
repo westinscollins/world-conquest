@@ -69,7 +69,7 @@ export function regimeEffect(s: GameState, n: Nation): GovEffect[] {
   return out;
 }
 
-/** Monthly cost lines: internal security and the propaganda ministry ($M per year). */
+/** Monthly cost lines: internal security and the propaganda ministry ($B per year). */
 export function regimeCosts(n: Nation, output: number): { security: number; propaganda: number } {
   const r = n.regime;
   if (!r) return { security: 0, propaganda: 0 };

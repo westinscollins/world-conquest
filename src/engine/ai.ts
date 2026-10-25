@@ -18,6 +18,7 @@ import { supplyReport, throughputOf } from './supply';
 import { aiStrikes } from './strikes';
 import { addEvent } from './events';
 import { nationIndex } from './sim';
+import { fmt } from './economy';
 
 // ---------------------------------------------------------------- weekly strategic pass
 export function aiWeekly(s: GameState, n: Nation) {
@@ -558,7 +559,7 @@ export function describeTerms(s: GameState, t: PeaceTerms) {
   const parts: string[] = [];
   if (t.annex) parts.push('full annexation');
   else if (t.provinces.length) parts.push(`cession of ${t.provinces.slice(0, 4).map((p) => PROV[p].name).join(', ')}${t.provinces.length > 4 ? ` and ${t.provinces.length - 4} more` : ''}`);
-  if (t.reparations) parts.push(`reparations of $${t.reparations.toFixed(1)}M/yr`);
+  if (t.reparations) parts.push(`reparations of ${fmt(t.reparations)}/yr`);
   if (t.vassalize) parts.push('subject status');
   return parts.join(', ') || 'no terms';
 }

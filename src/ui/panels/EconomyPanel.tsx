@@ -41,7 +41,7 @@ export function EconomyPanel() {
               {b.expenses.map((l) => <LedgerRow key={l.key} label={l.label} amount={l.amount} detail={l.detail} total={b.totalExpense} />)}
             </div>
           </div>
-          <p className="small muted">All figures are annual rates in millions of US dollars (game-scale amounts, not real budgets). Income − expenses = {money(b.totalIncome)} − {money(b.totalExpense)} = <b>{money(b.net, { sign: true })}</b>. The treasury changes by net ÷ 365 each day. One-time purchases (recruitment, construction) are paid immediately. This month so far: +{money(n.ledgerMonth.income)} / −{money(n.ledgerMonth.expense)}.</p>
+          <p className="small muted">All figures are annual rates in billions of US dollars (game-scale amounts, not real budgets). Income − expenses = {money(b.totalIncome)} − {money(b.totalExpense)} = <b>{money(b.net, { sign: true })}</b>. The treasury changes by net ÷ 365 each day. One-time purchases (recruitment, construction) are paid immediately. This month so far: +{money(n.ledgerMonth.income)} / −{money(n.ledgerMonth.expense)}.</p>
           <Section title="Taxation" icon="coin">
             <div className="slider-row">
               <input type="range" min={ECON.MIN_TAX * 100} max={ECON.MAX_TAX * 100} value={Math.round(n.taxRate * 100)} onChange={(e) => store.cmd('setTax', [+e.target.value / 100])} />

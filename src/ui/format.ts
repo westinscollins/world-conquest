@@ -1,10 +1,11 @@
-/** Money in US dollars; the game counts it in millions ($12M, $1.25B). */
+/** Money in US dollars; the game counts it in billions ($250M, $12B, $1.25T). */
 export function money(v: number, opts: { sign?: boolean; digits?: number } = {}) {
   const a = Math.abs(v);
   const sign = v < 0 ? '−' : opts.sign ? '+' : '';
-  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(2)}B`;
+  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(2)}T`;
+  if (a > 0 && a < 1) return `${sign}$${Math.round(a * 1000)}M`;
   const d = opts.digits ?? (a < 10 ? 1 : 0);
-  return `${sign}$${a.toFixed(d)}M`;
+  return `${sign}$${a.toFixed(d)}B`;
 }
 export const moneyIC = money;
 export function num(v: number) {

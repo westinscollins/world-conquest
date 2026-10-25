@@ -241,7 +241,7 @@ export function hireGeneral(s: GameState, generalId: number): Result {
   if (n.treasury < g.hireCost) return fail('Insufficient funds.');
   n.treasury -= g.hireCost;
   g.available = false;
-  return ok(`${g.name} appointed for ${fmt(g.hireCost)} (salary $0.25M/yr).`);
+  return ok(`${g.name} appointed for ${fmt(g.hireCost)} (salary $250M/yr).`);
 }
 export function doAssignGeneral(s: GameState, generalId: number, armyId: number | null): Result {
   const g = s.generals[generalId];

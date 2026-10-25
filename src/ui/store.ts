@@ -3,6 +3,7 @@
 import { live } from './live';
 import { useSyncExternalStore } from 'react';
 import type { GameState } from '../engine/types';
+import { money } from './format';
 import { tick } from '../engine/sim';
 import { SPEEDS } from '../engine/config';
 import { refreshAllBudgets } from '../engine/setup';
@@ -217,7 +218,7 @@ class Store {
       const deficit = pn.budget.net < 0;
       if (deficit && !this.wasDeficit) {
         const top = pn.budget.expenses.slice().sort((a, b) => b.amount - a.amount).slice(0, 2).map((l) => l.label.toLowerCase()).join(' and ');
-        this.toast(`Budget deficit: losing $${Math.abs(pn.budget.net).toFixed(1)}M a year (largest costs: ${top}). Open Economy for fixes.`, 'bad');
+        this.toast(`Budget deficit: losing ${money(Math.abs(pn.budget.net))} a year (largest costs: ${top}). Open Economy for fixes.`, 'bad');
       }
       this.wasDeficit = deficit;
     }

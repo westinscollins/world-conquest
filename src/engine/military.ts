@@ -15,13 +15,13 @@ export function industryBonus(n?: Nation) {
   const f = n?.lastFactories ?? 0;
   return { discount: Math.min(MIL.FACTORY_DISCOUNT_MAX, f * MIL.FACTORY_DISCOUNT), speed: Math.min(MIL.FACTORY_SPEED_MAX, f * MIL.FACTORY_SPEED) };
 }
-/** Price of a unit's full equipment set ($M), after tech and factory discounts. */
+/** Price of a unit's full equipment set ($B), after tech and factory discounts. */
 export function unitEquipCost(type: UnitType, n?: Nation): number {
   let c = 0;
   for (const k in UNITS[type].equip) c += UNITS[type].equip[k as EquipKind]! * (n?.techMods.equipCost[k as EquipKind] ?? 1);
   return c * (1 - industryBonus(n).discount) * (n?.priceIndex ?? 1);
 }
-/** One-time cost to raise a formation ($M): induction, training and its full equipment. */
+/** One-time cost to raise a formation ($B): induction, training and its full equipment. */
 export function recruitCost(type: UnitType, n?: Nation): number {
   return UNITS[type].personnel * MIL.RECRUIT_PER_SOLDIER * (n?.priceIndex ?? 1) + unitEquipCost(type, n);
 }
@@ -351,7 +351,7 @@ export function assignGeneral(s: GameState, generalId: number, armyId: number | 
   }
   g.armyId = armyId;
 }
-export const GENERAL_SALARY = 0.25; // $M / yr per hired general
+export const GENERAL_SALARY = 0.25; // $B / yr per hired general
 
 // ---------------------------------------------------------------- fleets
 export function fleetPower(f: Fleet, n?: Nation) {
